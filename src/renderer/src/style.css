@@ -1,0 +1,138 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg-color: #ffffff4f;
+  --text-color: #111827;
+  --text-secondary: #616161;
+  --border-color: #e5e7eb;
+  --hover-bg: #f9fafb;
+  --active-bg: #f0f9ff;
+  --primary-color: #0284c7;
+  --input-bg: #ffffff;
+  --input-border: #e5e7eb;
+  --input-focus-bg: #f0f9ff;
+  --placeholder-color: #616161;
+  --shadow-color: rgba(0, 0, 0, 0.1);
+  --primary-gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  --text-on-primary: #ffffff;
+  --highlight-color: #ea580c;
+  --danger-color: #ef4444;
+  --warning-color: #f59e0b;
+  --success-color: #10b981;
+  --purple-color: #8b5cf6;
+  --purple-light-bg: #f3e8ff;
+  --purple-border: #d8b4fe;
+  --dialog-bg: #ffffff;
+}
+
+/* 主题色定义 - 亮色模式 */
+:root,
+.theme-blue {
+  --primary-color: #0284c7;
+}
+
+.theme-purple {
+  --primary-color: #7c3aed;
+}
+
+.theme-green {
+  --primary-color: #059669;
+}
+
+.theme-orange {
+  --primary-color: #ea580c;
+}
+
+.theme-red {
+  --primary-color: #dc2626;
+}
+
+.theme-pink {
+  --primary-color: #db2777;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg-color: #2d2d2d4f;
+    --text-color: #f3f4f6;
+    --text-secondary: #bfc0c3;
+    --border-color: #374151;
+    --hover-bg: #374151;
+    --input-bg: #374151;
+    --input-border: #374151;
+    --input-focus-bg: #4b5563;
+    --placeholder-color: #b8b8b8;
+    --shadow-color: rgba(0, 0, 0, 0.3);
+    --primary-gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    --text-on-primary: #ffffff;
+    --highlight-color: #fb923c;
+    --danger-color: #f87171;
+    --warning-color: #fbbf24;
+    --success-color: #34d399;
+    --purple-color: #a78bfa;
+    --purple-light-bg: rgba(139, 92, 246, 0.2);
+    --purple-border: rgba(139, 92, 246, 0.4);
+    --dialog-bg: #2d2d2d;
+  }
+
+  /* 主题色定义 - 暗色模式 */
+  /* 主题色定义 - 暗色模式 */
+  :root,
+  .theme-blue {
+    --primary-color: #38bdf8;
+  }
+
+  .theme-purple {
+    --primary-color: #a78bfa;
+  }
+
+  .theme-green {
+    --primary-color: #34d399;
+  }
+
+  .theme-orange {
+    --primary-color: #fb923c;
+  }
+
+  .theme-red {
+    --primary-color: #f87171;
+  }
+
+  .theme-pink {
+    --primary-color: #f472b6;
+  }
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: var(--bg-color);
+  color: var(--text-color);
+
+  /* 使用 color-mix 计算 hover 和 light-bg */
+  /* 必须定义在 body 上，以便在 theme-xxx 类改变 --primary-color 时重新计算 */
+  --primary-hover: color-mix(in srgb, var(--primary-color), black 10%);
+  --primary-light-bg: color-mix(in srgb, var(--primary-color), white 90%);
+  --active-bg: color-mix(in srgb, var(--primary-color) 10%, white);
+  --hover-bg: color-mix(in srgb, var(--primary-color) 6%, white);
+}
+
+@media (prefers-color-scheme: dark) {
+  body {
+    /* 暗色模式下的计算逻辑 */
+    --primary-hover: color-mix(in srgb, var(--primary-color), white 10%);
+    --primary-light-bg: color-mix(in srgb, var(--primary-color), transparent 90%);
+    --active-bg: color-mix(in srgb, var(--primary-color) 15%, #2d2d2d);
+    --hover-bg: color-mix(in srgb, var(--primary-color) 6%, #2d2d2d);
+  }
+}

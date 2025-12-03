@@ -1,0 +1,9 @@
+node_modules
+dist
+out
+.DS_Store
+.eslintcache
+*.log*
+.vscode/extensions.json
+.vscode/launch.json
+.vscode/settings.json

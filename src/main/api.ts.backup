@@ -1,0 +1,2042 @@
+import {
+  app,
+  BrowserWindow,
+  ipcMain,
+  shell,
+  clipboard,
+  Menu,
+  dialog,
+  globalShortcut,
+  Notification,
+  nativeTheme,
+  webContents,
+  screen,
+  desktopCapturer,
+  nativeImage
+} from 'electron'
+
+import { exec } from 'child_process'
+import { promisify } from 'util'
+import { createHash } from 'crypto'
+import os from 'os'
+import path from 'path'
+import AdmZip from 'adm-zip'
+import lmdbInstance from './core/lmdb/lmdbInstance'
+import { scanApplications } from './appScanner.js'
+import { launchApp } from './appLauncher.js'
+import { updateShortcut, getCurrentShortcut } from './index.js'
+import clipboardManager from './clipboardManager.js'
+import appleScriptHelper from './utils/appleScriptHelper.js'
+import windowManager from './windowManager.js'
+import {
+  getLanzouDownloadLink,
+  // getGlobalAcwCookie,
+  getLanzouFolderFileList
+} from './utils/lanzou.js'
+import { downloadFile } from './utils/download.js'
+import { sleep } from './utils/common.js'
+import { screenCapture } from './core/screenCapture.js'
+import pluginWindowManager from './core/pluginWindowManager.js'
+
+const execAsync = promisify(exec)
+import { promises as fs } from 'fs'
+
+// 图标缓存目录
+const ICON_CACHE_DIR = path.join(app.getPath('userData'), 'icons')
+// 插件目录
+const PLUGIN_DIR = path.join(app.getPath('userData'), 'plugins')
+// 头像目录
+const AVATAR_DIR = path.join(app.getPath('userData'), 'avatar')
+
+// 将 ICNS 图标转换为 PNG 并缓存到临时目录
+async function iconToCachedPath(iconPath: string): Promise<string | null> {
+  try {
+    // 生成图标路径的 hash 作为缓存文件名
+    const hash = createHash('md5').update(iconPath).digest('hex')
+    const cachedFile = path.join(ICON_CACHE_DIR, `${hash}.png`)
+
+    // 检查缓存是否存在
+    try {
+      await fs.access(cachedFile)
+      // 缓存存在，直接返回 image:// 协议路径
+      return `image://${cachedFile}`
+    } catch {
+      // 缓存不存在，需要转换
+    }
+
+    // 确保缓存目录存在
+    await fs.mkdir(ICON_CACHE_DIR, { recursive: true })
+
+    // 使用 sips 转换为 PNG
+    await execAsync(
+      `sips -s format png '${iconPath}' --out '${cachedFile}' --resampleHeightWidth 64 64 2>/dev/null`
+    )
+
+    // 返回 image:// 协议路径
+    return `image://${cachedFile}`
+  } catch (error) {
+    console.error('图标转换失败:', iconPath, error)
+    return null
+  }
+}
+
+// 启动参数接口
+interface LaunchParam {
+  payload?: any
+  type?: 'text' | 'regex' | 'over'
+  code?: string
+}
+
+class API {
+  private mainWindow: BrowserWindow | null = null
+  private pluginManager: any = null
+  private launchParam: LaunchParam | null = null
+
+  public init(mainWindow: BrowserWindow, pluginManager: any): void {
+    this.mainWindow = mainWindow
+    this.pluginManager = pluginManager
+    this.setupIPC()
+    this.loadAndApplySettings() // 启动时加载设置
+
+    // 监听窗口移动事件，保存位置
+    let moveTimeout: NodeJS.Timeout | null = null
+    this.mainWindow.on('move', () => {
+      if (moveTimeout) clearTimeout(moveTimeout)
+      moveTimeout = setTimeout(() => {
+        if (this.mainWindow) {
+          const [x, y] = this.mainWindow.getPosition()
+          this.dbPut('window-position', { x, y })
+          console.log('保存窗口位置:', { x, y })
+        }
+      }, 500) // 500ms 防抖
+    })
+  }
+
+  public getLaunchParam(): LaunchParam | null {
+    return this.launchParam
+  }
+
+  // 加载并应用设置
+  private async loadAndApplySettings(): Promise<void> {
+    try {
+      const data = await this.dbGet('settings-general')
+      console.log('加载到的设置:', data)
+      if (data) {
+        // 应用透明度设置
+        if (data.opacity !== undefined) {
+          this.setWindowOpacity(data.opacity)
+          console.log('启动时应用透明度设置:', data.opacity)
+        }
+        // 应用快捷键设置
+        if (data.hotkey) {
+          const success = updateShortcut(data.hotkey)
+          console.log('启动时应用快捷键设置:', data.hotkey, success ? '成功' : '失败')
+        }
+        // 应用托盘图标显示设置
+        this.setTrayIconVisible(data.showTrayIcon)
+        console.log('启动时应用托盘图标显示设置:', data.showTrayIcon)
+        // 应用失去焦点隐藏设置
+        if (data.hideOnBlur !== undefined) {
+          this.setHideOnBlur(data.hideOnBlur)
+          console.log('启动时应用失去焦点隐藏设置:', data.hideOnBlur)
+        }
+        // 应用主题设置
+        if (data.theme) {
+          this.setTheme(data.theme)
+          console.log('启动时应用主题设置:', data.theme)
+        }
+      }
+
+      // 恢复窗口位置
+      const position = await this.dbGet('window-position')
+      if (position && typeof position.x === 'number' && typeof position.y === 'number') {
+        this.mainWindow?.setPosition(position.x, position.y)
+        console.log('恢复窗口位置:', position)
+      }
+
+      // 加载并注册全局快捷键
+      await this.loadAndRegisterGlobalShortcuts()
+    } catch (error) {
+      console.error('加载设置失败:', error)
+    }
+  }
+
+  // 加载并注册全局快捷键
+  private async loadAndRegisterGlobalShortcuts(): Promise<void> {
+    try {
+      const shortcuts = await this.dbGet('global-shortcuts')
+      if (shortcuts && Array.isArray(shortcuts)) {
+        for (const shortcut of shortcuts) {
+          if (shortcut.enabled && shortcut.shortcut && shortcut.target) {
+            try {
+              const success = globalShortcut.register(shortcut.shortcut, () => {
+                console.log(`全局快捷键触发: ${shortcut.shortcut} -> ${shortcut.target}`)
+                this.handleGlobalShortcut(shortcut.target)
+              })
+
+              if (success) {
+                console.log(`成功注册全局快捷键: ${shortcut.shortcut} -> ${shortcut.target}`)
+              } else {
+                console.warn(`全局快捷键注册失败: ${shortcut.shortcut}`)
+              }
+            } catch (error) {
+              console.error(`注册全局快捷键失败: ${shortcut.shortcut}`, error)
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error('加载全局快捷键失败:', error)
+    }
+  }
+
+  // 设置所有 IPC 监听器
+  private setupIPC(): void {
+    ipcMain.handle('get-apps', () => this.getApps())
+    ipcMain.handle('launch', (_event, path: string, param: any) => this.launch(path, param))
+    ipcMain.on('hide-window', () => this.hideWindow())
+    ipcMain.on('resize-window', (_event, height: number) => this.resizeWindow(height))
+    ipcMain.handle('open-external', (_event, url: string) => this.openExternal(url))
+    ipcMain.handle('copy-to-clipboard', (_event, text: string) => this.copyToClipboard(text))
+    ipcMain.handle('open-terminal', (_event, path: string) => this.openTerminal(path))
+    ipcMain.handle('get-finder-path', () => this.getFinderPath())
+    ipcMain.handle('get-last-copied-text', (_event, timeLimit: number) =>
+      this.getLastCopiedText(timeLimit)
+    )
+    ipcMain.handle('get-frontmost-app', () => this.getFrontmostApp())
+    ipcMain.handle('activate-app', (_event, identifier: string, type?: string) =>
+      this.activateApp(identifier, type)
+    )
+    ipcMain.handle('show-context-menu', (_event, menuItems) => this.showContextMenu(menuItems))
+    ipcMain.handle('get-plugins', () => this.getPlugins())
+    ipcMain.handle('import-plugin', () => this.importPlugin())
+    ipcMain.handle('import-dev-plugin', () => this.importDevPlugin())
+    ipcMain.handle('delete-plugin', (_event, pluginPath: string) => this.deletePlugin(pluginPath))
+    ipcMain.handle('reload-plugin', (_event, pluginPath: string) => this.reloadPlugin(pluginPath))
+    ipcMain.handle('get-running-plugins', () => this.getRunningPluginsAPI())
+    ipcMain.handle('kill-plugin', (_event, pluginPath: string) => this.killPluginAPI(pluginPath))
+    ipcMain.handle('kill-plugin-and-return', (_event, pluginPath: string) =>
+      this.killPluginAndReturn(pluginPath)
+    )
+    ipcMain.handle(
+      'send-input-event',
+      (
+        _event,
+        inputEvent:
+          | Electron.MouseInputEvent
+          | Electron.MouseWheelInputEvent
+          | Electron.KeyboardInputEvent
+      ) => this.sendInputEventAPI(inputEvent)
+    )
+    ipcMain.handle('select-avatar', () => this.selectAvatar())
+    ipcMain.on('hide-plugin', () => this.hidePlugin())
+    ipcMain.handle('onPluginEnter', () => this.onPluginEnter())
+    ipcMain.handle('open-plugin-devtools', () => this.openPluginDevTools())
+
+    // 插件按 ESC 键返回搜索页面
+    // ipcMain.on('plugin-esc-pressed', () => this.onPluginEscPressed())
+
+    // 退出插件
+    ipcMain.handle('out-plugin', (event, isKill: boolean = false) => {
+      const pluginInfo = this.pluginManager.getPluginInfoByWebContents(event.sender)
+      if (!pluginInfo) {
+        return false
+      }
+
+      if (isKill) {
+        // 杀死插件进程
+        return this.pluginManager.killPlugin(pluginInfo.path)
+      } else {
+        // 隐藏插件
+        this.pluginManager.hidePluginView()
+        this.mainWindow?.webContents.send('back-to-search')
+        return true
+      }
+    })
+
+    // 调用无界面插件方法
+    ipcMain.handle(
+      'call-headless-plugin',
+      async (_event, pluginPath: string, featureCode: string, action: any) => {
+        try {
+          const result = await this.pluginManager.callHeadlessPluginMethod(
+            pluginPath,
+            featureCode,
+            action
+          )
+          return { success: true, result }
+        } catch (error: any) {
+          console.error('调用无界面插件失败:', error)
+          return { success: false, error: error.message }
+        }
+      }
+    )
+
+    // 设置窗口不透明度
+    ipcMain.on('set-window-opacity', (_event, opacity: number) => this.setWindowOpacity(opacity))
+
+    // 设置托盘图标可见性
+    ipcMain.handle('set-tray-icon-visible', (_event, visible: boolean) =>
+      this.setTrayIconVisible(visible)
+    )
+
+    // 设置失去焦点时是否隐藏窗口
+    ipcMain.handle('set-hide-on-blur', (_event, hide: boolean) => this.setHideOnBlur(hide))
+
+    // 设置开机启动
+    ipcMain.handle('set-launch-at-login', (_event, enable: boolean) =>
+      this.setLaunchAtLogin(enable)
+    )
+    ipcMain.handle('get-launch-at-login', () => this.getLaunchAtLogin())
+
+    // 屏幕截图
+    ipcMain.handle('screen-capture', () => screenCapture())
+
+    // 隐藏主窗口
+    ipcMain.handle('hide-main-window', (_event, isRestorePreWindow: boolean = true) => {
+      this.hideWindow(isRestorePreWindow)
+    })
+
+    // 设置主题
+    ipcMain.handle('set-theme', (_event, theme: string) => this.setTheme(theme))
+
+    // 快捷键相关
+    ipcMain.handle('update-shortcut', (_event, shortcut: string) => this.updateShortcut(shortcut))
+    ipcMain.handle('get-current-shortcut', () => this.getCurrentShortcut())
+    ipcMain.handle('register-global-shortcut', (_event, shortcut: string, target: string) =>
+      this.registerGlobalShortcut(shortcut, target)
+    )
+    ipcMain.handle('unregister-global-shortcut', (_event, shortcut: string) =>
+      this.unregisterGlobalShortcut(shortcut)
+    )
+
+    // 标准数据库 API - 同步版本（供插件使用）
+    ipcMain.on('db:put', (event, doc) => {
+      const prefix = this.getPluginPrefix(event)
+      if (prefix) {
+        doc._id = prefix + doc._id
+      }
+      event.returnValue = lmdbInstance.put(doc)
+    })
+    ipcMain.on('db:get', (event, id) => {
+      const prefix = this.getPluginPrefix(event)
+      if (prefix) {
+        id = prefix + id
+      }
+      event.returnValue = lmdbInstance.get(id)
+    })
+    ipcMain.on('db:remove', (event, docOrId) => {
+      const prefix = this.getPluginPrefix(event)
+      if (prefix) {
+        if (typeof docOrId === 'string') {
+          docOrId = prefix + docOrId
+        } else {
+          docOrId._id = prefix + docOrId._id
+        }
+      }
+      event.returnValue = lmdbInstance.remove(docOrId)
+    })
+    ipcMain.on('db:bulk-docs', (event, docs) => {
+      const prefix = this.getPluginPrefix(event)
+      if (prefix) {
+        docs.forEach((doc: any) => {
+          doc._id = prefix + doc._id
+        })
+      }
+      event.returnValue = lmdbInstance.bulkDocs(docs)
+    })
+    ipcMain.on('db:all-docs', (event, key) => {
+      const prefix = this.getPluginPrefix(event)
+      if (prefix) {
+        if (Array.isArray(key)) {
+          key = key.map((k) => prefix + k)
+        } else if (typeof key === 'string') {
+          key = prefix + key
+        } else {
+          // 如果未指定 key，则查询该插件下的所有文档
+          key = prefix
+        }
+      }
+      event.returnValue = lmdbInstance.allDocs(key)
+    })
+    ipcMain.on('db:post-attachment', (event, id, attachment, type) => {
+      const prefix = this.getPluginPrefix(event)
+      if (prefix) {
+        id = prefix + id
+      }
+      event.returnValue = lmdbInstance.postAttachment(id, attachment, type)
+    })
+    ipcMain.on('db:get-attachment', (event, id) => {
+      const prefix = this.getPluginPrefix(event)
+      if (prefix) {
+        id = prefix + id
+      }
+      event.returnValue = lmdbInstance.getAttachment(id)
+    })
+    ipcMain.on('db:get-attachment-type', (event, id) => {
+      const prefix = this.getPluginPrefix(event)
+      if (prefix) {
+        id = prefix + id
+      }
+      event.returnValue = lmdbInstance.getAttachmentType(id)
+    })
+
+    // 标准数据库 API - Promise 版本（供渲染进程使用）
+    ipcMain.handle('db:put', async (event, doc) => {
+      const prefix = this.getPluginPrefix(event)
+      if (prefix) {
+        doc._id = prefix + doc._id
+      }
+      return await lmdbInstance.promises.put(doc)
+    })
+    ipcMain.handle('db:get', async (event, id) => {
+      const prefix = this.getPluginPrefix(event)
+      if (prefix) {
+        id = prefix + id
+      }
+      return await lmdbInstance.promises.get(id)
+    })
+    ipcMain.handle('db:remove', async (event, docOrId) => {
+      const prefix = this.getPluginPrefix(event)
+      if (prefix) {
+        if (typeof docOrId === 'string') {
+          docOrId = prefix + docOrId
+        } else {
+          docOrId._id = prefix + docOrId._id
+        }
+      }
+      return await lmdbInstance.promises.remove(docOrId)
+    })
+    ipcMain.handle('db:bulk-docs', async (event, docs) => {
+      const prefix = this.getPluginPrefix(event)
+      if (prefix) {
+        docs.forEach((doc: any) => {
+          doc._id = prefix + doc._id
+        })
+      }
+      return await lmdbInstance.promises.bulkDocs(docs)
+    })
+    ipcMain.handle('db:all-docs', async (event, key) => {
+      const prefix = this.getPluginPrefix(event)
+      if (prefix) {
+        if (Array.isArray(key)) {
+          key = key.map((k) => prefix + k)
+        } else if (typeof key === 'string') {
+          key = prefix + key
+        } else {
+          // 如果未指定 key，则查询该插件下的所有文档
+          key = prefix
+        }
+      }
+      return await lmdbInstance.promises.allDocs(key)
+    })
+    ipcMain.handle('db:post-attachment', async (event, id, attachment, type) => {
+      const prefix = this.getPluginPrefix(event)
+      if (prefix) {
+        id = prefix + id
+      }
+      return await lmdbInstance.promises.postAttachment(id, attachment, type)
+    })
+    ipcMain.handle('db:get-attachment', async (event, id) => {
+      const prefix = this.getPluginPrefix(event)
+      if (prefix) {
+        id = prefix + id
+      }
+      return await lmdbInstance.promises.getAttachment(id)
+    })
+    ipcMain.handle('db:get-attachment-type', async (event, id) => {
+      const prefix = this.getPluginPrefix(event)
+      if (prefix) {
+        id = prefix + id
+      }
+      return await lmdbInstance.promises.getAttachmentType(id)
+    })
+
+    // 剪贴板相关
+    ipcMain.handle(
+      'clipboard:get-history',
+      (_event, page: number, pageSize: number, filter?: any) =>
+        this.clipboardGetHistory(page, pageSize, filter)
+    )
+    ipcMain.handle('clipboard:search', (_event, keyword: string) => this.clipboardSearch(keyword))
+    ipcMain.handle('clipboard:delete', (_event, id: string) => this.clipboardDelete(id))
+    ipcMain.handle('clipboard:clear', (_event, type?: string) => this.clipboardClear(type))
+    ipcMain.handle('clipboard:get-status', () => this.clipboardGetStatus())
+    ipcMain.handle('clipboard:write', (_event, id: string) => this.clipboardWrite(id))
+    ipcMain.handle('clipboard:update-config', (_event, config: any) =>
+      this.clipboardUpdateConfig(config)
+    )
+
+    // 窗口相关
+    ipcMain.handle('window:paste', () => this.windowPaste())
+
+    // 插件独立窗口相关
+    ipcMain.on(
+      'create-browser-window',
+      (
+        event,
+        url: string,
+        options: Electron.BrowserWindowConstructorOptions,
+        callbackId: string
+      ) => {
+        const pluginInfo = this.pluginManager.getPluginInfoByWebContents(event.sender)
+        if (!pluginInfo) {
+          console.error('创建窗口失败: 未找到插件信息')
+          event.returnValue = null
+          return
+        }
+        event.returnValue = pluginWindowManager.createWindow(
+          pluginInfo.path,
+          pluginInfo.name,
+          url,
+          options,
+          callbackId,
+          event.sender
+        )
+      }
+    )
+
+    ipcMain.handle(
+      'browser-window-action',
+      (_event, windowId: string, path: string[], args: any[]) => {
+        return pluginWindowManager.executeMethod(windowId, path, args)
+      }
+    )
+
+    ipcMain.handle('browser-window-get-prop', (_event, windowId: string, path: string[]) => {
+      return pluginWindowManager.getPropertyByPath(windowId, path)
+    })
+
+    ipcMain.on('browser-window-get-prop-sync', (event, windowId: string, path: string[]) => {
+      event.returnValue = pluginWindowManager.getPropertyInfo(windowId, path)
+    })
+
+    ipcMain.on(
+      'browser-window-call-sync',
+      (event, windowId: string, path: string[], args: any[]) => {
+        event.returnValue = pluginWindowManager.callMethodSync(windowId, path, args)
+      }
+    )
+
+    ipcMain.handle('browser-window-wait-task', async (_event, taskId: string) => {
+      return await pluginWindowManager.waitForTask(taskId)
+    })
+
+    ipcMain.on('send-to-parent', (event, channel: string, ...args: any[]) => {
+      pluginWindowManager.sendToParent(event.sender, channel, args)
+    })
+
+    // 子输入框相关
+    ipcMain.handle('set-sub-input', (_event, placeholder?: string) => this.setSubInput(placeholder))
+    ipcMain.on('notify-sub-input-change', (_event, text: string) => this.notifySubInputChange(text))
+
+    // 通知相关
+    ipcMain.handle('show-notification', (event, body: string) => this.showNotification(event, body))
+
+    // 设置插件高度
+    ipcMain.handle('set-expend-height', (_event, height: number) => this.setExpendHeight(height))
+
+    // 插件市场相关
+    ipcMain.handle('fetch-plugin-market', () => this.fetchPluginMarket())
+    ipcMain.handle('install-plugin-from-market', (_event, plugin: any) =>
+      this.installPluginFromMarket(plugin)
+    )
+
+    // 获取系统路径
+    ipcMain.on('get-path', (event, name: string) => this.getPath(event, name))
+
+    // 显示文件保存对话框
+    ipcMain.on('show-save-dialog', (event, options: any) => this.showSaveDialog(event, options))
+
+    // 复制文本到剪贴板
+    ipcMain.on('copy-text', (event, text: string) => {
+      try {
+        clipboard.writeText(text)
+        event.returnValue = true
+      } catch (error) {
+        console.error('复制文本失败:', error)
+        event.returnValue = false
+      }
+    })
+
+    // 复制图片到剪贴板
+    ipcMain.on('copy-image', (event, image: string | Buffer) => {
+      try {
+        let nativeImg
+
+        if (typeof image === 'string') {
+          // 判断是文件路径还是 Base64 Data URL
+          if (image.startsWith('data:image/')) {
+            // Base64 Data URL
+            nativeImg = nativeImage.createFromDataURL(image)
+          } else {
+            // 文件路径
+            nativeImg = nativeImage.createFromPath(image)
+          }
+        } else if (Buffer.isBuffer(image)) {
+          // Buffer
+          nativeImg = nativeImage.createFromBuffer(image)
+        } else {
+          throw new Error('不支持的图片类型')
+        }
+
+        if (nativeImg.isEmpty()) {
+          throw new Error('图片为空或无效')
+        }
+
+        clipboard.writeImage(nativeImg)
+        event.returnValue = true
+      } catch (error) {
+        console.error('复制图片失败:', error)
+        event.returnValue = false
+      }
+    })
+
+    // 复制文件到剪贴板
+    ipcMain.on('copy-file', (event, filePath: string | string[]) => {
+      try {
+        const files = Array.isArray(filePath) ? filePath : [filePath]
+        clipboard.writeBuffer('FileNameW', Buffer.from(files.join('\0') + '\0', 'ucs2'))
+        event.returnValue = true
+      } catch (error) {
+        console.error('复制文件失败:', error)
+        event.returnValue = false
+      }
+    })
+
+    // 显示文件打开对话框
+    ipcMain.on('show-open-dialog', (event, options: Electron.OpenDialogSyncOptions) => {
+      try {
+        const result = dialog.showOpenDialogSync(this.mainWindow!, options)
+        event.returnValue = result || []
+      } catch (error) {
+        console.error('显示文件打开对话框失败:', error)
+        event.returnValue = []
+      }
+    })
+
+    // ipcRenderer.sendTo polyfill - 转发消息到目标 webContents
+    ipcMain.on('ipc-send-to', (_event, webContentsId: number, channel: string, ...args: any[]) => {
+      try {
+        const targetWebContents = webContents.fromId(webContentsId)
+        if (targetWebContents && !targetWebContents.isDestroyed()) {
+          targetWebContents.send(channel, ...args)
+          console.log(`转发消息: ${channel} -> webContentsId: ${webContentsId}`)
+        } else {
+          console.warn(`目标 webContents 不存在或已销毁: ${webContentsId}`)
+        }
+      } catch (error) {
+        console.error('转发消息失败:', error)
+      }
+    })
+
+    // 获取鼠标光标的屏幕坐标
+    ipcMain.on('get-cursor-screen-point', (event) => {
+      const point = screen.getCursorScreenPoint()
+      event.returnValue = point
+    })
+
+    // 获取最接近指定点的显示器
+    ipcMain.on('get-display-nearest-point', (event, point: Electron.Point) => {
+      const display = screen.getDisplayNearestPoint(point)
+      event.returnValue = display
+    })
+
+    // DIP 坐标转屏幕物理坐标
+    ipcMain.on('dip-to-screen-point', (event, point: Electron.Point) => {
+      const p = screen.dipToScreenPoint(point)
+      event.returnValue = p
+    })
+
+    // 屏幕物理坐标转 DIP 坐标
+    ipcMain.on('screen-to-dip-point', (event, point: Electron.Point) => {
+      const p = screen.screenToDipPoint(point)
+      event.returnValue = p
+    })
+
+    // 获取桌面捕获源
+    ipcMain.handle('desktop-capture-sources', async (_event, options: Electron.SourcesOptions) => {
+      try {
+        const sources = await desktopCapturer.getSources(options)
+        return sources
+      } catch (error) {
+        console.error('获取桌面捕获源失败:', error)
+        throw error
+      }
+    })
+
+    // 检查当前插件是否处于开发模式
+    ipcMain.on('is-dev', (event) => {
+      event.returnValue = this.pluginManager.isPluginDev(event.sender.id)
+    })
+
+    // 获取当前 WebContents ID
+    ipcMain.on('get-web-contents-id', (event) => {
+      event.returnValue = event.sender.id
+    })
+
+    // 获取操作系统类型
+    ipcMain.on('get-os-type', (event) => {
+      event.returnValue = os.type()
+    })
+  }
+
+  // 获取插件专属前缀
+  private getPluginPrefix(event: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent): string | null {
+    const pluginInfo = this.pluginManager?.getPluginInfoByWebContents(event.sender)
+    if (pluginInfo) {
+      return `PLUGIN/${pluginInfo.name}/`
+    }
+    return null
+  }
+
+  private onPluginEnter(): any {
+    console.log('收到插件进入事件:', this.launchParam)
+    return this.launchParam
+  }
+
+  // 处理插件按 ESC 键事件
+  // private onPluginEscPressed(): void {
+  //   console.log('插件按下 ESC 键，返回搜索页面')
+  //   // 隐藏插件视图
+  //   if (this.pluginManager) {
+  //     this.pluginManager.hidePluginView()
+  //   }
+  //   // 通知渲染进程返回搜索页面
+  //   this.mainWindow?.webContents.send('back-to-search')
+  //   // 主窗口获取焦点
+  //   this.mainWindow?.webContents.focus()
+  // }
+
+  // 获取应用列表
+  private async getApps(): Promise<any[]> {
+    console.log('收到获取应用列表请求')
+    const apps = await scanApplications()
+    console.log(`扫描到 ${apps.length} 个应用,开始处理图标...`)
+
+    let successCount = 0
+    let failCount = 0
+
+    // 并发处理图标
+    const appsWithIcons = await Promise.all(
+      apps.map(async (app) => {
+        if (!app.icon) {
+          failCount++
+          return { ...app, icon: undefined }
+        }
+
+        const iconPath = await iconToCachedPath(app.icon)
+
+        if (iconPath) {
+          successCount++
+          return { ...app, icon: iconPath }
+        } else {
+          failCount++
+          return { ...app, icon: undefined }
+        }
+      })
+    )
+
+    console.log(`图标处理完成: 成功 ${successCount} 个, 失败 ${failCount} 个`)
+    return appsWithIcons
+  }
+
+  // 启动应用或插件（统一接口）
+  private async launch(path: string, param: LaunchParam): Promise<any> {
+    this.launchParam = param
+    try {
+      // 判断是插件还是应用
+      if (path.startsWith('plugin:')) {
+        // 插件路径格式: plugin:/path/to/plugin 或 plugin:/path/to/plugin:featureCode
+        const parts = path.replace('plugin:', '').split(':')
+        const pluginPath = parts[0]
+        const featureCode = parts[1] || ''
+        // 插件启动参数中添加 featureCode
+        this.launchParam.code = featureCode
+
+        console.log('启动插件:', { pluginPath, featureCode })
+
+        // 通知渲染进程准备显示插件占位区域
+        this.mainWindow?.webContents.send('show-plugin-placeholder')
+
+        if (this.pluginManager) {
+          this.pluginManager.createPluginView(pluginPath, featureCode)
+        }
+      } else {
+        // 普通应用
+        await launchApp(path)
+        // 通知渲染进程应用已启动（清空搜索框等）
+        this.mainWindow?.webContents.send('app-launched')
+        this.mainWindow?.hide()
+      }
+    } catch (error) {
+      console.error('启动失败:', error)
+      throw error
+    }
+  }
+
+  // 隐藏窗口
+  // 隐藏窗口
+  private hideWindow(isRestorePreWindow: boolean = true): void {
+    windowManager.hideWindow(isRestorePreWindow)
+  }
+
+  // 设置窗口不透明度
+  private setWindowOpacity(opacity: number): void {
+    if (this.mainWindow) {
+      // 限制范围在 0.3 到 1 之间
+      const clampedOpacity = Math.max(0.3, Math.min(1, opacity))
+      this.mainWindow.setOpacity(clampedOpacity)
+      console.log('设置窗口不透明度:', clampedOpacity)
+    }
+  }
+
+  // 设置托盘图标可见性
+  private setTrayIconVisible(visible: boolean): void {
+    windowManager.setTrayIconVisible(visible)
+    console.log('设置托盘图标可见性:', visible)
+  }
+
+  // 设置失去焦点时是否隐藏窗口
+  private setHideOnBlur(hide: boolean): void {
+    windowManager.setHideOnBlur(hide)
+    console.log('设置失去焦点时是否隐藏窗口:', hide)
+  }
+
+  // 设置开机启动
+  private setLaunchAtLogin(enable: boolean): void {
+    app.setLoginItemSettings({
+      openAtLogin: enable,
+      openAsHidden: false
+    })
+    console.log('设置开机启动:', enable)
+  }
+
+  // 获取开机启动状态
+  private getLaunchAtLogin(): boolean {
+    const settings = app.getLoginItemSettings()
+    return settings.openAtLogin
+  }
+
+  // 设置主题
+  private setTheme(theme: string): void {
+    nativeTheme.themeSource = theme as 'system' | 'light' | 'dark'
+    console.log('设置主题:', theme)
+  }
+
+  // 更新快捷键
+  private updateShortcut(shortcut: string): { success: boolean; error?: string } {
+    try {
+      const success = updateShortcut(shortcut)
+      if (success) {
+        return { success: true }
+      } else {
+        return { success: false, error: '快捷键已被占用' }
+      }
+    } catch (error: any) {
+      console.error('更新快捷键失败:', error)
+      return { success: false, error: error.message || '未知错误' }
+    }
+  }
+
+  // 获取当前快捷键
+  private getCurrentShortcut(): string {
+    return getCurrentShortcut()
+  }
+
+  // 注册全局快捷键
+  private async registerGlobalShortcut(shortcut: string, target: string): Promise<any> {
+    try {
+      // 注册全局快捷键
+      const success = globalShortcut.register(shortcut, () => {
+        console.log(`全局快捷键触发: ${shortcut} -> ${target}`)
+        this.handleGlobalShortcut(target)
+      })
+
+      if (!success) {
+        return { success: false, error: '快捷键注册失败，可能已被其他应用占用' }
+      }
+
+      console.log(`成功注册全局快捷键: ${shortcut} -> ${target}`)
+      return { success: true }
+    } catch (error: any) {
+      console.error('注册全局快捷键失败:', error)
+      return { success: false, error: error.message || '未知错误' }
+    }
+  }
+
+  // 注销全局快捷键
+  private async unregisterGlobalShortcut(shortcut: string): Promise<any> {
+    try {
+      globalShortcut.unregister(shortcut)
+      console.log(`成功注销全局快捷键: ${shortcut}`)
+      return { success: true }
+    } catch (error: any) {
+      console.error('注销全局快捷键失败:', error)
+      return { success: false, error: error.message || '未知错误' }
+    }
+  }
+
+  // 处理全局快捷键触发
+  private async handleGlobalShortcut(target: string): Promise<void> {
+    try {
+      // 解析目标指令，格式：插件描述/cmd
+      const parts = target.split('/')
+      if (parts.length !== 2) {
+        console.error('目标指令格式错误:', target)
+        return
+      }
+
+      const [pluginDescription, cmdName] = parts
+
+      // 从数据库获取插件列表
+      const plugins: any = await this.dbGet('plugins')
+      if (!plugins || !Array.isArray(plugins)) {
+        console.error('未找到插件列表')
+        return
+      }
+
+      // 查找匹配的插件（根据 description）
+      const plugin = plugins.find((p: any) => p.name === pluginDescription)
+      if (!plugin) {
+        console.error(`未找到插件: ${pluginDescription}`)
+        return
+      }
+
+      // 查找匹配的 feature 和 cmd
+      let targetFeature: any = null
+      for (const feature of plugin.features || []) {
+        if (feature.cmds && Array.isArray(feature.cmds)) {
+          for (const cmd of feature.cmds) {
+            const cmdLabel = typeof cmd === 'string' ? cmd : cmd.label
+            if (cmdLabel === cmdName) {
+              targetFeature = feature
+              break
+            }
+          }
+          if (targetFeature) break
+        }
+      }
+
+      if (!targetFeature) {
+        console.error(`未找到命令: ${pluginDescription}/${cmdName}`)
+        return
+      }
+
+      // 构造启动路径
+      const launchPath = `plugin:${plugin.path}:${targetFeature.code}`
+      console.log(`启动插件: ${launchPath}`)
+
+      // 刷新上一个激活窗口
+      windowManager.refreshPreviousActiveWindow()
+
+      // 显示窗口并启动插件
+      setTimeout(() => {
+        this.mainWindow?.show()
+      }, 50)
+      await this.launch(launchPath, { code: targetFeature.code })
+    } catch (error) {
+      console.error('处理全局快捷键失败:', error)
+    }
+  }
+
+  // 调整窗口高度
+  public resizeWindow(height: number): void {
+    if (this.mainWindow) {
+      console.log('收到调整窗口高度请求:', height)
+      const [width] = this.mainWindow.getSize()
+      // 限制高度范围: 最小 59px, 最大 600px
+      const newHeight = Math.max(59, Math.min(height, 600))
+      this.mainWindow.setSize(width, newHeight)
+    }
+  }
+
+  // 打开外部链接
+  private async openExternal(url: string): Promise<void> {
+    try {
+      await shell.openExternal(url)
+    } catch (error) {
+      console.error('打开外部链接失败:', error)
+      throw error
+    }
+  }
+
+  // 复制到剪贴板
+  private async copyToClipboard(text: string): Promise<void> {
+    try {
+      clipboard.writeText(text)
+    } catch (error) {
+      console.error('复制到剪贴板失败:', error)
+      throw error
+    }
+  }
+
+  // 在终端打开路径
+  private async openTerminal(path: string): Promise<void> {
+    try {
+      await appleScriptHelper.openInTerminal(path)
+    } catch (error) {
+      console.error('在终端打开失败:', error)
+      throw error
+    }
+  }
+
+  // 获取访达当前路径
+  private async getFinderPath(): Promise<string | null> {
+    try {
+      return await appleScriptHelper.getFinderPath()
+    } catch (error) {
+      console.error('获取访达路径失败:', error)
+      return null
+    }
+  }
+
+  // 获取最后一次复制的文本（在指定时间内）
+  private getLastCopiedText(timeLimit: number): string | null {
+    try {
+      return clipboardManager.getLastCopiedText(timeLimit)
+    } catch (error) {
+      console.error('获取最后复制文本失败:', error)
+      return null
+    }
+  }
+
+  // 获取当前激活的应用程序
+  private async getFrontmostApp(): Promise<{
+    name: string
+    bundleId: string
+    path: string
+  } | null> {
+    try {
+      return await appleScriptHelper.getFrontmostApp()
+    } catch (error) {
+      console.error('获取当前激活应用失败:', error)
+      return null
+    }
+  }
+
+  // 激活指定应用程序
+  private async activateApp(
+    identifier: string,
+    type: string = 'name'
+  ): Promise<{ success: boolean; error?: string }> {
+    try {
+      let result = false
+
+      switch (type) {
+        case 'bundleId':
+          result = await appleScriptHelper.activateAppByBundleId(identifier)
+          break
+        case 'path':
+          result = await appleScriptHelper.activateAppByPath(identifier)
+          break
+        case 'name':
+        default:
+          result = await appleScriptHelper.activateAppByName(identifier)
+          break
+      }
+
+      if (result) {
+        return { success: true }
+      } else {
+        return { success: false, error: '激活应用失败' }
+      }
+    } catch (error: any) {
+      console.error('激活应用失败:', error)
+      return { success: false, error: error.message || '未知错误' }
+    }
+  }
+
+  // 显示上下文菜单
+  private async showContextMenu(menuItems: any): Promise<void> {
+    if (!this.mainWindow) return
+
+    const template = menuItems.map((item: any) => ({
+      label: item.label,
+      click: () => {
+        this.mainWindow?.webContents.send('context-menu-command', item.id)
+      }
+    }))
+
+    const menu = Menu.buildFromTemplate(template)
+    menu.popup({ window: this.mainWindow })
+  }
+
+  // 显示系统通知
+  private showNotification(event: Electron.IpcMainInvokeEvent, body: string): void {
+    if (Notification.isSupported()) {
+      const options: Electron.NotificationConstructorOptions = {
+        title: 'zTools', // 默认标题
+        body: body
+      }
+
+      // 尝试获取插件信息
+      const pluginInfo = this.pluginManager.getPluginInfoByWebContents(event.sender)
+      if (pluginInfo) {
+        options.title = pluginInfo.name
+        if (pluginInfo.logo) {
+          // 移除 image:// 前缀，因为 Notification icon 需要文件路径
+          options.icon = pluginInfo.logo.replace('image://', '')
+        }
+      }
+
+      new Notification(options).show()
+    }
+  }
+
+  // 设置插件高度
+  private setExpendHeight(height: number): void {
+    if (this.pluginManager) {
+      this.pluginManager.setExpendHeight(height)
+    }
+  }
+
+  // 获取系统路径
+  private getPath(event: Electron.IpcMainEvent, name: string): void {
+    try {
+      let result = ''
+      switch (name) {
+        case 'home':
+          result = app.getPath('home')
+          break
+        case 'appData':
+          result = app.getPath('appData')
+          break
+        case 'userData':
+          result = app.getPath('userData')
+          break
+        case 'temp':
+          result = app.getPath('temp')
+          break
+        case 'exe':
+          result = app.getPath('exe')
+          break
+        case 'desktop':
+          result = app.getPath('desktop')
+          break
+        case 'documents':
+          result = app.getPath('documents')
+          break
+        case 'downloads':
+          result = app.getPath('downloads')
+          break
+        case 'music':
+          result = app.getPath('music')
+          break
+        case 'pictures':
+          result = app.getPath('pictures')
+          break
+        case 'videos':
+          result = app.getPath('videos')
+          break
+        case 'logs':
+          result = app.getPath('logs')
+          break
+        default:
+          result = ''
+      }
+      event.returnValue = result
+    } catch (error) {
+      console.error('获取系统路径失败:', name, error)
+      event.returnValue = ''
+    }
+  }
+
+  // 显示文件保存对话框
+  private showSaveDialog(event: Electron.IpcMainEvent, options: any): void {
+    try {
+      const win = BrowserWindow.fromWebContents(event.sender) || this.mainWindow
+      if (!win) {
+        event.returnValue = undefined
+        return
+      }
+      const result = dialog.showSaveDialogSync(win, options)
+      event.returnValue = result
+    } catch (error) {
+      console.error('显示文件保存对话框失败:', error)
+      event.returnValue = undefined
+    }
+  }
+
+  // 获取插件列表
+  private async getPlugins(): Promise<any[]> {
+    try {
+      const data = await this.dbGet('plugins')
+      return data || []
+    } catch (error) {
+      console.error('获取插件列表失败:', error)
+      return []
+    }
+  }
+
+  // 从 Zip 文件安装插件（核心逻辑）
+  private async _installPluginFromZip(zipPath: string): Promise<any> {
+    // 确保插件目录和临时目录存在
+    await fs.mkdir(PLUGIN_DIR, { recursive: true })
+    const tempDir = path.join(app.getPath('temp'), 'ztools-plugin-temp')
+    await fs.mkdir(tempDir, { recursive: true })
+
+    // 生成临时解压目录
+    const tempExtractPath = path.join(tempDir, `plugin-${Date.now()}`)
+
+    try {
+      // 解压到临时目录
+      const zip = new AdmZip(zipPath)
+      zip.extractAllTo(tempExtractPath, true)
+
+      // 校验 plugin.json 文件
+      const pluginJsonPath = path.join(tempExtractPath, 'plugin.json')
+      try {
+        await fs.access(pluginJsonPath)
+      } catch {
+        await fs.rm(tempExtractPath, { recursive: true, force: true })
+        return { success: false, error: 'plugin.json 文件不存在' }
+      }
+
+      // 读取并解析 plugin.json
+      const pluginJsonContent = await fs.readFile(pluginJsonPath, 'utf-8')
+      let pluginConfig: any
+      try {
+        pluginConfig = JSON.parse(pluginJsonContent)
+      } catch {
+        await fs.rm(tempExtractPath, { recursive: true, force: true })
+        return { success: false, error: 'plugin.json 格式错误' }
+      }
+
+      // 获取插件名称
+      if (!pluginConfig.name) {
+        await fs.rm(tempExtractPath, { recursive: true, force: true })
+        return { success: false, error: 'plugin.json 缺少 name 字段' }
+      }
+
+      const pluginName = pluginConfig.name
+      const pluginPath = path.join(PLUGIN_DIR, pluginName)
+
+      // 检查文件系统中插件是否已存在
+      try {
+        await fs.access(pluginPath)
+        await fs.rm(tempExtractPath, { recursive: true, force: true })
+        return { success: false, error: '插件目录已存在' }
+      } catch {
+        // 插件不存在，继续安装
+      }
+
+      // 检查数据库中是否已存在同名插件
+      try {
+        const existingPlugins = await this.getPlugins()
+        const isDuplicate = existingPlugins.some((p: any) => p.name === pluginName)
+        if (isDuplicate) {
+          await fs.rm(tempExtractPath, { recursive: true, force: true })
+          return { success: false, error: '插件已存在' }
+        }
+      } catch {
+        // 忽略查询错误，继续安装
+      }
+
+      // 校验必填字段
+      const requiredFields = ['name', 'version', 'features']
+      for (const field of requiredFields) {
+        if (!pluginConfig[field]) {
+          await fs.rm(tempExtractPath, { recursive: true, force: true })
+          return { success: false, error: `缺少必填字段: ${field}` }
+        }
+      }
+
+      // 校验 features 数组
+      if (!Array.isArray(pluginConfig.features) || pluginConfig.features.length === 0) {
+        await fs.rm(tempExtractPath, { recursive: true, force: true })
+        return { success: false, error: 'features 必须是非空数组' }
+      }
+
+      // 校验每个 feature 的必填字段
+      for (const feature of pluginConfig.features) {
+        if (!feature.code || !Array.isArray(feature.cmds)) {
+          await fs.rm(tempExtractPath, { recursive: true, force: true })
+          return { success: false, error: 'feature 缺少必填字段 (code, cmds)' }
+        }
+      }
+
+      // 从临时目录移动到最终目录
+      await fs.rename(tempExtractPath, pluginPath)
+
+      // 存储插件信息到数据库
+      const pluginInfo = {
+        name: pluginConfig.name,
+        version: pluginConfig.version,
+        description: pluginConfig.description || '',
+        logo: pluginConfig.logo ? 'image://' + path.join(pluginPath, pluginConfig.logo) : '',
+        main: pluginConfig.main,
+        preload: pluginConfig.preload,
+        features: pluginConfig.features,
+        path: pluginPath,
+        isDevelopment: false,
+        installedAt: new Date().toISOString()
+      }
+
+      // 获取现有插件列表
+      let plugins: any = await this.dbGet('plugins')
+      if (!plugins) {
+        plugins = []
+      }
+
+      // 添加新插件到列表
+      plugins.push(pluginInfo)
+      await this.dbPut('plugins', plugins)
+      // 通知渲染进程插件列表已变化
+      this.mainWindow?.webContents.send('plugins-changed')
+
+      return { success: true, plugin: pluginInfo }
+    } catch (error: any) {
+      await fs.rm(tempExtractPath, { recursive: true, force: true })
+      console.error('安装插件失败:', error)
+      return { success: false, error: error.message || '安装失败' }
+    } finally {
+      // 清理临时目录
+      try {
+        await fs.rm(tempDir, { recursive: true, force: true })
+      } catch (e) {
+        console.error('清理临时目录失败:', e)
+      }
+    }
+  }
+
+  // 导入插件
+  private async importPlugin(): Promise<any> {
+    try {
+      // 打开文件选择对话框
+      const result = await dialog.showOpenDialog(this.mainWindow!, {
+        title: '选择插件文件',
+        filters: [{ name: '插件文件', extensions: ['zip'] }],
+        properties: ['openFile']
+      })
+
+      if (result.canceled || result.filePaths.length === 0) {
+        return { success: false, error: '未选择文件' }
+      }
+
+      const zipPath = result.filePaths[0]
+      return await this._installPluginFromZip(zipPath)
+    } catch (error: any) {
+      console.error('导入插件失败:', error)
+      return { success: false, error: error.message || '未知错误' }
+    }
+  }
+
+  // 获取插件市场列表
+  private async fetchPluginMarket(): Promise<any> {
+    try {
+      const folderUrl = 'https://ilt.lanzouu.com/b0pn75v9g'
+      const password = '5w87'
+
+      // 1. 获取文件列表
+      const fileList = await getLanzouFolderFileList(folderUrl, password)
+
+      if (!Array.isArray(fileList) || fileList.length === 0) {
+        throw new Error('插件市场文件列表为空')
+      }
+
+      // 2. 找到最新版本
+      let latestFile: any = null
+      let latestVersion = '0.0.0'
+
+      const versionRegex = /plugins_(\d+(\.\d+)*)\.txt/
+
+      for (const file of fileList) {
+        const match = file.name_all.match(versionRegex)
+        if (match) {
+          const version = match[1]
+          if (this.compareVersions(version, latestVersion) > 0) {
+            latestVersion = version
+            latestFile = file
+          }
+        }
+      }
+
+      if (!latestFile) {
+        throw new Error('未找到有效的插件列表文件')
+      }
+
+      console.log(`发现最新插件列表版本: ${latestVersion}, 文件: ${latestFile.name_all}`)
+
+      // 3. 检查本地缓存
+      const cachedVersion = await this.dbGet('plugin-market-version')
+      const cachedData = await this.dbGet('plugin-market-data')
+
+      if (cachedVersion === latestVersion && cachedData) {
+        console.log('使用本地缓存的插件市场列表')
+        return { success: true, data: cachedData }
+      }
+
+      // 4. 下载新版本
+      console.log('下载新版本插件列表...')
+      const filePageUrl = 'https://ilt.lanzouu.com/' + latestFile.id
+      console.log('文件页面URL:', filePageUrl)
+      const downloadLink = await getLanzouDownloadLink(filePageUrl)
+      console.log('下载链接:', downloadLink)
+
+      // 下载文件到临时目录
+      const tempDir = path.join(app.getPath('temp'), 'ztools-plugin-market')
+      await fs.mkdir(tempDir, { recursive: true })
+      const tempFilePath = path.join(tempDir, `plugins-${Date.now()}.json`)
+
+      let retryCount = 0
+      const maxRetries = 3
+      while (retryCount < maxRetries) {
+        try {
+          await downloadFile(downloadLink, tempFilePath)
+          break
+        } catch (error) {
+          retryCount++
+          console.error(`下载失败，重试第 ${retryCount} 次:`, error)
+          if (retryCount >= maxRetries) {
+            throw error
+          }
+          await sleep(500)
+        }
+      }
+
+      console.log('插件市场列表下载完成:', tempFilePath)
+
+      // 读取并解析 JSON
+      const fileContent = await fs.readFile(tempFilePath, 'utf-8')
+      const json = JSON.parse(fileContent)
+
+      // 清理临时文件
+      try {
+        await fs.unlink(tempFilePath)
+        await fs.rm(tempDir, { recursive: true, force: true })
+      } catch (e) {
+        console.error('清理临时文件失败:', e)
+      }
+
+      // 5. 更新缓存
+      await this.dbPut('plugin-market-version', latestVersion)
+      await this.dbPut('plugin-market-data', json)
+
+      return { success: true, data: json }
+    } catch (error: any) {
+      console.error('获取插件市场列表失败:', error)
+      // 如果获取失败但有缓存，尝试返回缓存
+      try {
+        const cachedData = await this.dbGet('plugin-market-data')
+        if (cachedData) {
+          console.log('获取失败，降级使用本地缓存')
+          return { success: true, data: cachedData }
+        }
+      } catch {
+        // ignore
+      }
+      return { success: false, error: error.message || '获取失败' }
+    }
+  }
+
+  // 版本比较辅助函数
+  private compareVersions(v1: string, v2: string): number {
+    const parts1 = v1.split('.').map(Number)
+    const parts2 = v2.split('.').map(Number)
+
+    for (let i = 0; i < Math.max(parts1.length, parts2.length); i++) {
+      const p1 = parts1[i] || 0
+      const p2 = parts2[i] || 0
+      if (p1 > p2) return 1
+      if (p1 < p2) return -1
+    }
+    return 0
+  }
+
+  // 从市场安装插件
+  private async installPluginFromMarket(plugin: any): Promise<any> {
+    try {
+      console.log('开始从市场安装插件:', plugin.name)
+      const downloadUrl = plugin.downloadUrl
+      if (!downloadUrl) {
+        return { success: false, error: '无效的下载链接' }
+      }
+
+      // 解析真实下载链接
+      const realDownloadUrl = await getLanzouDownloadLink(downloadUrl)
+      console.log('插件真实下载链接:', realDownloadUrl)
+
+      // 下载文件到临时目录
+      const tempDir = path.join(app.getPath('temp'), 'ztools-plugin-download')
+      await fs.mkdir(tempDir, { recursive: true })
+      const tempFilePath = path.join(tempDir, `${plugin.name}-${Date.now()}.zip`)
+
+      let retryCount = 0
+      const maxRetries = 3
+      while (retryCount < maxRetries) {
+        try {
+          await downloadFile(realDownloadUrl, tempFilePath)
+          break
+        } catch (error) {
+          retryCount++
+          console.error(`下载失败，重试第 ${retryCount} 次:`, error)
+          if (retryCount >= maxRetries) {
+            throw error
+          }
+          await sleep(500)
+        }
+      }
+
+      console.log('插件下载完成:', tempFilePath)
+
+      // 安装插件
+      const result = await this._installPluginFromZip(tempFilePath)
+
+      // 清理下载的临时文件
+      try {
+        await fs.unlink(tempFilePath)
+        await fs.rm(tempDir, { recursive: true, force: true })
+      } catch (e) {
+        console.error('清理下载临时文件失败:', e)
+      }
+
+      return result
+    } catch (error: any) {
+      console.error('从市场安装插件失败:', error)
+      return { success: false, error: error.message || '安装失败' }
+    }
+  }
+
+  // 添加开发中插件
+  private async importDevPlugin(): Promise<any> {
+    try {
+      // 打开文件夹选择对话框
+      const result = await dialog.showOpenDialog(this.mainWindow!, {
+        title: '选择插件文件夹',
+        properties: ['openDirectory']
+      })
+
+      if (result.canceled || result.filePaths.length === 0) {
+        return { success: false, error: '未选择文件夹' }
+      }
+
+      const pluginPath = result.filePaths[0]
+
+      // 校验 plugin.json 文件
+      const pluginJsonPath = path.join(pluginPath, 'plugin.json')
+      try {
+        await fs.access(pluginJsonPath)
+      } catch {
+        return { success: false, error: 'plugin.json 文件不存在' }
+      }
+
+      // 读取并解析 plugin.json
+      const pluginJsonContent = await fs.readFile(pluginJsonPath, 'utf-8')
+      let pluginConfig: any
+      try {
+        pluginConfig = JSON.parse(pluginJsonContent)
+      } catch {
+        return { success: false, error: 'plugin.json 格式错误' }
+      }
+
+      // 获取插件名称
+      if (!pluginConfig.name) {
+        return { success: false, error: 'plugin.json 缺少 name 字段' }
+      }
+
+      // 检查数据库中是否已存在同名插件
+      try {
+        const existingPlugins = await this.getPlugins()
+        const isDuplicate = existingPlugins.some((p: any) => p.name === pluginConfig.name)
+        if (isDuplicate) {
+          return { success: false, error: '插件已存在' }
+        }
+      } catch {
+        // 忽略查询错误，继续添加
+      }
+
+      // 校验必填字段
+      const requiredFields = ['name', 'version', 'features']
+      for (const field of requiredFields) {
+        if (!pluginConfig[field]) {
+          return { success: false, error: `缺少必填字段: ${field}` }
+        }
+      }
+
+      // 校验 features 数组
+      if (!Array.isArray(pluginConfig.features) || pluginConfig.features.length === 0) {
+        return { success: false, error: 'features 必须是非空数组' }
+      }
+
+      // 校验每个 feature 的必填字段
+      for (const feature of pluginConfig.features) {
+        if (!feature.code || !Array.isArray(feature.cmds)) {
+          return { success: false, error: 'feature 缺少必填字段 (code, cmds)' }
+        }
+      }
+
+      // 存储插件信息到数据库
+      const pluginInfo = {
+        name: pluginConfig.name,
+        version: pluginConfig.version,
+        description: pluginConfig.description || '',
+        logo: pluginConfig.logo ? 'image://' + path.join(pluginPath, pluginConfig.logo) : '',
+        main: pluginConfig?.development?.main,
+        preload: pluginConfig.preload,
+        features: pluginConfig.features,
+        path: pluginPath,
+        isDevelopment: true,
+        installedAt: new Date().toISOString()
+      }
+
+      // 获取现有插件列表
+      let plugins: any = await this.dbGet('plugins')
+      if (!plugins) {
+        plugins = []
+      }
+
+      // 添加新插件到列表
+      plugins.push(pluginInfo)
+
+      // 保存回数据库
+      await this.dbPut('plugins', plugins)
+
+      // 通知渲染进程插件列表已变化
+      this.mainWindow?.webContents.send('plugins-changed')
+
+      return { success: true }
+    } catch (error: any) {
+      console.error('添加开发中插件失败:', error)
+      return { success: false, error: error.message || '未知错误' }
+    }
+  }
+
+  // 删除插件
+  private async deletePlugin(pluginPath: string): Promise<any> {
+    try {
+      // 从数据库中获取插件列表
+      const plugins: any = await this.dbGet('plugins')
+      if (!plugins || !Array.isArray(plugins)) {
+        return { success: false, error: '插件列表不存在' }
+      }
+
+      // 查找要删除的插件
+      const pluginIndex = plugins.findIndex((p: any) => p.path === pluginPath)
+      if (pluginIndex === -1) {
+        return { success: false, error: '插件不存在' }
+      }
+
+      // 获取插件信息（在删除前保存，因为后面要用到）
+      const pluginInfo = plugins[pluginIndex]
+
+      // 从数组中移除插件
+      plugins.splice(pluginIndex, 1)
+
+      // 更新数据库
+      await this.dbPut('plugins', plugins)
+
+      // 清理历史记录中与该插件相关的条目
+      try {
+        const history: any = await this.dbGet('app-history')
+        if (history && Array.isArray(history)) {
+          // 过滤掉所有与该插件相关的历史记录（path 以 plugin:pluginPath 开头的）
+          const pluginPrefix = `plugin:${pluginPath}`
+          const cleanedHistory = history.filter((item: any) => !item.path?.startsWith(pluginPrefix))
+          if (cleanedHistory.length !== history.length) {
+            await this.dbPut('app-history', cleanedHistory)
+            console.log(`已清理 ${history.length - cleanedHistory.length} 条历史记录`)
+          }
+        }
+      } catch (error) {
+        console.error('清理历史记录失败:', error)
+        // 不影响主流程，继续执行
+      }
+
+      // 清理固定列表中与该插件相关的条目
+      try {
+        const pinned: any = await this.dbGet('pinned-apps')
+        if (pinned && Array.isArray(pinned)) {
+          // 过滤掉所有与该插件相关的固定项（path 以 plugin:pluginPath 开头的）
+          const pluginPrefix = `plugin:${pluginPath}`
+          const cleanedPinned = pinned.filter((item: any) => !item.path?.startsWith(pluginPrefix))
+          if (cleanedPinned.length !== pinned.length) {
+            await this.dbPut('pinned-apps', cleanedPinned)
+            console.log(`已清理 ${pinned.length - cleanedPinned.length} 条固定记录`)
+          }
+        }
+      } catch (error) {
+        console.error('清理固定列表失败:', error)
+        // 不影响主流程，继续执行
+      }
+
+      // 通知渲染进程插件列表已变化
+      this.mainWindow?.webContents.send('plugins-changed')
+
+      // 只有非开发中插件才删除目录
+      if (!pluginInfo.isDevelopment) {
+        try {
+          await fs.rm(pluginPath, { recursive: true, force: true })
+          console.log('已删除插件目录:', pluginPath)
+        } catch (error) {
+          console.error('删除插件目录失败:', error)
+          // 即使目录删除失败，数据库已更新，仍然返回成功
+        }
+      } else {
+        console.log('开发中插件，保留目录:', pluginPath)
+      }
+
+      return { success: true }
+    } catch (error: any) {
+      console.error('删除插件失败:', error)
+      return { success: false, error: error.message || '未知错误' }
+    }
+  }
+
+  // 重载插件（重新读取 plugin.json）
+  private async reloadPlugin(pluginPath: string): Promise<any> {
+    try {
+      // 从数据库中获取插件列表
+      const plugins: any = await this.dbGet('plugins')
+      if (!plugins || !Array.isArray(plugins)) {
+        return { success: false, error: '插件列表不存在' }
+      }
+
+      // 查找要重载的插件
+      const pluginIndex = plugins.findIndex((p: any) => p.path === pluginPath)
+      if (pluginIndex === -1) {
+        return { success: false, error: '插件不存在' }
+      }
+
+      // 获取原插件信息
+      const oldPlugin = plugins[pluginIndex]
+
+      // 读取 plugin.json 文件
+      let pluginJsonPath: string
+      if (oldPlugin.isDevelopment && oldPlugin.developmentUrl) {
+        // 开发中插件：从目录读取
+        pluginJsonPath = path.join(pluginPath, 'plugin.json')
+      } else {
+        // 生产插件：从解压目录读取
+        pluginJsonPath = path.join(pluginPath, 'plugin.json')
+      }
+
+      // 检查文件是否存在
+      try {
+        await fs.access(pluginJsonPath)
+      } catch (error) {
+        console.log('文件不存在', error)
+        return { success: false, error: 'plugin.json 文件不存在' }
+      }
+
+      // 读取并解析 plugin.json
+      const pluginJsonContent = await fs.readFile(pluginJsonPath, 'utf-8')
+      const pluginConfig = JSON.parse(pluginJsonContent)
+
+      // 更新插件信息（保留 path 和 isDevelopment 等字段）
+      plugins[pluginIndex] = {
+        ...oldPlugin,
+        name: pluginConfig.name || oldPlugin.name,
+        version: pluginConfig.version || oldPlugin.version,
+        description: pluginConfig.description || oldPlugin.description,
+        logo: pluginConfig.logo
+          ? 'image://' + path.join(pluginPath, pluginConfig.logo)
+          : oldPlugin.logo,
+        features: pluginConfig.features || oldPlugin.features,
+        main: pluginConfig.main || oldPlugin.main
+      }
+
+      // 更新数据库
+      await this.dbPut('plugins', plugins)
+
+      // 通知渲染进程插件列表已变化
+      this.mainWindow?.webContents.send('plugins-changed')
+
+      console.log('插件重载成功:', pluginPath)
+      return { success: true }
+    } catch (error: any) {
+      console.error('重载插件失败:', error)
+      return { success: false, error: error.message || '未知错误' }
+    }
+  }
+
+  // 选择头像图片
+  private async selectAvatar(): Promise<any> {
+    try {
+      const result = await dialog.showOpenDialog(this.mainWindow!, {
+        title: '选择头像图片',
+        filters: [{ name: '图片文件', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'] }],
+        properties: ['openFile']
+      })
+
+      if (result.canceled || result.filePaths.length === 0) {
+        return { success: false, error: '未选择文件' }
+      }
+
+      const originalPath = result.filePaths[0]
+      const ext = path.extname(originalPath)
+      const fileName = `avatar${ext}`
+
+      // 确保头像目录存在
+      await fs.mkdir(AVATAR_DIR, { recursive: true })
+
+      // 复制图片到头像目录
+      const avatarPath = path.join(AVATAR_DIR, fileName)
+      await fs.copyFile(originalPath, avatarPath)
+
+      // 返回 image:// 协议路径
+      return { success: true, path: `image://${avatarPath}` }
+    } catch (error: any) {
+      console.error('选择头像失败:', error)
+      return { success: false, error: error.message || '未知错误' }
+    }
+  }
+
+  // 隐藏插件
+  private async hidePlugin(): Promise<void> {
+    if (this.pluginManager) {
+      this.pluginManager.hidePluginView()
+    }
+  }
+
+  // 获取运行中的插件
+  private getRunningPluginsAPI(): string[] {
+    if (this.pluginManager) {
+      return this.pluginManager.getRunningPlugins()
+    }
+    return []
+  }
+
+  // 终止插件
+  private killPluginAPI(pluginPath: string): { success: boolean; error?: string } {
+    try {
+      console.log('终止插件:', pluginPath)
+      if (this.pluginManager) {
+        const result = this.pluginManager.killPlugin(pluginPath)
+        if (result) {
+          return { success: true }
+        } else {
+          return { success: false, error: '插件未运行' }
+        }
+      }
+      return { success: false, error: '功能不可用' }
+    } catch (error: any) {
+      console.error('终止插件失败:', error)
+      return { success: false, error: error.message || '未知错误' }
+    }
+  }
+
+  // 终止插件并返回搜索页面
+  private killPluginAndReturn(pluginPath: string): { success: boolean; error?: string } {
+    try {
+      console.log('终止插件并返回搜索页面:', pluginPath)
+      if (this.pluginManager) {
+        const result = this.pluginManager.killPlugin(pluginPath)
+        if (result) {
+          // 通知渲染进程返回搜索页面
+          this.mainWindow?.webContents.send('back-to-search')
+          // 主窗口获取焦点
+          this.mainWindow?.webContents.focus()
+          return { success: true }
+        } else {
+          return { success: false, error: '插件未运行' }
+        }
+      }
+      return { success: false, error: '功能不可用' }
+    } catch (error: any) {
+      console.error('终止插件并返回搜索页面失败:', error)
+      return { success: false, error: error.message || '未知错误' }
+    }
+  }
+
+  // 发送输入事件到插件（统一接口）
+  private sendInputEventAPI(
+    inputEvent:
+      | Electron.MouseInputEvent
+      | Electron.MouseWheelInputEvent
+      | Electron.KeyboardInputEvent
+  ): { success: boolean; error?: string } {
+    try {
+      if (this.pluginManager) {
+        const result = this.pluginManager.sendInputEvent(inputEvent)
+        if (result) {
+          return { success: true }
+        } else {
+          return { success: false, error: '没有活动的插件' }
+        }
+      }
+      return { success: false, error: '功能不可用' }
+    } catch (error: any) {
+      console.error('发送输入事件失败:', error)
+      return { success: false, error: error.message || '未知错误' }
+    }
+  }
+
+  // 打开插件开发者工具
+  private openPluginDevTools(): { success: boolean; error?: string } {
+    try {
+      if (this.pluginManager) {
+        const result = this.pluginManager.openPluginDevTools()
+        if (result) {
+          return { success: true }
+        } else {
+          return { success: false, error: '没有活动的插件' }
+        }
+      }
+      return { success: false, error: '功能不可用' }
+    } catch (error: any) {
+      console.error('打开开发者工具失败:', error)
+      return { success: false, error: error.message || '未知错误' }
+    }
+  }
+
+  // 数据库相关方法 - 内部使用的辅助方法
+  private async dbPut(key: string, data: any): Promise<any> {
+    try {
+      const docId = `ZTOOLS/${key}`
+      const doc: any = {
+        _id: docId,
+        ...data
+      }
+
+      // 获取现有文档以保留 _rev
+      const existing = await lmdbInstance.promises.get(docId)
+      if (existing) {
+        doc._rev = existing._rev
+      }
+
+      return await lmdbInstance.promises.put(doc)
+    } catch (error) {
+      console.error('dbPut 失败:', key, error)
+      throw error
+    }
+  }
+
+  public async dbGet(key: string): Promise<any> {
+    try {
+      const docId = `ZTOOLS/${key}`
+      return await lmdbInstance.promises.get(docId)
+    } catch (error) {
+      console.error('dbGet 失败:', key, error)
+      return null
+    }
+  }
+
+  // 剪贴板相关方法
+  private async clipboardGetHistory(page: number, pageSize: number, filter?: any): Promise<any> {
+    try {
+      return await clipboardManager.getHistory(page, pageSize, filter)
+    } catch (error) {
+      console.error('获取剪贴板历史失败:', error)
+      return { items: [], total: 0, page, pageSize }
+    }
+  }
+
+  private async clipboardSearch(keyword: string): Promise<any[]> {
+    try {
+      return await clipboardManager.search(keyword)
+    } catch (error) {
+      console.error('搜索剪贴板失败:', error)
+      return []
+    }
+  }
+
+  private async clipboardDelete(id: string): Promise<{ success: boolean }> {
+    try {
+      const result = await clipboardManager.deleteItem(id)
+      return { success: result }
+    } catch (error) {
+      console.error('删除剪贴板记录失败:', error)
+      return { success: false }
+    }
+  }
+
+  private async clipboardClear(type?: string): Promise<{ success: boolean; count: number }> {
+    try {
+      const count = await clipboardManager.clear(type as any)
+      return { success: true, count }
+    } catch (error) {
+      console.error('清空剪贴板历史失败:', error)
+      return { success: false, count: 0 }
+    }
+  }
+
+  private async clipboardGetStatus(): Promise<any> {
+    try {
+      return await clipboardManager.getStatus()
+    } catch (error) {
+      console.error('获取剪贴板状态失败:', error)
+      return {
+        isRunning: false,
+        itemCount: 0,
+        imageCount: 0,
+        imageStorageSize: 0
+      }
+    }
+  }
+
+  private async clipboardWrite(id: string): Promise<{ success: boolean }> {
+    // 先隐藏窗口
+    windowManager.hideWindow()
+    // 设置窗口激活状态
+    const previousActiveWindow = windowManager.getPreviousActiveWindow()
+    if (previousActiveWindow) {
+      clipboardManager.activateApp(previousActiveWindow.bundleId)
+    }
+    try {
+      const result = await clipboardManager.writeToClipboard(id)
+      appleScriptHelper.paste()
+      return { success: result }
+    } catch (error) {
+      console.error('写回剪贴板失败:', error)
+      return { success: false }
+    }
+  }
+
+  private clipboardUpdateConfig(config: any): { success: boolean } {
+    try {
+      clipboardManager.updateConfig(config)
+      return { success: true }
+    } catch (error) {
+      console.error('更新剪贴板配置失败:', error)
+      return { success: false }
+    }
+  }
+
+  // 窗口相关方法
+  private async windowPaste(): Promise<{ success: boolean; error?: string }> {
+    try {
+      return await windowManager.pasteToActiveWindow()
+    } catch (error: any) {
+      console.error('执行粘贴操作失败:', error)
+      return { success: false, error: error.message || '未知错误' }
+    }
+  }
+
+  // 子输入框相关方法
+  private setSubInput(placeholder?: string): { success: boolean } {
+    try {
+      // 获取当前插件路径
+      const pluginPath = this.pluginManager?.getCurrentPluginPath()
+      if (!pluginPath) {
+        console.warn('没有活动的插件,无法设置子输入框')
+        return { success: false }
+      }
+
+      // 通知主窗口更新子输入框 placeholder,并传递插件路径
+      this.mainWindow?.webContents.send('update-sub-input-placeholder', {
+        pluginPath,
+        placeholder: placeholder || '搜索'
+      })
+
+      // 更新 PluginManager 中的配置
+      this.pluginManager.setSubInputPlaceholder(placeholder || '搜索')
+
+      console.log('设置子输入框 placeholder:', { pluginPath, placeholder })
+      return { success: true }
+    } catch (error: any) {
+      console.error('设置子输入框失败:', error)
+      return { success: false }
+    }
+  }
+
+  private notifySubInputChange(text: string): void {
+    // 通知插件输入框内容变化
+    if (this.pluginManager) {
+      this.pluginManager.sendPluginMessage('sub-input-change', { text })
+    }
+  }
+
+}
+
+export default new API()

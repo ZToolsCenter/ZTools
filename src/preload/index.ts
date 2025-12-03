@@ -1,0 +1,233 @@
+import { contextBridge, ipcRenderer } from 'electron'
+
+export interface App {
+  name: string
+  path: string
+  icon?: string
+}
+
+contextBridge.exposeInMainWorld('ztools', {
+  getApps: () => ipcRenderer.invoke('get-apps'),
+  launch: (options: { path: string; type?: 'app' | 'plugin'; featureCode?: string; param?: any }) =>
+    ipcRenderer.invoke('launch', options),
+  hideWindow: () => ipcRenderer.send('hide-window'),
+  resizeWindow: (height: number) => ipcRenderer.send('resize-window', height),
+  setWindowOpacity: (opacity: number) => ipcRenderer.send('set-window-opacity', opacity),
+  setTrayIconVisible: (visible: boolean) => ipcRenderer.invoke('set-tray-icon-visible', visible),
+  setHideOnBlur: (hide: boolean) => ipcRenderer.invoke('set-hide-on-blur', hide),
+  setLaunchAtLogin: (enable: boolean) => ipcRenderer.invoke('set-launch-at-login', enable),
+  getLaunchAtLogin: () => ipcRenderer.invoke('get-launch-at-login'),
+  setTheme: (theme: string) => ipcRenderer.invoke('set-theme', theme),
+  openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
+  copyToClipboard: (text: string) => ipcRenderer.invoke('copy-to-clipboard', text),
+  openTerminal: (path: string) => ipcRenderer.invoke('open-terminal', path),
+  getFinderPath: () => ipcRenderer.invoke('get-finder-path'),
+  getLastCopiedText: (timeLimit: number) => ipcRenderer.invoke('get-last-copied-text', timeLimit),
+  getFrontmostApp: () => ipcRenderer.invoke('get-frontmost-app'),
+  activateApp: (identifier: string, type?: 'name' | 'bundleId' | 'path') =>
+    ipcRenderer.invoke('activate-app', identifier, type),
+  showContextMenu: (menuItems: any[]) => ipcRenderer.invoke('show-context-menu', menuItems),
+  getPlugins: () => ipcRenderer.invoke('get-plugins'),
+  importPlugin: () => ipcRenderer.invoke('import-plugin'),
+  importDevPlugin: () => ipcRenderer.invoke('import-dev-plugin'),
+  fetchPluginMarket: () => ipcRenderer.invoke('fetch-plugin-market'),
+  installPluginFromMarket: (plugin: any) =>
+    ipcRenderer.invoke('install-plugin-from-market', plugin),
+  deletePlugin: (pluginPath: string) => ipcRenderer.invoke('delete-plugin', pluginPath),
+  reloadPlugin: (pluginPath: string) => ipcRenderer.invoke('reload-plugin', pluginPath),
+  getRunningPlugins: () => ipcRenderer.invoke('get-running-plugins'),
+  killPlugin: (pluginPath: string) => ipcRenderer.invoke('kill-plugin', pluginPath),
+  killPluginAndReturn: (pluginPath: string) =>
+    ipcRenderer.invoke('kill-plugin-and-return', pluginPath),
+  sendInputEvent: (event: any) => ipcRenderer.invoke('send-input-event', event),
+  selectAvatar: () => ipcRenderer.invoke('select-avatar'),
+  hidePlugin: () => ipcRenderer.send('hide-plugin'),
+  onContextMenuCommand: (callback: (command: string) => void) => {
+    ipcRenderer.on('context-menu-command', (_event, command) => callback(command))
+  },
+  onFocusSearch: (callback: () => void) => {
+    ipcRenderer.on('focus-search', callback)
+  },
+  onBackToSearch: (callback: () => void) => {
+    ipcRenderer.on('back-to-search', callback)
+  },
+  onPluginOpened: (callback: (plugin: { name: string; logo: string; path: string }) => void) => {
+    ipcRenderer.on('plugin-opened', (_event, plugin) => callback(plugin))
+  },
+  onPluginClosed: (callback: () => void) => {
+    ipcRenderer.on('plugin-closed', callback)
+  },
+  onWindowInfoChanged: (
+    callback: (windowInfo: { appName: string; bundleId: string; timestamp: number }) => void
+  ) => {
+    ipcRenderer.on('window-info-changed', (_event, windowInfo) => callback(windowInfo))
+  },
+  onPluginsChanged: (callback: () => void) => {
+    ipcRenderer.on('plugins-changed', callback)
+  },
+  onAppsChanged: (callback: (data: { type: 'add' | 'remove'; path: string }) => void) => {
+    ipcRenderer.on('apps-changed', (_event, data) => callback(data))
+  },
+  onShowPluginPlaceholder: (callback: () => void) => {
+    ipcRenderer.on('show-plugin-placeholder', callback)
+  },
+  onShowSettings: (callback: () => void) => {
+    ipcRenderer.on('show-settings', callback)
+  },
+  onAppLaunched: (callback: () => void) => {
+    ipcRenderer.on('app-launched', callback)
+  },
+  onIpcLaunch: (
+    callback: (options: {
+      path: string
+      type?: 'app' | 'plugin'
+      featureCode?: string
+      param?: any
+    }) => void
+  ) => {
+    ipcRenderer.on('ipc-launch', (_event, options) => callback(options))
+  },
+  openPluginDevTools: () => ipcRenderer.invoke('open-plugin-devtools'),
+  // 快捷键相关
+  updateShortcut: (shortcut: string) => ipcRenderer.invoke('update-shortcut', shortcut),
+  getCurrentShortcut: () => ipcRenderer.invoke('get-current-shortcut'),
+  registerGlobalShortcut: (shortcut: string, target: string) =>
+    ipcRenderer.invoke('register-global-shortcut', shortcut, target),
+  unregisterGlobalShortcut: (shortcut: string) =>
+    ipcRenderer.invoke('unregister-global-shortcut', shortcut),
+  // 窗口相关
+  windowPaste: () => ipcRenderer.invoke('window:paste'),
+  // 子输入框相关
+  notifySubInputChange: (text: string) => ipcRenderer.send('notify-sub-input-change', text),
+  onUpdateSubInputPlaceholder: (
+    callback: (data: { pluginPath: string; placeholder: string }) => void
+  ) => {
+    ipcRenderer.on('update-sub-input-placeholder', (_event, data) => callback(data))
+  },
+  // 数据库相关（主程序专用，直接操作 ZTOOLS 命名空间）
+  dbPut: (key: string, data: any) => ipcRenderer.invoke('ztools:db-put', key, data),
+  dbGet: (key: string) => ipcRenderer.invoke('ztools:db-get', key),
+  // 插件数据管理
+  getPluginDataStats: () => ipcRenderer.invoke('get-plugin-data-stats'),
+  getPluginDocKeys: (pluginName: string) => ipcRenderer.invoke('get-plugin-doc-keys', pluginName),
+  getPluginDoc: (pluginName: string, key: string) =>
+    ipcRenderer.invoke('get-plugin-doc', pluginName, key),
+  clearPluginData: (pluginName: string) => ipcRenderer.invoke('clear-plugin-data', pluginName)
+})
+
+// TypeScript 类型定义
+declare global {
+  interface Window {
+    ztools: {
+      getApps: () => Promise<App[]>
+      launch: (path: string, param?: any) => Promise<void>
+      hideWindow: () => void
+      resizeWindow: (height: number) => void
+      setWindowOpacity: (opacity: number) => void
+      setTrayIconVisible: (visible: boolean) => Promise<void>
+      setHideOnBlur: (hide: boolean) => Promise<void>
+      setLaunchAtLogin: (enable: boolean) => Promise<void>
+      getLaunchAtLogin: () => Promise<boolean>
+      setTheme: (theme: string) => Promise<void>
+      openExternal: (url: string) => Promise<void>
+      copyToClipboard: (text: string) => Promise<void>
+      openTerminal: (path: string) => Promise<void>
+      getFinderPath: () => Promise<string | null>
+      getLastCopiedText: (timeLimit: number) => Promise<string | null>
+      getFrontmostApp: () => Promise<{
+        name: string
+        bundleId: string
+        path: string
+      } | null>
+      activateApp: (
+        identifier: string,
+        type?: 'name' | 'bundleId' | 'path'
+      ) => Promise<{ success: boolean; error?: string }>
+      showContextMenu: (menuItems: any[]) => Promise<void>
+      getPlugins: () => Promise<any[]>
+      importPlugin: () => Promise<{ success: boolean; error?: string }>
+      importDevPlugin: () => Promise<{ success: boolean; error?: string }>
+      fetchPluginMarket: () => Promise<{ success: boolean; data?: any; error?: string }>
+      installPluginFromMarket: (plugin: any) => Promise<{ success: boolean; error?: string }>
+      deletePlugin: (pluginPath: string) => Promise<{ success: boolean; error?: string }>
+      reloadPlugin: (pluginPath: string) => Promise<{ success: boolean; error?: string }>
+      getRunningPlugins: () => Promise<string[]>
+      killPlugin: (pluginPath: string) => Promise<{ success: boolean; error?: string }>
+      killPluginAndReturn: (pluginPath: string) => Promise<{ success: boolean; error?: string }>
+      sendInputEvent: (event: {
+        type: 'keyDown' | 'keyUp' | 'char' | 'mouseDown' | 'mouseUp' | 'mouseMove'
+        keyCode?: string
+        x?: number
+        y?: number
+        button?: 'left' | 'right' | 'middle'
+        clickCount?: number
+      }) => Promise<{ success: boolean; error?: string }>
+      selectAvatar: () => Promise<{ success: boolean; path?: string; error?: string }>
+      hidePlugin: () => void
+      onContextMenuCommand: (callback: (command: string) => void) => void
+      onFocusSearch: (callback: () => void) => void
+      onBackToSearch: (callback: () => void) => void
+      onPluginOpened: (
+        callback: (plugin: { name: string; logo: string; path: string }) => void
+      ) => void
+      onPluginClosed: (callback: () => void) => void
+      onWindowInfoChanged: (
+        callback: (windowInfo: { appName: string; bundleId: string; timestamp: number }) => void
+      ) => void
+      onPluginsChanged: (callback: () => void) => void
+      onAppsChanged: (callback: (data: { type: 'add' | 'remove'; path: string }) => void) => void
+      onShowPluginPlaceholder: (callback: () => void) => void
+      onShowSettings: (callback: () => void) => void
+      onAppLaunched: (callback: () => void) => void
+      openPluginDevTools: () => Promise<{ success: boolean; error?: string }>
+      // 快捷键相关
+      updateShortcut: (shortcut: string) => Promise<{ success: boolean; error?: string }>
+      getCurrentShortcut: () => Promise<string>
+      registerGlobalShortcut: (
+        shortcut: string,
+        target: string
+      ) => Promise<{ success: boolean; error?: string }>
+      unregisterGlobalShortcut: (shortcut: string) => Promise<{ success: boolean; error?: string }>
+      // 窗口相关
+      windowPaste: () => Promise<{ success: boolean; error?: string }>
+      // 子输入框相关
+      notifySubInputChange: (text: string) => void
+      onUpdateSubInputPlaceholder: (
+        callback: (data: { pluginPath: string; placeholder: string }) => void
+      ) => void
+      // 数据库相关（主程序专用，直接操作 ZTOOLS 命名空间）
+      dbPut: (key: string, data: any) => Promise<any>
+      dbGet: (key: string) => Promise<any>
+      // 插件数据管理
+      getPluginDataStats: () => Promise<{
+        success: boolean
+        data?: Array<{
+          pluginName: string
+          docCount: number
+          attachmentCount: number
+          logo: string | null
+        }>
+        error?: string
+      }>
+      getPluginDocKeys: (pluginName: string) => Promise<{
+        success: boolean
+        data?: Array<{ key: string; type: 'document' | 'attachment' }>
+        error?: string
+      }>
+      getPluginDoc: (
+        pluginName: string,
+        key: string
+      ) => Promise<{
+        success: boolean
+        data?: any
+        type?: 'document' | 'attachment'
+        error?: string
+      }>
+      clearPluginData: (pluginName: string) => Promise<{
+        success: boolean
+        deletedCount?: number
+        error?: string
+      }>
+    }
+  }
+}
