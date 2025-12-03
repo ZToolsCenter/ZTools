@@ -79,7 +79,7 @@ export class ClipboardAPI {
       // 设置窗口激活状态
       const previousActiveWindow = windowManager.getPreviousActiveWindow()
       if (previousActiveWindow) {
-        clipboardManager.activateApp(previousActiveWindow.bundleId)
+        clipboardManager.activateApp(previousActiveWindow)
       }
       try {
         const result = await clipboardManager.writeToClipboard(id)

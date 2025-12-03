@@ -7,7 +7,7 @@ import { v4 as uuidv4 } from 'uuid'
 import plist from 'simple-plist'
 import pluginManager from './pluginManager'
 import { ClipboardMonitor, WindowMonitor, WindowManager } from './core/native'
-
+import os from 'os'
 // 剪贴板类型
 type ClipboardType = 'text' | 'image' | 'file'
 
@@ -37,6 +37,7 @@ interface ClipboardItem {
 interface WindowActivationInfo {
   appName: string
   bundleId: string
+  processId: number
   timestamp: number
 }
 
@@ -106,6 +107,7 @@ class ClipboardManager {
     this.currentWindow = {
       appName: data.appName,
       bundleId: data.bundleId || '',
+      processId: data.processId || 0,
       timestamp: Date.now()
     }
 
@@ -118,8 +120,9 @@ class ClipboardManager {
   }
 
   // 激活指定应用
-  public activateApp(identifier: string | number): boolean {
+  public activateApp(info: WindowActivationInfo): boolean {
     try {
+      const identifier = os.platform() === 'win32' ? info.processId : info.bundleId
       const success = WindowManager.activateWindow(identifier)
       console.log(`激活应用 ${identifier}: ${success ? '成功' : '失败'}`)
       return success

@@ -18,6 +18,7 @@ class WindowManager {
   private previousActiveWindow: {
     appName: string
     bundleId: string
+    processId: number
     timestamp: number
   } | null = null // 打开应用前激活的窗口
   private shouldHideOnBlur = true // 是否在失去焦点时隐藏窗口
@@ -291,6 +292,7 @@ class WindowManager {
   public getPreviousActiveWindow(): {
     appName: string
     bundleId: string
+    processId: number
     timestamp: number
   } | null {
     return this.previousActiveWindow
@@ -306,7 +308,7 @@ class WindowManager {
     }
 
     try {
-      const success = clipboardManager.activateApp(this.previousActiveWindow.bundleId)
+      const success = clipboardManager.activateApp(this.previousActiveWindow)
       if (success) {
         console.log(`已恢复激活窗口: ${this.previousActiveWindow.appName}`)
         return true
