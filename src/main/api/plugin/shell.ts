@@ -20,6 +20,16 @@ export class PluginShellAPI {
         event.returnValue = { success: false, error: error.message }
       }
     })
+
+    // 在文件管理器中显示文件
+    ipcMain.on('shell-show-item-in-folder', (event, fullPath: string) => {
+      try {
+        shell.showItemInFolder(fullPath)
+      } catch (error: any) {
+        console.error('在文件管理器中显示文件失败:', error)
+      }
+      event.returnValue = undefined
+    })
   }
 }
 

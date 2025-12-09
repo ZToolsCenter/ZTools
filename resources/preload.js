@@ -256,6 +256,9 @@ window.ztools = {
   getWebContentsId: () => electron.ipcRenderer.sendSync('get-web-contents-id'),
   // 使用系统默认程序打开 URL
   shellOpenExternal: (url) => electron.ipcRenderer.sendSync('shell-open-external', url),
+  // 在文件管理器中显示文件
+  shellShowItemInFolder: (fullPath) =>
+    electron.ipcRenderer.sendSync('shell-show-item-in-folder', fullPath),
   // 插件跳转
   redirect: (label, payload) => electron.ipcRenderer.sendSync('ztools-redirect', { label, payload })
 }

@@ -135,6 +135,7 @@ declare global {
       isDev: () => boolean
       getWebContentsId: () => number
       shellOpenExternal: (url: string) => void
+      shellShowItemInFolder: (fullPath: string) => void
     }
 
     /**
