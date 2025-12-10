@@ -10,7 +10,7 @@
         <div
           v-for="plugin in plugins"
           :key="plugin.name"
-          class="plugin-card"
+          class="card plugin-card"
           :title="plugin.description"
           @click="openPluginDetail(plugin)"
         >
@@ -362,17 +362,15 @@ onMounted(() => {
 .plugin-card {
   display: flex;
   align-items: center;
-  padding: 12px;
-  background: var(--card-bg);
-  border-radius: 8px;
-  transition: all 0.2s;
+  padding: 12px 14px;
   cursor: pointer;
+  transition: all 0.2s;
   min-width: 0;
-  user-select: none;
 }
 
 .plugin-card:hover {
   background: var(--hover-bg);
+  transform: translateX(2px);
 }
 
 .plugin-icon {
