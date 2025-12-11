@@ -223,6 +223,26 @@
       stroke-linecap="round"
       stroke-linejoin="round"
     />
+
+    <!-- 搜索图标 - 放大镜 -->
+    <circle
+      v-if="name === 'search'"
+      cx="11"
+      cy="11"
+      r="8"
+      stroke="currentColor"
+      stroke-width="2"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    />
+    <path
+      v-if="name === 'search'"
+      d="M21 21L16.65 16.65"
+      stroke="currentColor"
+      stroke-width="2"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    />
   </svg>
 </template>
 
@@ -238,6 +258,7 @@ defineProps<{
     | 'trash'
     | 'list'
     | 'close'
+    | 'search'
   size?: number | string
 }>()
 </script>

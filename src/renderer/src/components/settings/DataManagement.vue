@@ -2,9 +2,6 @@
   <div class="data-management">
     <!-- 主内容：插件列表 -->
     <div v-if="!showDocListModal && !showDocDetailModal" class="main-content">
-      <h2 class="title">我的数据</h2>
-      <p class="description">查看和管理插件存储的数据</p>
-
       <div v-if="isLoaded && pluginDataList.length === 0" class="empty">
         <p>暂无插件数据</p>
       </div>
@@ -25,8 +22,8 @@
             >
           </div>
 
-          <button class="btn btn-primary" @click="viewPluginDocs(pluginData.pluginName)">
-            查看文档
+          <button class="icon-btn" title="查看文档" @click="viewPluginDocs(pluginData.pluginName)">
+            <Icon name="search" :size="14" />
           </button>
         </div>
       </div>
@@ -305,6 +302,15 @@ onMounted(() => {
 .doc-count {
   font-size: 12px;
   color: var(--text-secondary);
+}
+
+.plugin-card .icon-btn {
+  color: var(--primary-color);
+}
+
+.plugin-card .icon-btn:hover {
+  background: var(--primary-light-bg);
+  color: var(--primary-color);
 }
 
 .detail-header-actions {
