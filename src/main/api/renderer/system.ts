@@ -133,7 +133,7 @@ export class SystemAPI {
       }
     } catch (error: unknown) {
       console.error('激活应用失败:', error)
-      return { success: false, error: error instanceof Error ? error.message : "未知错误" }
+      return { success: false, error: error instanceof Error ? error.message : '未知错误' }
     }
   }
 
@@ -200,7 +200,7 @@ export class SystemAPI {
       return { success: true, path: `file:///${avatarPath}` }
     } catch (error: unknown) {
       console.error('选择头像失败:', error)
-      return { success: false, error: error instanceof Error ? error.message : "未知错误" }
+      return { success: false, error: error instanceof Error ? error.message : '未知错误' }
     }
   }
 }

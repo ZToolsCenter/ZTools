@@ -1,8 +1,8 @@
-import { BrowserWindow, WebContentsView, session, WebContents } from 'electron'
-import path from 'path'
-import api from './api/index.js'
+import { BrowserWindow, session, WebContents, WebContentsView } from 'electron'
 import fsSync from 'fs'
+import path from 'path'
 import hideWindowHtml from '../../resources/hideWindow.html?asset'
+import api from './api/index.js'
 
 import mainPreload from '../../resources/preload.js?asset'
 import pluginWindowManager from './core/pluginWindowManager.js'

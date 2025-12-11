@@ -39,6 +39,8 @@ export class PluginLifecycleAPI {
 
       this.pluginManager.hidePluginView()
       this.mainWindow?.webContents.send('back-to-search')
+      // 主窗口获取焦点（确保前端的 focus() 调用能生效）
+      this.mainWindow?.webContents.focus()
 
       if (isKill) {
         return this.pluginManager.killPlugin(pluginInfo.path)

@@ -144,7 +144,7 @@ export class SettingsAPI {
       }
     } catch (error: unknown) {
       console.error('更新快捷键失败:', error)
-      return { success: false, error: error instanceof Error ? error.message : "未知错误" }
+      return { success: false, error: error instanceof Error ? error.message : '未知错误' }
     }
   }
 
@@ -169,7 +169,7 @@ export class SettingsAPI {
       return { success: true }
     } catch (error: unknown) {
       console.error('注册全局快捷键失败:', error)
-      return { success: false, error: error instanceof Error ? error.message : "未知错误" }
+      return { success: false, error: error instanceof Error ? error.message : '未知错误' }
     }
   }
 
@@ -181,7 +181,7 @@ export class SettingsAPI {
       return { success: true }
     } catch (error: unknown) {
       console.error('注销全局快捷键失败:', error)
-      return { success: false, error: error instanceof Error ? error.message : "未知错误" }
+      return { success: false, error: error instanceof Error ? error.message : '未知错误' }
     }
   }
 

@@ -291,12 +291,13 @@ function cmdTypeBadge(cmd: any): string {
 .feature-item {
   border-radius: 8px;
   padding: 12px;
-  background: var(--bg-color);
+  background: var(--card-bg);
   transition: all 0.2s;
 }
 
 .feature-item:hover {
   background: var(--hover-bg);
+  transform: translateX(2px);
 }
 
 .feature-title {

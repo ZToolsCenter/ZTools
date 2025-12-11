@@ -52,7 +52,7 @@ export class PluginsAPI {
           return { success: true, result }
         } catch (error: unknown) {
           console.error('调用无界面插件失败:', error)
-          return { success: false, error: error instanceof Error ? error.message : "未知错误" }
+          return { success: false, error: error instanceof Error ? error.message : '未知错误' }
         }
       }
     )
@@ -103,7 +103,7 @@ export class PluginsAPI {
       return await this._installPluginFromZip(zipPath)
     } catch (error: unknown) {
       console.error('导入插件失败:', error)
-      return { success: false, error: error instanceof Error ? error.message : "未知错误" }
+      return { success: false, error: error instanceof Error ? error.message : '未知错误' }
     }
   }
 
@@ -209,7 +209,7 @@ export class PluginsAPI {
     } catch (error: unknown) {
       await fs.rm(tempExtractPath, { recursive: true, force: true })
       console.error('安装插件失败:', error)
-      return { success: false, error: error instanceof Error ? error.message : "安装失败" }
+      return { success: false, error: error instanceof Error ? error.message : '安装失败' }
     } finally {
       try {
         await fs.rm(tempDir, { recursive: true, force: true })
@@ -296,7 +296,7 @@ export class PluginsAPI {
       return { success: true }
     } catch (error: unknown) {
       console.error('添加开发中插件失败:', error)
-      return { success: false, error: error instanceof Error ? error.message : "未知错误" }
+      return { success: false, error: error instanceof Error ? error.message : '未知错误' }
     }
   }
 
@@ -333,7 +333,7 @@ export class PluginsAPI {
       return { success: true }
     } catch (error: unknown) {
       console.error('删除插件失败:', error)
-      return { success: false, error: error instanceof Error ? error.message : "未知错误" }
+      return { success: false, error: error instanceof Error ? error.message : '未知错误' }
     }
   }
 
@@ -381,7 +381,7 @@ export class PluginsAPI {
       return { success: true }
     } catch (error: unknown) {
       console.error('重载插件失败:', error)
-      return { success: false, error: error instanceof Error ? error.message : "未知错误" }
+      return { success: false, error: error instanceof Error ? error.message : '未知错误' }
     }
   }
 
@@ -408,7 +408,7 @@ export class PluginsAPI {
       return { success: false, error: '功能不可用' }
     } catch (error: unknown) {
       console.error('终止插件失败:', error)
-      return { success: false, error: error instanceof Error ? error.message : "未知错误" }
+      return { success: false, error: error instanceof Error ? error.message : '未知错误' }
     }
   }
 
@@ -429,7 +429,7 @@ export class PluginsAPI {
       return { success: false, error: '功能不可用' }
     } catch (error: unknown) {
       console.error('终止插件并返回搜索页面失败:', error)
-      return { success: false, error: error instanceof Error ? error.message : "未知错误" }
+      return { success: false, error: error instanceof Error ? error.message : '未知错误' }
     }
   }
 
@@ -520,7 +520,7 @@ export class PluginsAPI {
       } catch {
         // ignore
       }
-      return { success: false, error: error instanceof Error ? error.message : "获取失败" }
+      return { success: false, error: error instanceof Error ? error.message : '获取失败' }
     }
   }
 
@@ -580,7 +580,7 @@ export class PluginsAPI {
       return result
     } catch (error: unknown) {
       console.error('从市场安装插件失败:', error)
-      return { success: false, error: error instanceof Error ? error.message : "安装失败" }
+      return { success: false, error: error instanceof Error ? error.message : '安装失败' }
     }
   }
 }
