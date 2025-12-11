@@ -16,6 +16,9 @@ export class SettingsAPI {
     this.loadAndApplySettings()
   }
 
+  // 临时快捷键录制相关
+  private recordingShortcuts: string[] = []
+
   private setupIPC(): void {
     // 主题
     ipcMain.handle('set-theme', (_event, theme: string) => this.setTheme(theme))
@@ -35,6 +38,9 @@ export class SettingsAPI {
     ipcMain.handle('unregister-global-shortcut', (_event, shortcut: string) =>
       this.unregisterGlobalShortcut(shortcut)
     )
+
+    // 临时快捷键录制
+    ipcMain.handle('start-hotkey-recording', () => this.startHotkeyRecording())
   }
 
   // 加载并应用设置
@@ -199,6 +205,66 @@ export class SettingsAPI {
 
   public setGlobalShortcutHandler(handler: (target: string) => void): void {
     this.onGlobalShortcutTriggered = handler
+  }
+
+  // 开始快捷键录制（注册临时快捷键监听）
+  private startHotkeyRecording(): { success: boolean; error?: string } {
+    try {
+      // 如果已经在录制，先注销之前的临时快捷键
+      if (this.recordingShortcuts.length > 0) {
+        this.cleanupRecordingShortcuts()
+      }
+
+      // 定义需要临时注册的快捷键（常见的快捷键组合）
+      const commonShortcuts = ['Alt+Space', 'Option+Space']
+
+      // 注册所有快捷键
+      for (const shortcut of commonShortcuts) {
+        try {
+          const success = globalShortcut.register(shortcut, () => {
+            // 快捷键被触发，发送到渲染进程
+            console.log(`临时快捷键触发: ${shortcut}`)
+            if (this.mainWindow) {
+              this.mainWindow.webContents.send('hotkey-recorded', shortcut)
+            }
+
+            // 立即注销所有临时快捷键（只能触发一次）
+            this.cleanupRecordingShortcuts()
+          })
+
+          if (success) {
+            this.recordingShortcuts.push(shortcut)
+            console.log(`成功注册临时快捷键: ${shortcut}`)
+          } else {
+            console.warn(`临时快捷键注册失败（可能已被占用）: ${shortcut}`)
+          }
+        } catch (error) {
+          console.error(`注册临时快捷键失败: ${shortcut}`, error)
+        }
+      }
+
+      console.log(`开始快捷键录制，已注册 ${this.recordingShortcuts.length} 个临时快捷键`)
+      return { success: true }
+    } catch (error: unknown) {
+      console.error('开始快捷键录制失败:', error)
+      return { success: false, error: error instanceof Error ? error.message : '未知错误' }
+    }
+  }
+
+  // 清理临时快捷键（内部方法）
+  private cleanupRecordingShortcuts(): void {
+    for (const shortcut of this.recordingShortcuts) {
+      try {
+        globalShortcut.unregister(shortcut)
+        console.log(`成功注销临时快捷键: ${shortcut}`)
+      } catch (error) {
+        console.error(`注销临时快捷键失败: ${shortcut}`, error)
+      }
+    }
+
+    const count = this.recordingShortcuts.length
+    this.recordingShortcuts = []
+    console.log(`已清理 ${count} 个临时快捷键`)
   }
 }
 

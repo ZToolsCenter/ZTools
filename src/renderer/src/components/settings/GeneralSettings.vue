@@ -302,9 +302,23 @@ const displayHotkey = computed(() => {
 })
 
 // 开始录制快捷键
-function startRecording(): void {
+async function startRecording(): Promise<void> {
   isRecording.value = true
   recordedKeys.value = []
+
+  // 请求后端注册临时快捷键监听
+  try {
+    const result = await window.ztools.startHotkeyRecording()
+    if (result.success) {
+      console.log('已启动后端快捷键监听')
+    } else {
+      console.warn('启动后端快捷键监听失败，使用前端监听:', result.error)
+    }
+  } catch (error) {
+    console.error('启动后端快捷键监听异常，使用前端监听:', error)
+  }
+
+  // 同时监听前端键盘事件作为备用
   document.addEventListener('keydown', handleKeyDown)
   document.addEventListener('keyup', handleKeyUp)
 }
@@ -314,6 +328,7 @@ function stopRecording(): void {
   isRecording.value = false
   document.removeEventListener('keydown', handleKeyDown)
   document.removeEventListener('keyup', handleKeyUp)
+  // 后端会在快捷键触发时自动注销，无需手动调用
 }
 
 // 处理按键
@@ -681,7 +696,40 @@ async function saveSettings(): Promise<void> {
 onMounted(() => {
   loadSettings()
   getAppVersion()
+
+  // 监听后端发送的快捷键录制事件
+  window.ztools.onHotkeyRecorded((shortcut: string) => {
+    if (isRecording.value) {
+      console.log('收到后端快捷键录制事件:', shortcut)
+      // 直接设置快捷键，不需要等待 keyup
+      recordedKeys.value = shortcut.split('+')
+      handleHotkeyRecorded(shortcut)
+    }
+  })
 })
+
+// 处理后端传来的快捷键（立即确认）
+async function handleHotkeyRecorded(newHotkey: string): Promise<void> {
+  // 后端已经自动注销了临时快捷键，直接处理设置
+  try {
+    // 调用 IPC 更新全局快捷键
+    const result = await window.ztools.updateShortcut(newHotkey)
+    if (result.success) {
+      hotkey.value = newHotkey
+      // 保存到数据库
+      await saveSettings()
+      console.log('新快捷键设置成功:', hotkey.value)
+    } else {
+      alert(`快捷键设置失败: ${result.error || '未知错误'}`)
+    }
+  } catch (error: any) {
+    console.error('设置快捷键失败:', error)
+    alert(`设置快捷键失败: ${error.message || '未知错误'}`)
+  }
+
+  // 停止前端录制状态
+  stopRecording()
+}
 </script>
 
 <style scoped>

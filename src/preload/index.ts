@@ -121,6 +121,11 @@ const api = {
     ipcRenderer.invoke('register-global-shortcut', shortcut, target),
   unregisterGlobalShortcut: (shortcut: string) =>
     ipcRenderer.invoke('unregister-global-shortcut', shortcut),
+  // 快捷键录制（临时注册，触发后自动注销）
+  startHotkeyRecording: () => ipcRenderer.invoke('start-hotkey-recording'),
+  onHotkeyRecorded: (callback: (shortcut: string) => void) => {
+    ipcRenderer.on('hotkey-recorded', (_event, shortcut) => callback(shortcut))
+  },
   // 子输入框相关
   notifySubInputChange: (text: string) => ipcRenderer.send('notify-sub-input-change', text),
   setSubInputValue: (text: string) => ipcRenderer.invoke('set-sub-input-value', text),

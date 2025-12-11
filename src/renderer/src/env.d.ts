@@ -102,6 +102,9 @@ declare global {
         target: string
       ) => Promise<{ success: boolean; error?: string }>
       unregisterGlobalShortcut: (shortcut: string) => Promise<{ success: boolean; error?: string }>
+      // 快捷键录制（临时注册，触发后自动注销）
+      startHotkeyRecording: () => Promise<{ success: boolean; error?: string }>
+      onHotkeyRecorded: (callback: (shortcut: string) => void) => void
       // 数据库相关
       dbPut: (key: string, data: any) => Promise<any>
       dbGet: (key: string) => Promise<any>
