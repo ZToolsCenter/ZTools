@@ -19,6 +19,7 @@ const REPLACEMENTS = [
   // API 名称和接口名
   { from: /window\.utools/g, to: 'window.ztools' },
   { from: /UToolsAPI/g, to: 'ZToolsAPI' },
+  { from: /UToolsApi/g, to: 'ZToolsApi' }, // 注意大小写变体
   { from: /UtoolsAi/g, to: 'ZToolsAi' }, // 接口名前缀
   { from: /utools-api-types/g, to: 'ztools-api-types' },
 

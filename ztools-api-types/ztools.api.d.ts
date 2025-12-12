@@ -351,7 +351,7 @@ interface MainPushResult {
 
 type MainPushResultList = MainPushResult[] | Promise<MainPushResult[]>
 
-interface UToolsApi {
+interface ZToolsApi {
   /**
    * 插件应用进入时触发
    */
@@ -1022,4 +1022,4 @@ interface UToolsApi {
   ai(option: ZToolsAiOption): ZToolsAiResult<ZToolsAiMessage>
 }
 
-declare var ztools: UToolsApi
+declare var ztools: ZToolsApi
