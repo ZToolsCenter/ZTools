@@ -1,6 +1,6 @@
 {
   "name": "@ztools-center/plugin-cli",
-  "version": "1.0.15",
+  "version": "1.0.16",
   "description": "快速创建 ZTools 插件项目",
   "type": "module",
   "bin": {
