@@ -7,7 +7,7 @@
     "dev": "tsc --watch"
   },
   "devDependencies": {
-    "@ztools-center/ztools-api-types": "^1.0.1",
+    "@ztools-center/ztools-api-types": "^1.0.3",
     "@types/node": "^20.0.0",
     "typescript": "^5.3.0"
   }
