@@ -302,14 +302,26 @@ onMounted(async () => {
   // 初始调整窗口高度
   updateWindowHeight()
 
+  // 监听窗口隐藏事件，记录隐藏时间
+  window.ztools.onWindowHidden(() => {
+    windowStore.updateLastHideTime()
+    console.log('窗口已隐藏，记录时间')
+  })
+
   // 监听窗口显示事件,聚焦搜索框
   window.ztools.onFocusSearch(async () => {
     if (currentView.value === ViewMode.Plugin) {
       return
     }
-    searchQuery.value = ''
-    pastedImageData.value = null // 清除粘贴的图片
-    pastedFilesData.value = null // 清除粘贴的文件
+
+    // 根据自动清空配置决定是否清空搜索框
+    if (windowStore.shouldClearSearch()) {
+      searchQuery.value = ''
+      pastedImageData.value = null // 清除粘贴的图片
+      pastedFilesData.value = null // 清除粘贴的文件
+      pastedTextData.value = null // 清除粘贴的文本
+    }
+
     searchResultsRef.value?.resetSelection()
 
     // 隐藏插件视图

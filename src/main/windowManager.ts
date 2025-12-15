@@ -434,6 +434,8 @@ class WindowManager {
   public hideWindow(_restoreFocus: boolean = true): void {
     console.log('隐藏窗口', _restoreFocus)
     this.mainWindow?.hide()
+    // 通知渲染进程记录隐藏时间
+    this.mainWindow?.webContents.send('window-hidden')
     this.restorePreviousWindow()
   }
 

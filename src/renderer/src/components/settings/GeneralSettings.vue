@@ -184,6 +184,25 @@
       </div>
     </div>
 
+    <!-- 自动清空搜索框设置 -->
+    <div class="setting-item">
+      <div class="setting-label">
+        <span>自动清空搜索框</span>
+        <span class="setting-desc">窗口显示状态切换后自动清空搜索框内容的时间</span>
+      </div>
+      <div class="setting-control">
+        <select v-model="windowStore.autoClear" class="select" @change="handleAutoClearChange">
+          <option value="immediately">立即</option>
+          <option value="1m">1分钟</option>
+          <option value="2m">2分钟</option>
+          <option value="3m">3分钟</option>
+          <option value="5m">5分钟</option>
+          <option value="10m">10分钟</option>
+          <option value="never">从不</option>
+        </select>
+      </div>
+    </div>
+
     <!-- 失去焦点隐藏设置 -->
     <div class="setting-item">
       <div class="setting-label">
@@ -492,6 +511,16 @@ async function handleAutoPasteChange(): Promise<void> {
   }
 }
 
+// 处理自动清空配置变化
+async function handleAutoClearChange(): Promise<void> {
+  try {
+    await saveSettings()
+    console.log('自动清空配置已更新:', windowStore.autoClear)
+  } catch (error) {
+    console.error('保存自动清空配置失败:', error)
+  }
+}
+
 // 处理主题变化
 async function handleThemeChange(): Promise<void> {
   try {
@@ -681,6 +710,7 @@ async function saveSettings(): Promise<void> {
       placeholder: windowStore.placeholder,
       avatar: avatarToSave,
       autoPaste: windowStore.autoPaste,
+      autoClear: windowStore.autoClear,
       hideOnBlur: windowStore.hideOnBlur,
       theme: windowStore.theme,
       primaryColor: windowStore.primaryColor,

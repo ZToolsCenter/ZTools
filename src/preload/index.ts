@@ -65,6 +65,9 @@ const api = {
   onFocusSearch: (callback: () => void) => {
     ipcRenderer.on('focus-search', callback)
   },
+  onWindowHidden: (callback: () => void) => {
+    ipcRenderer.on('window-hidden', callback)
+  },
   onBackToSearch: (callback: () => void) => {
     ipcRenderer.on('back-to-search', callback)
   },
