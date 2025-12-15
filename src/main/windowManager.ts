@@ -177,6 +177,13 @@ class WindowManager {
           return
         }
 
+        // 如果刚刚（100ms 内）触发过插件 ESC，则不再执行 mainWindow.hide，
+        // 避免快速连续操作导致窗口被错误隐藏
+        if (pluginManager.shouldSuppressMainHide()) {
+          console.log('检测到短时间内插件 ESC，跳过 mainWindow.hide')
+          return
+        }
+
         this.mainWindow?.hide()
       }
     })

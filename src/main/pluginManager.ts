@@ -23,6 +23,8 @@ class PluginManager {
   private pluginView: WebContentsView | null = null
   private currentPluginPath: string | null = null
   private pluginViews: Array<PluginViewInfo> = []
+  // 记录最近一次插件 ESC 触发的时间，用于短时间内抑制主窗口 hide
+  private lastPluginEscTime: number | null = null
 
   public init(mainWindow: BrowserWindow): void {
     this.mainWindow = mainWindow
@@ -597,12 +599,26 @@ class PluginManager {
 
   // 处理插件按 ESC 键
   public handlePluginEsc(): void {
+    // 记录 ESC 触发时间
+    this.lastPluginEscTime = Date.now()
     console.log('插件按下 ESC 键 (Main Process)，返回搜索页面')
     this.hidePluginView()
     // 通知渲染进程返回搜索页面
     this.mainWindow?.webContents.send('back-to-search')
     // 主窗口获取焦点
     this.mainWindow?.webContents.focus()
+  }
+
+  /**
+   * 在插件 ESC 之后的极短时间内（默认 100ms）抑制主窗口 hide
+   */
+  public shouldSuppressMainHide(withinMs: number = 100): boolean {
+    if (this.lastPluginEscTime == null) return false
+    const diff = Date.now() - this.lastPluginEscTime
+    if (diff <= withinMs) {
+      return true
+    }
+    return false
   }
   // 检查插件是否处于开发模式
   public isPluginDev(webContentsId: number): boolean {
