@@ -45,27 +45,14 @@
 
     <!-- 有搜索时显示搜索结果 -->
     <div v-else class="search-results">
-      <!-- 应用和插件 -->
+      <!-- 最佳匹配（包含应用、插件、系统设置） -->
       <CollapsibleList
-        v-if="appAndPluginResults.length > 0"
+        v-if="searchResults.length > 0"
         v-model:expanded="isSearchResultsExpanded"
         title="最佳匹配"
-        :apps="appAndPluginResults"
+        :apps="searchResults"
         :selected-index="searchResultSelectedIndex"
         :empty-text="'未找到应用'"
-        :default-visible-rows="2"
-        :draggable="false"
-        @select="handleSelectApp"
-        @contextmenu="(app) => handleAppContextMenu(app, true)"
-      />
-
-      <!-- 系统设置 -->
-      <CollapsibleList
-        v-if="systemSettingResults.length > 0"
-        v-model:expanded="isSystemSettingsExpanded"
-        title="系统设置"
-        :apps="systemSettingResults"
-        :selected-index="systemSettingSelectedIndex"
         :default-visible-rows="2"
         :draggable="false"
         @select="handleSelectApp"
@@ -154,7 +141,6 @@ const selectedCol = ref(0)
 const isRecentExpanded = ref(false)
 const isPinnedExpanded = ref(false)
 const isSearchResultsExpanded = ref(false)
-const isSystemSettingsExpanded = ref(false)
 const isRecommendationsExpanded = ref(false)
 const scrollContainerRef = ref<HTMLElement>()
 
@@ -191,26 +177,12 @@ const internalSearchResults = computed(() => {
   return result.bestMatches
 })
 
-// 分离系统设置结果
-const systemSettingResults = computed(() => {
-  // 粘贴图片、文本或文件时不显示系统设置
-  if (props.pastedImage || props.pastedText || props.pastedFiles) return []
-  if (!props.searchQuery.trim()) return []
-  return internalSearchResults.value.filter(
-    (item: any) => item.type === 'direct' && item.subType === 'system-setting'
-  )
-})
-
-// 应用和插件结果（排除系统设置）
-const appAndPluginResults = computed(() => {
-  // 粘贴图片、文本或文件时显示所有支持对应类型的指令
-  if (props.pastedImage || props.pastedText || props.pastedFiles) {
-    return internalSearchResults.value
+// 搜索结果（包含应用、插件、系统设置）
+const searchResults = computed(() => {
+  if (!props.searchQuery.trim() && !props.pastedImage && !props.pastedText && !props.pastedFiles) {
+    return []
   }
-  if (!props.searchQuery.trim()) return []
-  return internalSearchResults.value.filter(
-    (item: any) => !(item.type === 'direct' && item.subType === 'system-setting')
-  )
+  return internalSearchResults.value
 })
 
 // 推荐列表
@@ -224,16 +196,13 @@ const recommendations = computed(() => {
   const searchResult = search(props.searchQuery)
   const regexResults = searchResult.regexMatches
 
+  // 百度搜索指令 - 只传入 path，其他信息由 specialCommands 提供
+  const baiduSearch = commandDataStore.applySpecialConfig({
+    path: `baidu-search:${props.searchQuery}`
+  } as any)
+
   // 正则匹配结果 + 百度搜索（内置，放最后）
-  return [
-    ...regexResults,
-    {
-      name: '百度搜索',
-      path: `baidu-search:${props.searchQuery}`,
-      icon: '🔍',
-      type: 'builtin' as const
-    }
-  ]
+  return [...regexResults, baiduSearch]
 })
 
 // 访达功能列表
@@ -302,29 +271,15 @@ function arrayToGrid(arr: any[], cols = 9): any[][] {
   return grid
 }
 
-// 可见的应用和插件结果（用于键盘导航）
-// 注意：CollapsibleList 内部会根据展开状态自动处理显示数量，这里我们需要同步
-const visibleAppAndPluginResults = computed(() => {
+// 可见的搜索结果（用于键盘导航）
+const visibleSearchResults = computed(() => {
   const defaultVisibleCount = 9 * 2 // itemsPerRow * defaultVisibleRows
-  const canExpand = appAndPluginResults.value.length > defaultVisibleCount
+  const canExpand = searchResults.value.length > defaultVisibleCount
 
-  let result
   if (!canExpand || isSearchResultsExpanded.value) {
-    result = appAndPluginResults.value
-  } else {
-    result = appAndPluginResults.value.slice(0, defaultVisibleCount)
+    return searchResults.value
   }
-
-  return result
-})
-
-// 可见的系统设置结果（用于键盘导航）
-const visibleSystemSettingResults = computed(() => {
-  const defaultVisibleCount = 9 * 2
-  if (isSystemSettingsExpanded.value || systemSettingResults.value.length <= defaultVisibleCount) {
-    return systemSettingResults.value
-  }
-  return systemSettingResults.value.slice(0, defaultVisibleCount)
+  return searchResults.value.slice(0, defaultVisibleCount)
 })
 
 // 可见的推荐列表（用于键盘导航）
@@ -341,18 +296,11 @@ const navigationGrid = computed(() => {
   const sections: any[] = []
 
   if (props.searchQuery.trim() || props.pastedImage || props.pastedText || props.pastedFiles) {
-    // 有搜索或粘贴图片/文本/文件时：应用和插件 + 系统设置 + 推荐
-    if (visibleAppAndPluginResults.value.length > 0) {
-      const searchGrid = arrayToGrid(visibleAppAndPluginResults.value)
+    // 有搜索或粘贴图片/文本/文件时：搜索结果 + 推荐
+    if (visibleSearchResults.value.length > 0) {
+      const searchGrid = arrayToGrid(visibleSearchResults.value)
       searchGrid.forEach((row) => {
         sections.push({ type: 'search', items: row })
-      })
-    }
-
-    if (visibleSystemSettingResults.value.length > 0) {
-      const settingGrid = arrayToGrid(visibleSystemSettingResults.value)
-      settingGrid.forEach((row) => {
-        sections.push({ type: 'system-setting', items: row })
       })
     }
 
@@ -417,12 +365,6 @@ const searchResultSelectedIndex = computed(() => {
   return getAbsoluteIndexForSection('search')
 })
 
-// 计算系统设置的选中索引
-const systemSettingSelectedIndex = computed(() => {
-  if (!props.searchQuery.trim()) return -1
-  return getAbsoluteIndexForSection('system-setting')
-})
-
 // 计算推荐列表中的选中索引
 const recommendationSelectedIndex = computed(() => {
   if (!props.searchQuery.trim()) return -1
@@ -453,25 +395,17 @@ watch(
   () => {
     selectedRow.value = 0
     selectedCol.value = 0
-    nextTick(() => {
-      emit('height-changed')
-    })
+    // 直接 emit，让 App.vue 的 updateWindowHeight 中的 nextTick 处理 DOM 更新
+    emit('height-changed')
   }
 )
 
 // 监听展开状态变化，调整窗口高度
 watch(
-  [
-    isRecentExpanded,
-    isPinnedExpanded,
-    isSearchResultsExpanded,
-    isSystemSettingsExpanded,
-    isRecommendationsExpanded
-  ],
+  [isRecentExpanded, isPinnedExpanded, isSearchResultsExpanded, isRecommendationsExpanded],
   () => {
-    nextTick(() => {
-      emit('height-changed')
-    })
+    // 直接 emit，让 App.vue 的 updateWindowHeight 中的 nextTick 处理 DOM 更新
+    emit('height-changed')
   }
 )
 
@@ -529,9 +463,8 @@ watch([selectedRow, selectedCol], () => {
 watch(
   () => pinnedApps.value.length,
   () => {
-    nextTick(() => {
-      emit('height-changed')
-    })
+    // 直接 emit，让 App.vue 的 updateWindowHeight 中的 nextTick 处理 DOM 更新
+    emit('height-changed')
   }
 )
 
@@ -539,9 +472,8 @@ watch(
 watch(
   () => displayApps.value.length,
   () => {
-    nextTick(() => {
-      emit('height-changed')
-    })
+    // 直接 emit，让 App.vue 的 updateWindowHeight 中的 nextTick 处理 DOM 更新
+    emit('height-changed')
   }
 )
 
@@ -720,54 +652,77 @@ async function handleRecommendationSelect(item: any): Promise<void> {
   }
 }
 
-// 键盘导航
+// 键盘导航（支持循环）
 async function handleKeydown(event: KeyboardEvent): Promise<void> {
   const grid = navigationGrid.value
   if (!grid || grid.length === 0) return
 
   switch (event.key) {
-    case 'ArrowDown':
+    case 'ArrowDown': {
       event.preventDefault()
       if (selectedRow.value < grid.length - 1) {
+        // 不是最后一行，正常向下
         selectedRow.value++
-        const currentRowItems = grid[selectedRow.value].items
-        selectedCol.value = Math.min(selectedCol.value, currentRowItems.length - 1)
+      } else {
+        // 最后一行，循环到第一行
+        selectedRow.value = 0
       }
+      // 调整列索引，确保不超出当前行的范围
+      const currentRowItems = grid[selectedRow.value].items
+      selectedCol.value = Math.min(selectedCol.value, currentRowItems.length - 1)
       break
-    case 'ArrowUp':
+    }
+    case 'ArrowUp': {
       event.preventDefault()
       if (selectedRow.value > 0) {
+        // 不是第一行，正常向上
         selectedRow.value--
-        const currentRowItems = grid[selectedRow.value].items
-        selectedCol.value = Math.min(selectedCol.value, currentRowItems.length - 1)
+      } else {
+        // 第一行，循环到最后一行
+        selectedRow.value = grid.length - 1
       }
+      // 调整列索引，确保不超出当前行的范围
+      const upRowItems = grid[selectedRow.value].items
+      selectedCol.value = Math.min(selectedCol.value, upRowItems.length - 1)
       break
-    case 'ArrowRight':
+    }
+    case 'ArrowRight': {
       event.preventDefault()
       if (grid.length > 0 && selectedRow.value < grid.length) {
         const currentRowItems = grid[selectedRow.value].items
         if (selectedCol.value < currentRowItems.length - 1) {
-          // 当前行还有下一个项目
+          // 当前行还有下一个项目，正常右移
           selectedCol.value++
         } else if (selectedRow.value < grid.length - 1) {
           // 当前行最后一个，跳到下一行第一个
           selectedRow.value++
           selectedCol.value = 0
+        } else {
+          // 最后一行的最后一个，循环到第一行第一个
+          selectedRow.value = 0
+          selectedCol.value = 0
         }
       }
       break
-    case 'ArrowLeft':
+    }
+    case 'ArrowLeft': {
       event.preventDefault()
       if (selectedCol.value > 0) {
-        // 当前行还有前一个项目
+        // 当前行还有前一个项目，正常左移
         selectedCol.value--
       } else if (selectedRow.value > 0) {
         // 当前行第一个，跳到上一行最后一个
         selectedRow.value--
         const prevRowItems = grid[selectedRow.value].items
         selectedCol.value = prevRowItems.length - 1
+      } else {
+        // 第一行第一个，循环到最后一行最后一个
+        selectedRow.value = grid.length - 1
+        const lastRowItems = grid[selectedRow.value].items
+        selectedCol.value = lastRowItems.length - 1
       }
       break
+    }
     case 'Enter': {
       event.preventDefault()
       const item = selectedItem.value
@@ -793,9 +748,9 @@ async function handleContextMenuCommand(command: string): Promise<void> {
     try {
       const { path, featureCode } = JSON.parse(jsonStr)
       await removeFromHistory(path, featureCode)
-      nextTick(() => {
-        emit('height-changed')
-      })
+      // 直接 emit，让 App.vue 的 updateWindowHeight 中的 nextTick 处理 DOM 更新
+      emit('height-changed')
+      emit('focus-input')
     } catch (error) {
       console.error('从历史记录删除失败:', error)
     }
@@ -804,9 +759,9 @@ async function handleContextMenuCommand(command: string): Promise<void> {
     try {
       const app = JSON.parse(appJson)
       await pinCommand(app)
-      nextTick(() => {
-        emit('height-changed')
-      })
+      // 直接 emit，让 App.vue 的 updateWindowHeight 中的 nextTick 处理 DOM 更新
+      emit('height-changed')
+      emit('focus-input')
     } catch (error) {
       console.error('固定应用失败:', error)
     }
@@ -815,9 +770,9 @@ async function handleContextMenuCommand(command: string): Promise<void> {
     try {
       const { path, featureCode } = JSON.parse(jsonStr)
       await unpinCommand(path, featureCode)
-      nextTick(() => {
-        emit('height-changed')
-      })
+      // 直接 emit，让 App.vue 的 updateWindowHeight 中的 nextTick 处理 DOM 更新
+      emit('height-changed')
+      emit('focus-input')
     } catch (error) {
       console.error('取消固定失败:', error)
     }
@@ -826,6 +781,8 @@ async function handleContextMenuCommand(command: string): Promise<void> {
     try {
       const { path: filePath } = JSON.parse(jsonStr)
       await window.ztools.revealInFinder(filePath)
+      // 打开文件位置后也聚焦搜索框（这个操作不涉及窗口高度变化）
+      emit('focus-input')
     } catch (error) {
       console.error('打开文件位置失败:', error)
     }
@@ -849,6 +806,23 @@ function handleContainerClick(event: MouseEvent): void {
   emit('focus-input')
 }
 
+// 监听搜索条件变化，重置折叠状态
+watch(
+  () => [props.searchQuery, props.pastedImage, props.pastedFiles, props.pastedText],
+  () => {
+    // 当搜索条件变化时，重置所有列表的展开状态
+    resetCollapseState()
+  }
+)
+
+// 重置所有列表的折叠状态
+function resetCollapseState(): void {
+  isRecentExpanded.value = false
+  isPinnedExpanded.value = false
+  isSearchResultsExpanded.value = false
+  isRecommendationsExpanded.value = false
+}
+
 // 初始化
 onMounted(() => {
   // 监听上下文菜单命令
@@ -859,7 +833,8 @@ onMounted(() => {
 defineExpose({
   navigationGrid,
   handleKeydown,
-  resetSelection
+  resetSelection,
+  resetCollapseState
 })
 </script>
 
@@ -869,6 +844,44 @@ defineExpose({
   overflow-y: auto;
   overflow-x: hidden;
   user-select: none; /* 禁止选取文本 */
+
+  /* Firefox 滚动条样式 */
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 0, 0, 0.2) transparent;
+}
+
+/* Webkit 浏览器（Chrome、Safari、Edge）滚动条样式 */
+.scrollable-content::-webkit-scrollbar {
+  width: 6px;
+}
+
+.scrollable-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.scrollable-content::-webkit-scrollbar-thumb {
+  background-color: rgba(0, 0, 0, 0.2);
+  border-radius: 3px;
+  transition: background-color 0.2s;
+}
+
+.scrollable-content::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(0, 0, 0, 0.3);
+}
+
+/* 暗色模式下的滚动条颜色 */
+@media (prefers-color-scheme: dark) {
+  .scrollable-content {
+    scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+  }
+
+  .scrollable-content::-webkit-scrollbar-thumb {
+    background-color: rgba(255, 255, 255, 0.2);
+  }
+
+  .scrollable-content::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(255, 255, 255, 0.3);
+  }
 }
 
 .content-section {

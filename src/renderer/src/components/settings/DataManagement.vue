@@ -13,7 +13,13 @@
             :key="pluginData.pluginName"
             class="card plugin-card"
           >
-            <img v-if="pluginData.logo" :src="pluginData.logo" class="plugin-icon" alt="插件图标" />
+            <img
+              v-if="pluginData.logo"
+              :src="pluginData.logo"
+              class="plugin-icon"
+              alt="插件图标"
+              draggable="false"
+            />
             <div v-else class="plugin-icon-placeholder">
               <Icon name="plugin" :size="24" />
             </div>

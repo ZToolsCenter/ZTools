@@ -162,6 +162,7 @@
           :src="windowStore.avatar"
           :class="['avatar-preview', { 'default-avatar': windowStore.avatar === defaultAvatar }]"
           alt="头像预览"
+          draggable="false"
         />
         <button class="btn" @click="handleSelectAvatar">选择图片</button>
         <button

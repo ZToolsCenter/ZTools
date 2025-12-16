@@ -16,7 +16,7 @@
             @click="openPluginDetail(plugin)"
           >
             <div class="plugin-icon">
-              <img :src="plugin.logo" class="plugin-logo-img" alt="icon" />
+              <img :src="plugin.logo" class="plugin-logo-img" alt="icon" draggable="false" />
             </div>
             <div class="plugin-info">
               <div class="plugin-name">{{ plugin.name }}</div>

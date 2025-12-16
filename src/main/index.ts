@@ -31,9 +31,6 @@ app.whenReady().then(async () => {
   // 创建主窗口
   const mainWindow = windowManager.createWindow()
 
-  // 加载窗口位置数据到内存（优化性能）
-  await windowManager.loadWindowPositions()
-
   // 初始化 API 和插件管理器
   if (mainWindow) {
     api.init(mainWindow, pluginManager)

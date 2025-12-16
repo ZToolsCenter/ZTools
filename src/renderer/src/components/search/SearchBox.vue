@@ -40,7 +40,7 @@
         </div>
       </div>
       <!-- 粘贴的文本显示 -->
-      <div v-if="pastedText" class="pasted-text">
+      <div v-if="pastedText" class="pasted-text" @click="handlePastedTextClick">
         <div class="text-icon">
           <svg
             width="16"
@@ -69,30 +69,30 @@
           <span class="text-content">{{ truncatedPastedText }}</span>
         </div>
       </div>
-      <span ref="measureRef" class="measure-text"></span>
-      <!-- 独立的占位符显示：只在没有任何内容且不在输入法组合状态时显示 -->
-      <div
-        v-if="!modelValue && !pastedImage && !pastedFiles && !pastedText && !isComposing"
-        class="placeholder-text"
-      >
-        {{ placeholderText }}
+      <!-- 输入框包装器：占位符和输入框在同一容器内 -->
+      <div class="input-wrapper">
+        <span ref="measureRef" class="measure-text"></span>
+        <!-- 独立的占位符显示 -->
+        <div v-if="!modelValue && !isComposing" class="placeholder-text">
+          {{ currentPlaceholder }}
+        </div>
+        <input
+          ref="inputRef"
+          type="text"
+          :value="modelValue"
+          placeholder=""
+          class="search-input"
+          @input="onInput"
+          @compositionstart="onCompositionStart"
+          @compositionend="onCompositionEnd"
+          @keydown="onKeydown"
+          @keydown.left="(e) => keydownEvent(e, 'left')"
+          @keydown.right="(e) => keydownEvent(e, 'right')"
+          @keydown.down="(e) => keydownEvent(e, 'down')"
+          @keydown.up="(e) => keydownEvent(e, 'up')"
+          @paste="handlePaste"
+        />
       </div>
-      <input
-        ref="inputRef"
-        type="text"
-        :value="modelValue"
-        placeholder=""
-        class="search-input"
-        @input="onInput"
-        @compositionstart="onCompositionStart"
-        @compositionend="onCompositionEnd"
-        @keydown="onKeydown"
-        @keydown.left="(e) => keydownEvent(e, 'left')"
-        @keydown.right="(e) => keydownEvent(e, 'right')"
-        @keydown.down="(e) => keydownEvent(e, 'down')"
-        @keydown.up="(e) => keydownEvent(e, 'up')"
-        @paste="handlePaste"
-      />
     </div>
 
     <!-- 操作栏 -->
@@ -115,6 +115,7 @@
           { 'default-avatar': isDefaultAvatar },
           { 'plugin-logo': windowStore.currentPlugin?.logo }
         ]"
+        draggable="false"
         @click="handleSettingsClick"
       />
     </div>
@@ -165,6 +166,16 @@ const placeholderText = computed(() => {
   // 否则使用全局 placeholder
   return windowStore.placeholder
 })
+
+// 当前实际显示的占位符文字
+const currentPlaceholder = computed(() => {
+  // 如果有粘贴内容（图片/文件/文本），显示"搜索"
+  if (props.pastedImage || props.pastedFiles || props.pastedText) {
+    return '搜索'
+  }
+  // 否则显示完整的占位符文字
+  return placeholderText.value
+})
 const avatarUrl = computed(() => {
   // 优先显示插件图标
   if (windowStore.currentPlugin?.logo) {
@@ -179,11 +190,18 @@ const isDefaultAvatar = computed(() => {
   return avatarUrl.value.includes('default.png')
 })
 
-// 截断显示的粘贴文本（最多显示30个字符）
+// 截断显示的粘贴文本（从中间截断，显示头尾）
 const truncatedPastedText = computed(() => {
   if (!props.pastedText) return ''
-  if (props.pastedText.length <= 30) return props.pastedText
-  return props.pastedText.substring(0, 30) + '...'
+  const maxLength = 30
+  if (props.pastedText.length <= maxLength) return props.pastedText
+
+  // 从中间截断，保留前15个字符和后10个字符
+  const headLength = 15
+  const tailLength = 10
+  const head = props.pastedText.substring(0, headLength)
+  const tail = props.pastedText.substring(props.pastedText.length - tailLength)
+  return `${head}...${tail}`
 })
 
 const inputRef = ref<HTMLInputElement>()
@@ -306,35 +324,67 @@ async function handlePaste(event: ClipboardEvent): Promise<void> {
       // 粘贴的是文件 -> 作为匹配内容
       emit('update:pastedFiles', copiedContent.data as FileItem[])
     } else if (copiedContent?.type === 'text') {
-      // 粘贴的是文本 -> 检查是否有选中文字
+      // 粘贴的是文本 -> 检查输入框状态
       const input = inputRef.value
       const hasSelection =
         input && input.selectionStart !== null && input.selectionStart !== input.selectionEnd
+      const hasInputText = props.modelValue && props.modelValue.trim().length > 0
 
-      if (hasSelection) {
-        // 有选中文字 -> 手动插入文本（替换选中内容）
+      if (hasSelection || hasInputText) {
+        // 有选中文字或输入框有文本 -> 手动插入文本到光标位置
         const text = copiedContent.data as string
-        const start = input!.selectionStart!
-        const end = input!.selectionEnd!
         const currentValue = props.modelValue || ''
-        const newValue = currentValue.substring(0, start) + text + currentValue.substring(end)
 
-        emit('update:modelValue', newValue)
+        if (hasSelection) {
+          // 替换选中内容
+          const start = input!.selectionStart!
+          const end = input!.selectionEnd!
+          const newValue = currentValue.substring(0, start) + text + currentValue.substring(end)
+          emit('update:modelValue', newValue)
 
-        // 设置光标位置到插入文本的末尾
-        nextTick(() => {
-          if (input) {
-            const newCursorPos = start + text.length
-            input.setSelectionRange(newCursorPos, newCursorPos)
-          }
-        })
+          // 设置光标位置到插入文本的末尾
+          nextTick(() => {
+            if (input) {
+              const newCursorPos = start + text.length
+              input.setSelectionRange(newCursorPos, newCursorPos)
+            }
+          })
+        } else {
+          // 在光标位置插入文本
+          const cursorPos = input?.selectionStart || currentValue.length
+          const newValue =
+            currentValue.substring(0, cursorPos) + text + currentValue.substring(cursorPos)
+          emit('update:modelValue', newValue)
+
+          // 设置光标位置到插入文本的末尾
+          nextTick(() => {
+            if (input) {
+              const newCursorPos = cursorPos + text.length
+              input.setSelectionRange(newCursorPos, newCursorPos)
+            }
+          })
+        }
       } else {
-        // 无选中文字 -> 作为粘贴内容（用于 over 类型匹配指令）
+        // 输入框为空 -> 作为粘贴内容（用于 over 类型匹配指令）
         emit('update:pastedText', copiedContent.data as string)
       }
     }
   } catch (error) {
     console.error('处理粘贴失败:', error)
+  }
+}
+
+// 处理点击粘贴文本框
+function handlePastedTextClick(): void {
+  if (props.pastedText) {
+    // 将粘贴的文本填充到输入框
+    emit('update:modelValue', props.pastedText)
+    // 清除粘贴状态
+    emit('update:pastedText', null)
+    // 聚焦输入框
+    nextTick(() => {
+      inputRef.value?.focus()
+    })
   }
 }
 
@@ -598,6 +648,7 @@ defineExpose({
 
 .placeholder-text {
   position: absolute;
+  left: 0;
   color: #7a7a7a;
   font-size: 24px;
   font-weight: 300;
@@ -643,8 +694,15 @@ defineExpose({
   gap: 8px;
   min-width: 0; /* 允许 flex 子元素缩小 */
   overflow: hidden; /* 防止内容溢出 */
-  position: relative; /* 为占位符提供定位上下文 */
   /* 不设置 no-drag，继承父元素的 drag，整个区域可拖动 */
+}
+
+.input-wrapper {
+  position: relative; /* 为占位符提供定位上下文 */
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
 }
 
 .pasted-image-thumbnail {
@@ -652,35 +710,74 @@ defineExpose({
   width: 48px;
   height: 48px;
   flex-shrink: 0; /* 图片缩略图不允许缩小，保持尺寸 */
-  border-radius: 4px;
+  border-radius: 6px;
   overflow: hidden;
+  border: 1px solid rgba(0, 0, 0, 0.15); /* 透明黑色描边 */
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  background: var(--control-bg); /* 添加背景色，图片未填满时显示 */
+  display: flex;
+  align-items: center;
+  justify-content: center;
   -webkit-app-region: no-drag;
   user-select: none; /* 不可选取 */
 }
 
 .pasted-image-thumbnail img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  object-fit: contain; /* 显示完整图片，不裁切 */
 }
 
 .pasted-files,
 .pasted-text {
   position: relative;
   max-width: 200px;
-  min-width: 100px; /* 最小宽度 */
-  height: 35px;
+  height: 36px;
   flex-shrink: 1; /* 允许缩小 */
-  display: flex;
+  display: inline-flex; /* 改为inline-flex，内容自适应宽度 */
   align-items: center;
   gap: 8px;
   padding: 0 12px;
-  border-radius: 4px;
+  border-radius: 6px;
   background: var(--control-bg);
-  border: 1px solid var(--control-border);
-  transition: all 0.2s;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
   -webkit-app-region: no-drag;
   user-select: none; /* 不可选取文本 */
+}
+
+/* 文件粘贴：实线描边（与图片一致） */
+.pasted-files {
+  border: 1px solid rgba(0, 0, 0, 0.15);
+}
+
+/* 文本粘贴：虚线描边，可点击 */
+.pasted-text {
+  border: 1px dashed rgba(0, 0, 0, 0.2);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.pasted-text:hover {
+  background: var(--hover-bg);
+  border-color: rgba(0, 0, 0, 0.3);
+}
+
+/* 暗色模式下使用透明白色描边（必须放在所有描边定义之后） */
+@media (prefers-color-scheme: dark) {
+  .pasted-image-thumbnail,
+  .pasted-files {
+    border-color: rgba(255, 255, 255, 0.15);
+  }
+
+  .pasted-text {
+    border-color: rgba(255, 255, 255, 0.2);
+  }
+
+  .pasted-text:hover {
+    border-color: rgba(255, 255, 255, 0.3);
+  }
 }
 
 .file-icon,
@@ -689,8 +786,8 @@ defineExpose({
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  color: var(--text-color);
-  opacity: 0.7;
+  color: var(--primary-color);
+  opacity: 0.8;
 }
 
 .file-info,
@@ -704,7 +801,8 @@ defineExpose({
 
 .file-name,
 .text-content {
-  font-size: 14px;
+  font-size: 13px;
+  font-weight: 500;
   color: var(--text-color);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -713,7 +811,11 @@ defineExpose({
 
 .file-count {
   font-size: 12px;
-  color: var(--text-secondary);
+  font-weight: 600;
+  color: var(--primary-color);
+  background: color-mix(in srgb, var(--primary-color) 10%, transparent);
+  padding: 2px 6px;
+  border-radius: 10px;
   flex-shrink: 0;
 }
 

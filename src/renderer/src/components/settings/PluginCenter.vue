@@ -23,7 +23,13 @@
             :title="plugin.description"
             @click="openPluginDetail(plugin)"
           >
-            <img v-if="plugin.logo" :src="plugin.logo" class="plugin-icon" alt="插件图标" />
+            <img
+              v-if="plugin.logo"
+              :src="plugin.logo"
+              class="plugin-icon"
+              alt="插件图标"
+              draggable="false"
+            />
             <div v-else class="plugin-icon-placeholder">🧩</div>
 
             <div class="plugin-info">

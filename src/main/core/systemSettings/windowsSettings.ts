@@ -1,5 +1,3 @@
-import { app } from 'electron'
-import path from 'path'
 import { MS_SETTINGS_URIS } from './msSettingsUris'
 
 export interface SystemSetting {
@@ -8,24 +6,6 @@ export interface SystemSetting {
   category: string
   icon?: string
 }
-
-// 获取系统设置统一图标路径（返回 file:// 协议 URL）
-function getSystemSettingIcon(): string {
-  let iconFilePath: string
-
-  if (app.isPackaged) {
-    // 打包后使用 resources 目录
-    iconFilePath = path.join(process.resourcesPath, 'icons', 'settings-fill.png')
-  } else {
-    // 开发模式：从 app.getAppPath() 获取项目根目录
-    iconFilePath = path.join(app.getAppPath(), 'resources', 'icons', 'settings-fill.png')
-  }
-
-  // 直接返回 file:// 协议 URL（与应用图标处理方式一致）
-  return `file:///${iconFilePath}`
-}
-
-const iconPath = getSystemSettingIcon()
 
 // 合并所有系统设置并统一添加图标
 const allSettings: Omit<SystemSetting, 'icon'>[] = [
@@ -297,8 +277,5 @@ const allSettings: Omit<SystemSetting, 'icon'>[] = [
   }
 ]
 
-// 统一添加图标并导出
-export const WINDOWS_SETTINGS: SystemSetting[] = allSettings.map((setting) => ({
-  ...setting,
-  icon: iconPath
-}))
+// 导出系统设置（图标由前端统一渲染）
+export const WINDOWS_SETTINGS: SystemSetting[] = allSettings

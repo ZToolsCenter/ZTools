@@ -248,9 +248,9 @@ function sendArrowKeyToPlugin(key: string): void {
 }
 
 .plugin-logo {
-  width: 28px;
-  height: 28px;
-  border-radius: 4px;
+  width: 35px;
+  height: 35px;
+  border-radius: 6px;
   object-fit: contain;
   flex-shrink: 0;
 }
@@ -267,17 +267,21 @@ function sendArrowKeyToPlugin(key: string): void {
   height: 35px;
   padding: 0 10px;
   background: var(--input-bg);
-  border: 1px solid var(--input-border);
-  border-radius: 4px;
+  border: none;
+  border-radius: 6px;
   color: var(--titlebar-text);
-  font-size: 12px;
+  font-size: 14px;
   outline: none;
-  transition: all 0.2s;
+  transition: background 0.2s;
+}
+
+.search-input::placeholder {
+  color: var(--titlebar-icon);
+  opacity: 0.5;
 }
 
 .search-input:focus {
-  background: rgba(255, 255, 255, 0.15);
-  border-color: var(--input-focus);
+  background: var(--input-focus-bg);
 }
 
 /* 工具按钮 */
@@ -303,8 +307,13 @@ function sendArrowKeyToPlugin(key: string): void {
 }
 
 .toolbar-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--hover-bg);
   color: var(--titlebar-icon-hover);
+}
+
+.toolbar-btn.active {
+  background: var(--hover-bg);
+  color: #0284c7; /* 固定使用默认蓝色 */
 }
 
 /* Windows 窗口控制按钮 */
@@ -316,7 +325,7 @@ function sendArrowKeyToPlugin(key: string): void {
 
 .window-btn {
   width: 46px;
-  height: 40px;
+  height: 52px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -324,11 +333,12 @@ function sendArrowKeyToPlugin(key: string): void {
   border: none;
   color: var(--titlebar-icon);
   cursor: pointer;
-  transition: background 0.2s;
+  transition: all 0.2s;
 }
 
 .window-btn:hover {
   background: var(--win-button-hover);
+  color: var(--titlebar-icon-hover);
 }
 
 .window-btn.close-btn:hover {

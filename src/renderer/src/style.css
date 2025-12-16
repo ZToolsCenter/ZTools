@@ -2,6 +2,26 @@
 @tailwind components;
 @tailwind utilities;
 
+/* 全局禁用滚动条（只针对 html 和 body，不影响内部组件） */
+html,
+body {
+  overflow: hidden !important;
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE and Edge */
+}
+
+/* 隐藏 body 的滚动条 */
+html::-webkit-scrollbar,
+body::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+
 :root {
   --bg-color: #f4f4f4;
   --text-color: #333333;
@@ -35,8 +55,6 @@
   --danger-light-bg: #fee2e2;
   --danger-border: #fca5a5;
   --dialog-bg: #f4f4f4;
-  /* 系统设置图标滤镜：亮色模式下显示为灰色 */
-  --system-icon-filter: brightness(0) saturate(100%) invert(40%);
 }
 
 /* macOS 下使用透明背景 */
@@ -102,8 +120,6 @@
     --danger-light-bg: rgba(248, 113, 113, 0.2);
     --danger-border: rgba(248, 113, 113, 0.4);
     --dialog-bg: #303133;
-    /* 系统设置图标滤镜：暗色模式下不需要反转 */
-    --system-icon-filter: none;
   }
 
   /* macOS 暗色模式下使用透明背景 */
@@ -145,11 +161,7 @@
   box-sizing: border-box;
 }
 
-html,
-body {
-  overflow-x: hidden; /* 防止横向滚动条 */
-  max-width: 100%; /* 限制最大宽度 */
-}
+/* 注意：html 和 body 的 overflow 设置已在文件开头全局定义 */
 
 body {
   font-family:
@@ -167,9 +179,21 @@ body {
   --hover-bg: color-mix(in srgb, var(--primary-color) 12%, white);
 }
 
+/* 文本选择样式 - 使用主题色 */
+::selection {
+  background: color-mix(in srgb, var(--primary-color) 35%, white);
+  color: var(--text-color);
+}
+
+::-moz-selection {
+  background: color-mix(in srgb, var(--primary-color) 35%, white);
+  color: var(--text-color);
+}
+
 #app {
-  overflow-x: hidden; /* 防止横向滚动条 */
+  overflow: hidden !important; /* 完全隐藏滚动条 */
   max-width: 100%; /* 限制最大宽度 */
+  height: 100%;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -179,6 +203,17 @@ body {
     --primary-light-bg: color-mix(in srgb, var(--primary-color), transparent 92%);
     --active-bg: color-mix(in srgb, var(--primary-color) 12%, #303133);
     --hover-bg: color-mix(in srgb, var(--primary-color) 5%, #303133);
+  }
+
+  /* 暗色模式下的文本选择样式 */
+  ::selection {
+    background: color-mix(in srgb, var(--primary-color) 40%, #303133);
+    color: var(--text-color);
+  }
+
+  ::-moz-selection {
+    background: color-mix(in srgb, var(--primary-color) 40%, #303133);
+    color: var(--text-color);
   }
 }
 
@@ -452,6 +487,75 @@ body {
 
 .card.clickable {
   cursor: pointer;
+}
+
+/* 全局自适应图标样式 - 主题色渐变 */
+/* 使用 mask + linear-gradient 实现真正的颜色渐变 */
+
+.adaptive-icon {
+  /* 使用图标作为蒙版 */
+  -webkit-mask-image: var(--icon-url);
+  mask-image: var(--icon-url);
+  -webkit-mask-size: contain;
+  mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+}
+
+/* 亮色模式：从主题色到极浅主题色的渐变 */
+@media (prefers-color-scheme: light) {
+  .adaptive-icon {
+    background: linear-gradient(
+      135deg,
+      var(--primary-color) 0%,
+      color-mix(in srgb, var(--primary-color) 10%, white) 100%
+    );
+    opacity: 0.88;
+  }
+}
+
+/* 暗色模式：从主题色到极浅主题色的渐变 */
+@media (prefers-color-scheme: dark) {
+  .adaptive-icon {
+    background: linear-gradient(
+      135deg,
+      var(--primary-color) 0%,
+      color-mix(in srgb, var(--primary-color) 15%, white) 100%
+    );
+    opacity: 0.92;
+  }
+}
+
+/* 不同主题的色相旋转值 */
+.theme-blue {
+  --adaptive-icon-hue: 180deg;
+}
+
+.theme-purple {
+  --adaptive-icon-hue: 260deg;
+}
+
+.theme-green {
+  --adaptive-icon-hue: 100deg;
+}
+
+.theme-orange {
+  --adaptive-icon-hue: 20deg;
+}
+
+.theme-red {
+  --adaptive-icon-hue: 350deg;
+}
+
+.theme-pink {
+  --adaptive-icon-hue: 310deg;
+}
+
+/* 默认蓝色主题 */
+:root {
+  --adaptive-icon-hue: 180deg;
 }
 
 /* 全局滚动条样式优化 */

@@ -39,7 +39,12 @@
           :class="['source-item', { active: selectedSource?.path === plugin.path }]"
           @click="selectSource(plugin)"
         >
-          <img v-if="plugin.logo" :src="plugin.logo" class="source-icon plugin-icon" />
+          <img
+            v-if="plugin.logo"
+            :src="plugin.logo"
+            class="source-icon plugin-icon"
+            draggable="false"
+          />
           <span v-else class="source-icon">🧩</span>
           <span class="source-name">{{ plugin.name }}</span>
           <span class="source-badge">{{ getPluginCommandCount(plugin) }}</span>
@@ -94,10 +99,17 @@
                 <span v-if="cmd.icon && cmd.icon.length <= 2" class="icon-emoji">{{
                   cmd.icon
                 }}</span>
+                <!-- 特殊图标使用渐变背景 -->
+                <div
+                  v-else-if="cmd.icon && !hasIconError(cmd) && cmd.needsIconFilter"
+                  class="adaptive-icon"
+                  :style="{ '--icon-url': `url(${cmd.icon})` }"
+                ></div>
+                <!-- 普通图标 -->
                 <img
                   v-else-if="cmd.icon && !hasIconError(cmd)"
                   :src="cmd.icon"
-                  :class="{ 'system-setting-icon': cmd.subType === 'system-setting' }"
+                  draggable="false"
                   @error="() => onIconError(cmd)"
                 />
                 <div v-else class="icon-placeholder">
@@ -133,6 +145,7 @@
                   <img
                     v-else-if="!hasIconError(feature)"
                     :src="feature.icon"
+                    draggable="false"
                     @error="() => onIconError(feature)"
                   />
                   <div v-else class="icon-placeholder">
@@ -172,6 +185,7 @@
                 <img
                   v-else-if="!hasIconError(feature)"
                   :src="feature.icon"
+                  draggable="false"
                   @error="() => onIconError(feature)"
                 />
                 <div v-else class="icon-placeholder">
@@ -232,7 +246,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { useCommandDataStore } from '../../stores/commandDataStore'
+import { useCommandDataStore, type Command } from '../../stores/commandDataStore'
 
 const commandDataStore = useCommandDataStore()
 
@@ -271,15 +285,18 @@ const systemCommands = computed(() => {
 
   const source = selectedSource.value
 
+  let filteredCommands: Command[] = []
+
   if (source.subType === 'app') {
-    return allCommands.value.filter((c) => c.type === 'direct' && c.subType === 'app')
+    filteredCommands = allCommands.value.filter((c) => c.type === 'direct' && c.subType === 'app')
+  } else if (source.subType === 'system-setting') {
+    filteredCommands = allCommands.value.filter(
+      (c) => c.type === 'direct' && c.subType === 'system-setting'
+    )
   }
 
-  if (source.subType === 'system-setting') {
-    return allCommands.value.filter((c) => c.type === 'direct' && c.subType === 'system-setting')
-  }
-
-  return []
+  // 应用特殊指令配置（如系统设置的统一图标）
+  return filteredCommands.map((cmd) => commandDataStore.applySpecialConfig(cmd))
 })
 
 // 按 feature 分组的插件功能
@@ -769,17 +786,15 @@ onMounted(async () => {
   flex-shrink: 0;
 }
 
-.command-icon img {
+.command-icon img,
+.command-icon .adaptive-icon {
   width: 100%;
   height: 100%;
   object-fit: contain;
   border-radius: 6px;
 }
 
-/* 系统设置图标在亮色模式下反转颜色 */
-.command-icon img.system-setting-icon {
-  filter: var(--system-icon-filter);
-}
+/* 自适应图标样式由全局 CSS 处理（style.css） */
 
 .icon-emoji {
   font-size: 24px;

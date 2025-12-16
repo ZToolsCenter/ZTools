@@ -3,6 +3,8 @@ import { defineStore } from 'pinia'
 import { pinyin } from 'pinyin-pro'
 import { nextTick, ref } from 'vue'
 import arrowBackwardIcon from '../assets/image/arrow-backward.png'
+import baiduLogoIcon from '../assets/image/baidu-logo.png'
+import settingsFillIcon from '../assets/image/settings-fill.png'
 
 // 正则匹配指令
 interface RegexCmd {
@@ -69,6 +71,8 @@ export interface Command {
   // 系统设置字段（新增）
   settingUri?: string // ms-settings URI
   category?: string // 分类（用于分组显示）
+  // 特殊图标字段
+  needsIconFilter?: boolean // 是否需要图标滤镜（用于自适应颜色）
 }
 
 interface MatchInfo {
@@ -91,13 +95,61 @@ const PINNED_DOC_ID = 'pinned-commands'
 
 export const useCommandDataStore = defineStore('commandData', () => {
   // ===== 特殊指令配置表 =====
+  // 支持三种匹配方式：
+  // 1. 通过 path 精确匹配（如 'special:last-match'）
+  // 2. 通过 path 前缀匹配（如 'prefix:baidu-search:'）
+  // 3. 通过 subType 匹配（如 'subType:system-setting'）
   const specialCommands: Record<string, Partial<Command>> = {
     'special:last-match': {
       name: '上次匹配',
       icon: arrowBackwardIcon,
       type: 'builtin',
-      cmdType: 'text'
+      cmdType: 'text',
+      needsIconFilter: true // 需要颜色自适应
+    },
+    'prefix:baidu-search:': {
+      name: '百度搜索',
+      icon: baiduLogoIcon,
+      type: 'builtin'
+    },
+    'subType:system-setting': {
+      icon: settingsFillIcon,
+      needsIconFilter: true // 需要颜色自适应
     }
+  }
+
+  /**
+   * 应用特殊指令配置
+   * @param command 原始指令
+   * @returns 应用了特殊配置的指令
+   */
+  function applySpecialConfig(command: Command): Command {
+    // 1. 优先通过 path 精确匹配
+    const pathConfig = specialCommands[command.path]
+    if (pathConfig) {
+      return { ...command, ...pathConfig }
+    }
+
+    // 2. 通过 path 前缀匹配
+    for (const [key, config] of Object.entries(specialCommands)) {
+      if (key.startsWith('prefix:')) {
+        const prefix = key.substring(7) // 去掉 'prefix:' 前缀
+        if (command.path?.startsWith(prefix)) {
+          return { ...command, ...config }
+        }
+      }
+    }
+
+    // 3. 通过 subType 匹配
+    if (command.subType) {
+      const subTypeKey = `subType:${command.subType}`
+      const subTypeConfig = specialCommands[subTypeKey]
+      if (subTypeConfig) {
+        return { ...command, ...subTypeConfig }
+      }
+    }
+
+    return command
   }
 
   // 历史记录
@@ -172,18 +224,53 @@ export const useCommandDataStore = defineStore('commandData', () => {
         // 获取所有已安装插件的路径 Set
         const installedPluginPaths = new Set(plugins.map((p: any) => p.path))
 
-        // 过滤掉已卸载的插件
-        const filteredData = data.filter((item: any) => {
-          if (item.type === 'plugin') {
-            return installedPluginPaths.has(item.path)
-          }
-          return true
-        })
+        let needsSave = false
+
+        // 过滤掉已卸载的插件，并清理系统设置的旧图标路径
+        const filteredData = data
+          .filter((item: any) => {
+            if (item.type === 'plugin') {
+              return installedPluginPaths.has(item.path)
+            }
+            return true
+          })
+          .map((item: any) => {
+            const cleanedItem = { ...item }
+
+            // 1. 迁移旧的系统设置数据格式：type: "system-setting" -> type: "direct", subType: "system-setting"
+            if (item.type === 'system-setting') {
+              needsSave = true
+              cleanedItem.type = 'direct'
+              cleanedItem.subType = 'system-setting'
+              console.log(`迁移系统设置数据格式: ${item.name}`)
+            }
+
+            // 2. 清理系统设置和特殊指令的旧图标路径
+            if (
+              (cleanedItem.type === 'direct' && cleanedItem.subType === 'system-setting') ||
+              cleanedItem.path?.startsWith('special:')
+            ) {
+              if (cleanedItem.icon) {
+                needsSave = true
+                delete cleanedItem.icon
+                console.log(`清理历史记录中的旧图标: ${item.name}`)
+              }
+            }
+
+            return cleanedItem
+          })
 
         history.value = []
         nextTick(() => {
           history.value = filteredData
         })
+
+        // 数据迁移已完成，不再需要保存
+        // needsSave 标记仅用于记录迁移日志
+        if (needsSave) {
+          console.log('检测到需要迁移的旧数据格式，已在前端处理')
+          console.log('注意：历史记录的修改应该通过后端 API 完成，前端不直接保存')
+        }
       } else {
         history.value = []
       }
@@ -357,7 +444,7 @@ export const useCommandDataStore = defineStore('commandData', () => {
           settingCommands = settings.map((s: any) => ({
             name: s.name,
             path: s.uri,
-            icon: s.icon,
+            icon: settingsFillIcon, // 使用前端统一图标
             type: 'direct' as const,
             subType: 'system-setting' as const,
             settingUri: s.uri,
@@ -546,13 +633,17 @@ export const useCommandDataStore = defineStore('commandData', () => {
       }
     }
 
+    // 应用特殊指令配置（确保图标等属性正确）
+    const processedBestMatches = bestMatches.map((cmd) => applySpecialConfig(cmd))
+    const processedRegexMatches = regexMatches.map((cmd) => applySpecialConfig(cmd))
+
     // 如果指定了搜索范围（用于粘贴内容的二次搜索），不需要 regexMatches
     if (commandList) {
-      return { bestMatches, regexMatches: [] }
+      return { bestMatches: processedBestMatches, regexMatches: [] }
     }
 
     // 分别返回模糊匹配和正则匹配结果
-    return { bestMatches, regexMatches }
+    return { bestMatches: processedBestMatches, regexMatches: processedRegexMatches }
   }
 
   // 搜索支持图片的指令
@@ -563,7 +654,8 @@ export const useCommandDataStore = defineStore('commandData', () => {
       imgCommands: result.length,
       allTypes: regexCommands.value.map((c) => c.matchCmd?.type)
     })
-    return result
+    // 应用特殊指令配置
+    return result.map((cmd) => applySpecialConfig(cmd))
   }
 
   // 搜索支持文本的指令（根据文本长度过滤）
@@ -592,7 +684,8 @@ export const useCommandDataStore = defineStore('commandData', () => {
       allTypes: regexCommands.value.map((c) => c.matchCmd?.type)
     })
 
-    return result
+    // 应用特殊指令配置
+    return result.map((cmd) => applySpecialConfig(cmd))
   }
 
   // 搜索支持文件的指令（根据配置属性过滤）
@@ -696,7 +789,8 @@ export const useCommandDataStore = defineStore('commandData', () => {
       pastedFiles: pastedFiles.map((f) => ({ name: f.name, isDir: f.isDirectory }))
     })
 
-    return result
+    // 应用特殊指令配置
+    return result.map((cmd) => applySpecialConfig(cmd))
   }
 
   // 在指定的指令列表中搜索（用于粘贴内容后的二次搜索）
@@ -713,37 +807,10 @@ export const useCommandDataStore = defineStore('commandData', () => {
 
   // ==================== 历史记录相关 ====================
 
-  // 保存历史记录到数据库
-  async function saveHistory(): Promise<void> {
-    try {
-      const cleanData = history.value.map((item) => ({
-        name: item.name,
-        path: item.path,
-        icon: item.icon,
-        type: item.type,
-        featureCode: item.featureCode, // 保存 featureCode
-        pluginExplain: item.pluginExplain, // 保存插件说明
-        lastUsed: item.lastUsed,
-        useCount: item.useCount
-      }))
-
-      await window.ztools.dbPut(HISTORY_DOC_ID, cleanData)
-    } catch (error) {
-      console.error('保存指令历史记录失败:', error)
-    }
-  }
-
   // 获取最近使用（自动同步最新数据）
   function getRecentCommands(limit?: number): Command[] {
     // 同步历史记录数据，确保使用最新的路径和图标
     const syncedHistory = history.value.map((historyItem) => {
-      // 检查是否是特殊指令
-      const specialConfig = specialCommands[historyItem.path]
-      if (specialConfig) {
-        // 使用特殊指令配置覆盖历史记录中的数据
-        return { ...historyItem, ...specialConfig } as Command
-      }
-
       // 尝试从当前列表中找到
       const currentCommand = commands.value.find(
         (app) =>
@@ -754,7 +821,10 @@ export const useCommandDataStore = defineStore('commandData', () => {
       )
 
       // 如果找到了最新数据，使用最新的；否则使用历史记录
-      return currentCommand || historyItem
+      const command = currentCommand || historyItem
+
+      // 应用特殊指令配置（统一处理）
+      return applySpecialConfig(command)
     })
 
     if (limit) {
@@ -763,16 +833,10 @@ export const useCommandDataStore = defineStore('commandData', () => {
     return syncedHistory
   }
 
-  // 从历史记录中删除指定指令
+  // 从历史记录中删除指定指令（通过后端 API）
   async function removeFromHistory(commandPath: string, featureCode?: string): Promise<void> {
     await window.ztools.removeFromHistory(commandPath, featureCode)
     // 后端会发送 history-changed 事件，触发重新加载
-  }
-
-  // 清空历史记录
-  async function clearHistory(): Promise<void> {
-    history.value = []
-    await saveHistory()
   }
 
   // ==================== 固定应用相关 ====================
@@ -884,11 +948,11 @@ export const useCommandDataStore = defineStore('commandData', () => {
     searchTextCommands,
     searchFileCommands,
     reloadUserData,
+    applySpecialConfig, // 导出特殊配置应用函数
 
     // 指令历史记录方法（添加由后端处理）
     getRecentCommands,
     removeFromHistory,
-    clearHistory,
 
     // 固定指令方法
     isPinned,

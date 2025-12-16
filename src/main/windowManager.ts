@@ -12,7 +12,6 @@ import {
 import path from 'path'
 import trayIconLight from '../../resources/icons/trayTemplate@2x-light.png?asset'
 import trayIcon from '../../resources/icons/trayTemplate@2x.png?asset'
-import databaseAPI from './api/shared/database'
 import clipboardManager from './clipboardManager'
 import pluginManager from './pluginManager'
 
@@ -34,7 +33,7 @@ class WindowManager {
   } | null = null // 打开应用前激活的窗口
   private shouldHideOnBlur = true // 是否在失去焦点时隐藏窗口
   // private _shouldRestoreFocus = true // TODO: 是否在隐藏窗口时恢复焦点（待实现）
-  private windowPositionsByDisplay: Record<number, { x: number; y: number }> = {} // 各显示器的窗口位置缓存
+  private windowPositionsByDisplay: Record<number, { x: number; y: number }> = {}
 
   /**
    * 获取鼠标所在显示器的工作区尺寸和位置
@@ -46,9 +45,7 @@ class WindowManager {
     y: number
     id: number
   } {
-    // 获取鼠标当前位置
     const cursorPoint = screen.getCursorScreenPoint()
-    // 获取鼠标所在的显示器
     const display = screen.getDisplayNearestPoint(cursorPoint)
     return {
       ...display.workArea,
@@ -334,11 +331,19 @@ class WindowManager {
   private toggleWindow(): void {
     if (!this.mainWindow) return
 
-    if (this.mainWindow.isFocused()) {
+    const isVisible = this.mainWindow.isVisible()
+    console.log(`切换窗口状态 - 当前可见性: ${isVisible}`)
+
+    // 使用 isVisible() 判断窗口是否显示，更可靠
+    if (isVisible) {
+      // 窗口已显示 → 隐藏
+      console.log('隐藏窗口')
       this.mainWindow.blur()
       this.mainWindow.hide()
       this.restorePreviousWindow()
     } else {
+      // 窗口已隐藏 → 显示
+      console.log('显示窗口')
       // 记录打开窗口前的激活窗口
       const currentWindow = clipboardManager.getCurrentWindow()
       if (currentWindow) {
@@ -348,79 +353,45 @@ class WindowManager {
         this.mainWindow.webContents.send('window-info-changed', currentWindow)
       }
 
-      // 智能定位：将窗口移动到鼠标所在的显示器（同步，从内存读取）
+      // 移动到鼠标所在显示器（恢复该显示器记忆的位置或居中）
       this.moveWindowToCursor()
-      // 直接显示窗口，位置已同步设置完成
       this.mainWindow.show()
+      this.mainWindow.focus()
     }
   }
 
   /**
-   * 加载各显示器的窗口位置数据到内存（初始化时调用）
+   * 保存窗口位置到指定显示器（仅内存）
    */
-  public async loadWindowPositions(): Promise<void> {
-    try {
-      const savedPositions = (await databaseAPI.dbGet('window-positions-by-display')) || {}
-      this.windowPositionsByDisplay = savedPositions
-      console.log('已加载窗口位置数据:', Object.keys(savedPositions).length, '个显示器')
-    } catch (error) {
-      console.error('加载窗口位置数据失败:', error)
-      this.windowPositionsByDisplay = {}
-    }
-  }
-
-  /**
-   * 保存窗口位置到指定显示器（供 window.ts 调用）
-   */
-  public async saveWindowPosition(displayId: number, x: number, y: number): Promise<void> {
-    // 更新内存中的数据
+  public saveWindowPosition(displayId: number, x: number, y: number): void {
     this.windowPositionsByDisplay[displayId] = { x, y }
-
-    // 异步保存到数据库，不阻塞
-    try {
-      await databaseAPI.dbPut('window-positions-by-display', this.windowPositionsByDisplay)
-    } catch (error) {
-      console.error('保存窗口位置失败:', error)
-    }
   }
 
   /**
-   * 将窗口移动到鼠标所在的显示器
-   * 优先恢复该显示器上次保存的位置，如果没有则居中显示
+   * 将窗口移动到鼠标所在显示器
+   * 优先恢复该显示器记忆的位置，否则居中显示
    */
   private moveWindowToCursor(): void {
     if (!this.mainWindow) return
 
     const { width, height, x: displayX, y: displayY, id: displayId } = this.getDisplayAtCursor()
 
-    // 从内存中获取该显示器保存的位置（无需等待数据库）
     const savedPosition = this.windowPositionsByDisplay[displayId]
 
     let x: number, y: number
 
-    if (
-      savedPosition &&
-      typeof savedPosition.x === 'number' &&
-      typeof savedPosition.y === 'number'
-    ) {
-      // 使用保存的位置
+    if (savedPosition) {
+      // 恢复该显示器记忆的位置
       x = savedPosition.x
       y = savedPosition.y
-      console.log(`恢复显示器 ${displayId} 的窗口位置:`, { x, y })
     } else {
-      // 获取窗口当前的实际宽度（保持用户调整后的宽度）
+      // 计算默认居中位置（稍微偏上）
       const [windowWidth] = this.mainWindow.getSize()
-      // 计算窗口在显示器上的居中位置
       x = displayX + Math.floor((width - windowWidth) / 2)
-      y = displayY + Math.floor((height - 500) / 2.5) // 稍微偏上一点的居中位置
-      console.log(`显示器 ${displayId} 首次打开，居中显示:`, {
-        display: { x: displayX, y: displayY, width, height },
-        windowSize: windowWidth,
-        windowPos: { x, y }
-      })
+      y = displayY + Math.floor((height - 500) / 2.5)
     }
 
-    this.mainWindow.setPosition(x, y, false) // 只设置位置，不改变尺寸
+    this.mainWindow.setPosition(x, y, false)
   }
 
   /**
@@ -439,9 +410,8 @@ class WindowManager {
       this.mainWindow.webContents.send('window-info-changed', currentWindow)
     }
 
-    // 智能定位：将窗口移动到鼠标所在的显示器（同步，从内存读取）
+    // 移动到鼠标所在显示器（恢复该显示器记忆的位置或居中）
     this.moveWindowToCursor()
-    // 直接显示窗口，位置已同步设置完成
     this.mainWindow.show()
     this.mainWindow.webContents.focus()
   }
@@ -476,17 +446,25 @@ class WindowManager {
       return false
     }
 
+    // 忽略同类启动器工具，避免激活冲突
+    const ignoredApps = ['uTools', 'Alfred', 'Raycast', 'Wox', 'Listary']
+    if (ignoredApps.includes(this.previousActiveWindow.appName)) {
+      console.log(`跳过恢复同类工具: ${this.previousActiveWindow.appName}`)
+      return false
+    }
+
     try {
       const success = clipboardManager.activateApp(this.previousActiveWindow)
       if (success) {
         console.log(`已恢复激活窗口: ${this.previousActiveWindow.appName}`)
         return true
       } else {
-        console.error(`恢复激活窗口失败: ${this.previousActiveWindow.appName}`)
+        // 静默失败，不报错（可能进程已关闭或窗口已销毁）
+        console.log(`无法恢复窗口: ${this.previousActiveWindow.appName}`)
         return false
       }
     } catch (error) {
-      console.error('恢复激活窗口异常:', error)
+      console.log('恢复激活窗口时出现异常:', error)
       return false
     }
   }

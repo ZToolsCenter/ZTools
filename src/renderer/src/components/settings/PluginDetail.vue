@@ -2,7 +2,13 @@
   <DetailPanel title="插件详情" @back="emit('back')">
     <div class="detail-content">
       <div class="detail-header">
-        <img v-if="plugin.logo" :src="plugin.logo" class="detail-icon" alt="插件图标" />
+        <img
+          v-if="plugin.logo"
+          :src="plugin.logo"
+          class="detail-icon"
+          alt="插件图标"
+          draggable="false"
+        />
         <div v-else class="detail-icon placeholder">🧩</div>
         <div class="detail-title">
           <div class="detail-name">{{ plugin.name }}</div>

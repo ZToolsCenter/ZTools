@@ -1,28 +1,34 @@
-/* 标题栏全局样式 */
+/* 标题栏全局样式 - 与主应用颜色系统保持一致 */
 :root {
   /* Windows 按钮颜色 */
-  --win-button-hover: rgba(255, 255, 255, 0.1);
+  --win-button-hover: rgba(0, 0, 0, 0.05);
   --win-close-hover: #e81123;
 
-  /* 通用颜色 */
-  --titlebar-bg: #1e1e1e;
-  --titlebar-text: #ffffff;
-  --titlebar-icon: #cccccc;
-  --titlebar-icon-hover: #ffffff;
-  --input-bg: rgba(255, 255, 255, 0.1);
-  --input-border: rgba(255, 255, 255, 0.2);
-  --input-focus: #0078d4;
+  /* 亮色模式颜色 */
+  --titlebar-bg: #f4f4f4;
+  --titlebar-text: #333333;
+  --titlebar-icon: #616161;
+  --titlebar-icon-hover: #333333;
+  --input-bg: rgba(0, 0, 0, 0.05); /* 透明黑色 */
+  --input-border: rgba(0, 0, 0, 0.1);
+  --input-focus: #0284c7; /* 固定使用默认蓝色 */
+  --input-focus-bg: rgba(0, 0, 0, 0.08);
+  --hover-bg: #f9fafb;
 }
 
-/* 亮色模式 */
-@media (prefers-color-scheme: light) {
+/* 暗色模式 */
+@media (prefers-color-scheme: dark) {
   :root {
-    --titlebar-bg: #f3f3f3;
-    --titlebar-text: #000000;
-    --titlebar-icon: #5a5a5a;
-    --titlebar-icon-hover: #000000;
-    --input-bg: rgba(0, 0, 0, 0.05);
-    --input-border: rgba(0, 0, 0, 0.15);
+    --win-button-hover: rgba(255, 255, 255, 0.1);
+    --titlebar-bg: #303133;
+    --titlebar-text: #f3f4f6;
+    --titlebar-icon: #bfc0c3;
+    --titlebar-icon-hover: #f3f4f6;
+    --input-bg: rgba(0, 0, 0, 0.2); /* 透明黑色 */
+    --input-border: rgba(0, 0, 0, 0.3);
+    --input-focus: #0284c7; /* 固定使用默认蓝色 */
+    --input-focus-bg: rgba(0, 0, 0, 0.3);
+    --hover-bg: #374151;
   }
 }
 

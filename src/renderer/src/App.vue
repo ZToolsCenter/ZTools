@@ -70,6 +70,7 @@ const searchBoxRef = ref<{ focus: () => void; selectAll: () => void } | null>(nu
 const searchResultsRef = ref<{
   handleKeydown: (e: KeyboardEvent) => void
   resetSelection: () => void
+  resetCollapseState: () => void
 } | null>(null)
 // 粘贴的图片数据
 const pastedImageData = ref<string | null>(null)
@@ -272,24 +273,34 @@ function handleKeydown(event: KeyboardEvent): void {
     }
 
     if (currentView.value === ViewMode.Plugin) {
-      // 插件页面 ESC 键处理
+      // 插件页面 ESC 键处理 - 分步清除
       if (searchQuery.value.trim()) {
-        // 如果输入框有内容，先清空输入框
+        // 第一步：清除输入框
         searchQuery.value = ''
+      } else if (pastedImageData.value || pastedFilesData.value || pastedTextData.value) {
+        // 第二步：清除粘贴内容
+        pastedImageData.value = null
+        pastedFilesData.value = null
+        pastedTextData.value = null
       } else {
-        // 输入框为空，退出插件返回搜索
+        // 第三步：退出插件返回搜索
         currentView.value = ViewMode.Search
         window.ztools.hidePlugin()
       }
       return
     }
 
-    // 搜索页面
-    if (searchQuery.value.trim() || pastedImageData.value || pastedFilesData.value) {
+    // 搜索页面 - 分步清除
+    if (searchQuery.value.trim()) {
+      // 第一步：清除输入框
       searchQuery.value = ''
+    } else if (pastedImageData.value || pastedFilesData.value || pastedTextData.value) {
+      // 第二步：清除粘贴内容
       pastedImageData.value = null
       pastedFilesData.value = null
+      pastedTextData.value = null
     } else {
+      // 第三步：关闭窗口
       window.ztools.hideWindow()
     }
     return
@@ -332,6 +343,8 @@ onMounted(async () => {
     }
 
     searchResultsRef.value?.resetSelection()
+    // 重置所有列表的折叠状态
+    searchResultsRef.value?.resetCollapseState()
 
     // 隐藏插件视图
     window.ztools.hidePlugin()
@@ -356,8 +369,8 @@ onMounted(async () => {
             pastedImageData.value = copiedContent.data as string
             console.log('自动粘贴图片')
           } else if (copiedContent.type === 'text') {
-            // 自动粘贴文本
-            searchQuery.value = copiedContent.data as string
+            // 自动粘贴文本到粘贴文本区域
+            pastedTextData.value = copiedContent.data as string
             console.log('自动粘贴文本:', copiedContent.data)
           } else if (copiedContent.type === 'file') {
             // 自动粘贴文件
@@ -401,9 +414,10 @@ onMounted(async () => {
   window.ztools.onPluginOpened((plugin) => {
     console.log('插件已打开:', plugin)
     windowStore.updateCurrentPlugin(plugin)
-    // 清除粘贴的图片和文件
+    // 清除所有粘贴内容
     pastedImageData.value = null
     pastedFilesData.value = null
+    pastedTextData.value = null
   })
 
   // 监听插件关闭事件
@@ -547,7 +561,7 @@ onUnmounted(() => {
   flex-direction: column;
   background: var(--bg-color);
   outline: none;
-  overflow-x: hidden; /* 防止横向滚动条 */
+  overflow: hidden; /* 隐藏所有滚动条 */
 }
 
 .search-window {
@@ -556,7 +570,7 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   background: var(--bg-color);
-  overflow-x: hidden; /* 防止横向滚动条 */
+  overflow: hidden; /* 隐藏所有滚动条 */
 }
 
 .search-box-wrapper {
