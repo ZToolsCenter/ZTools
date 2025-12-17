@@ -36,9 +36,7 @@
         </div>
         <div class="file-info">
           <span class="file-name">{{ getFirstFileName(pastedFiles) }}</span>
-          <span v-if="pastedFiles.length > 1" class="file-count"
-            >+{{ pastedFiles.length - 1 }}</span
-          >
+          <span v-if="pastedFiles.length > 1" class="file-count">{{ pastedFiles.length }}</span>
         </div>
       </div>
       <!-- 粘贴的文本显示 -->
@@ -126,7 +124,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { useWindowStore, DEFAULT_AVATAR } from '../../stores/windowStore'
+import { DEFAULT_AVATAR, useWindowStore } from '../../stores/windowStore'
 import UpdateIcon from './UpdateIcon.vue'
 
 // FileItem 接口（从剪贴板管理器返回的格式）

@@ -136,11 +136,13 @@ window.exports = {
 // plugin.json
 {
   "code": "extract",
-  "cmds": [{
-    "type": "regex",
-    "match": "\\d+",
-    "label": "提取数字"
-  }]
+  "cmds": [
+    {
+      "type": "regex",
+      "match": "\\d+",
+      "label": "提取数字"
+    }
+  ]
 }
 ```
 
@@ -161,11 +163,13 @@ window.exports = {
 // plugin.json
 {
   "code": "readfile",
-  "cmds": [{
-    "type": "files",
-    "fileType": "file",
-    "label": "读取文件"
-  }]
+  "cmds": [
+    {
+      "type": "files",
+      "fileType": "file",
+      "label": "读取文件"
+    }
+  ]
 }
 ```
 
@@ -193,10 +197,12 @@ window.exports = {
 // plugin.json
 {
   "code": "saveimage",
-  "cmds": [{
-    "type": "img",
-    "label": "保存图片"
-  }]
+  "cmds": [
+    {
+      "type": "img",
+      "label": "保存图片"
+    }
+  ]
 }
 ```
 
@@ -430,6 +436,7 @@ A: 可以使用 `async/await` 或 Promise，但记得使用 try-catch 处理错�
 ### Q: 插件不生效怎么办？
 
 A:
+
 1. 检查 `plugin.json` 配置是否正确
 2. 检查 `preload.js` 是否有语法错误
 3. 重启 ZTools 或重新加载插件
@@ -441,6 +448,7 @@ A: 在 `package.json` 中添加依赖，运行 `npm install`，然后在 `preloa
 ### Q: 如何提高执行速度？
 
 A:
+
 - 避免同步阻塞操作
 - 缓存重复计算结果
 - 使用 Worker 处理耗时任务

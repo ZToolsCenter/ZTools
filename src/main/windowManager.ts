@@ -144,7 +144,7 @@ class WindowManager {
     })
 
     this.mainWindow.on('blur', () => {
-        this.mainWindow?.hide()
+      this.mainWindow?.hide()
     })
 
     this.mainWindow.on('show', () => {

@@ -135,7 +135,7 @@ function App() {
     hello: Hello,
     read: Read,
     write: Write,
-    myfeature: MyFeature  // 添加新路由
+    myfeature: MyFeature // 添加新路由
   }
 
   // ...

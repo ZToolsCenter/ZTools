@@ -5,9 +5,11 @@
 ## 组件列表
 
 ### 1. CommandCard.vue
+
 **用途**: 用于显示单个系统应用或系统设置的指令卡片
 
 **Props**:
+
 - `command` (Object): 指令对象
   - `name` (string): 指令名称
   - `icon` (string, 可选): 图标路径或 emoji
@@ -18,9 +20,11 @@
   - `needsIconFilter` (boolean, 可选): 是否需要图标滤镜
 
 **Slots**:
+
 - `meta`: 自定义元信息显示
 
 **示例**:
+
 ```vue
 <CommandCard :command="command" />
 
@@ -35,9 +39,11 @@
 ---
 
 ### 2. FeatureCard.vue
+
 **用途**: 用于显示插件的 feature 分组卡片
 
 **Props**:
+
 - `feature` (Object): Feature 对象
   - `name` (string, 可选): Feature 名称
   - `code` (string, 可选): Feature 代码
@@ -45,9 +51,11 @@
   - `icon` (string, 可选): 图标路径或 emoji
 
 **Slots**:
+
 - 默认插槽: 用于放置 CommandTag 组件
 
 **示例**:
+
 ```vue
 <FeatureCard :feature="feature">
   <CommandTag>指令文本</CommandTag>
@@ -61,19 +69,23 @@
 ---
 
 ### 3. CommandTag.vue
+
 **用途**: 用于显示指令标签（功能指令、匹配指令）
 
 **Props**:
+
 - `type` (string, 可选): 标签类型 ('text' | 'regex' | 'over')
   - 不传或传 'text': 蓝色功能指令样式
   - 'regex': 紫色正则匹配样式
   - 'over': 绿色任意文本样式
 
 **Slots**:
+
 - 默认插槽: 标签内容
   - 可以使用 `<span class="tag-badge">` 添加徽章
 
 **示例**:
+
 ```vue
 <!-- 功能指令 -->
 <CommandTag>打开设置</CommandTag>
@@ -96,20 +108,13 @@
 ## 使用场景
 
 ### 在 AllCommands.vue 中
+
 ```vue
 <!-- 系统应用/设置 -->
-<CommandCard
-  v-for="(cmd, index) in systemCommands"
-  :key="index"
-  :command="cmd"
-/>
+<CommandCard v-for="(cmd, index) in systemCommands" :key="index" :command="cmd" />
 
 <!-- 插件 Feature -->
-<FeatureCard
-  v-for="feature in pluginFeatures"
-  :key="feature.code"
-  :feature="feature"
->
+<FeatureCard v-for="feature in pluginFeatures" :key="feature.code" :feature="feature">
   <CommandTag
     v-for="cmd in feature.textCmds"
     :key="cmd.text"
@@ -128,12 +133,9 @@
 ```
 
 ### 在 PluginDetail.vue 中
+
 ```vue
-<FeatureCard
-  v-for="feature in plugin.features"
-  :key="feature.code"
-  :feature="feature"
->
+<FeatureCard v-for="feature in plugin.features" :key="feature.code" :feature="feature">
   <CommandTag
     v-for="cmd in feature.cmds"
     :key="cmd.id"
