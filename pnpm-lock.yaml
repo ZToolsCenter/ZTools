@@ -38,9 +38,6 @@ importers:
       marked:
         specifier: ^17.0.1
         version: 17.0.1
-      node-gyp:
-        specifier: ^12.1.0
-        version: 12.1.0
       pinia:
         specifier: ^3.0.4
         version: 3.0.4(typescript@5.9.3)(vue@3.5.26(typescript@5.9.3))
@@ -96,6 +93,9 @@ importers:
       eslint-plugin-vue:
         specifier: ^10.4.0
         version: 10.6.2(@typescript-eslint/parser@8.50.0(eslint@9.39.2)(typescript@5.9.3))(eslint@9.39.2)(vue-eslint-parser@10.2.0(eslint@9.39.2))
+      node-gyp:
+        specifier: ^12.1.0
+        version: 12.1.0
       prettier:
         specifier: ^3.6.2
         version: 3.7.4
