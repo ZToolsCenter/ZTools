@@ -14,6 +14,7 @@ import trayIconLight from '../../resources/icons/trayTemplate@2x-light.png?asset
 import trayIcon from '../../resources/icons/trayTemplate@2x.png?asset'
 import api from './api/index.js'
 import clipboardManager from './clipboardManager'
+import { MAX_WINDOW_HEIGHT, WINDOW_INITIAL_HEIGHT, WINDOW_WIDTH } from './common/constants.js'
 import pluginManager from './pluginManager'
 
 /**
@@ -74,10 +75,11 @@ class WindowManager {
     const windowConfig: Electron.BrowserWindowConstructorOptions = {
       type: 'panel',
       title: 'ZTools',
-      width: 800,
-      height: 59,
-      x: displayX + Math.floor((width - 800) / 2),
-      y: displayY + Math.floor((height - 500) / 2.4), // 垂直居中偏上的位置
+      width: WINDOW_WIDTH,
+      height: WINDOW_INITIAL_HEIGHT,
+      // 基于最大窗口高度计算居中位置，确保窗口扩展时不会超出屏幕
+      x: displayX + Math.floor((width - WINDOW_WIDTH) / 2),
+      y: displayY + Math.floor((height - MAX_WINDOW_HEIGHT) / 2),
       frame: false, // 无边框
       resizable: false, // 禁止用户手动调整窗口大小
       maximizable: false, // 禁用最大化
@@ -402,10 +404,9 @@ class WindowManager {
       x = savedPosition.x
       y = savedPosition.y
     } else {
-      // 计算默认居中位置（稍微偏上）
-      const [windowWidth] = this.mainWindow.getSize()
-      x = displayX + Math.floor((width - windowWidth) / 2)
-      y = displayY + Math.floor((height - 500) / 2.4)
+      // 计算默认居中位置（基于最大窗口高度）
+      x = displayX + Math.floor((width - WINDOW_WIDTH) / 2)
+      y = displayY + Math.floor((height - MAX_WINDOW_HEIGHT) / 2)
     }
 
     this.mainWindow.setPosition(x, y, false)

@@ -1,4 +1,5 @@
 import { ipcMain } from 'electron';
+import { MAX_WINDOW_HEIGHT, WINDOW_INITIAL_HEIGHT } from '../../common/constants.js';
 import windowManager from '../../windowManager.js';
 
 /**
@@ -70,8 +71,8 @@ export class WindowAPI {
   public resizeWindow(height: number): void {
     if (this.mainWindow) {
       const [width] = this.mainWindow.getSize()
-      // 限制高度范围: 最小 59px, 最大 600px
-      const newHeight = Math.max(59, Math.min(height, 600))
+      // 限制高度范围: 最小初始高度, 最大高度
+      const newHeight = Math.max(WINDOW_INITIAL_HEIGHT, Math.min(height, MAX_WINDOW_HEIGHT))
 
       // 临时启用 resizable 以允许代码调整大小
       this.mainWindow.setResizable(true)
