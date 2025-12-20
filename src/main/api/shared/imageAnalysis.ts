@@ -1,7 +1,10 @@
 import { is } from '@electron-toolkit/utils'
 import { app, ipcMain, nativeImage } from 'electron'
+import crypto from 'crypto'
 import fs from 'fs/promises'
 import path from 'path'
+
+const analysisCache = new Map<string, ImageAnalysisResult>()
 
 interface ImageAnalysisResult {
   isSimpleIcon: boolean // 是否是简单图标
@@ -11,10 +14,10 @@ interface ImageAnalysisResult {
 }
 
 async function analyzeImage(imagePath: string): Promise<ImageAnalysisResult> {
-  const startTime = performance.now()
+  // const startTime = performance.now()
   try {
     // 提取文件名用于日志显示
-    const fileName = imagePath.split(/[/\\]/).pop() || 'unknown'
+    // const fileName = imagePath.split(/[/\\]/).pop() || 'unknown'
 
     // 1. 处理不同格式的图片输入
     let imageBuffer: Buffer
@@ -82,10 +85,22 @@ async function analyzeImage(imagePath: string): Promise<ImageAnalysisResult> {
       imageBuffer = await fs.readFile(filePath)
     }
 
+    // 计算哈希并检查缓存
+    const bufferHash = crypto.createHash('md5').update(imageBuffer).digest('hex')
+    if (analysisCache.has(bufferHash)) {
+      if (process.env.NODE_ENV !== 'production' || !is.dev) {
+        // const duration = (performance.now() - startTime).toFixed(2)
+        // console.log(`[图标分析] ${fileName} | 命中缓存 | 耗时:${duration}ms`)
+      }
+      return analysisCache.get(bufferHash)!
+    }
+
     // 2. 使用 Electron nativeImage 加载图片
     const image = nativeImage.createFromBuffer(imageBuffer)
     if (image.isEmpty()) {
-      return { isSimpleIcon: false, mainColor: null, isDark: false, needsAdaptation: false }
+      const result = { isSimpleIcon: false, mainColor: null, isDark: false, needsAdaptation: false }
+      analysisCache.set(bufferHash, result)
+      return result
     }
 
     // 3. 获取原始像素数据（不缩放，避免插值产生的杂色）
@@ -134,7 +149,9 @@ async function analyzeImage(imagePath: string): Promise<ImageAnalysisResult> {
 
     // 如果没有任何不透明像素
     if (opaquePixels === 0) {
-      return { isSimpleIcon: false, mainColor: null, isDark: false, needsAdaptation: false }
+      const result = { isSimpleIcon: false, mainColor: null, isDark: false, needsAdaptation: false }
+      analysisCache.set(bufferHash, result)
+      return result
     }
 
     // 5. 检测颜色相似度
@@ -183,21 +200,25 @@ async function analyzeImage(imagePath: string): Promise<ImageAnalysisResult> {
     const hexColor = `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`
 
     // 聚合日志输出
-    const duration = (performance.now() - startTime).toFixed(2)
-    console.log(
-      `[图标分析] ${fileName} | 耗时:${duration}ms | 颜色数:${colorMap.size} 透明:${(transparencyRatio * 100).toFixed(0)}% 相似度:${(similarityRatio * 100).toFixed(0)}% 主色:${hexColor}(${isDark ? '深' : '浅'}) | ${isPureColorIcon ? '✓纯色' : '✗复杂'}`
-    )
+    // const duration = (performance.now() - startTime).toFixed(2)
+    // console.log(
+    //   `[图标分析] ${fileName} | 耗时:${duration}ms | 颜色数:${colorMap.size} 透明:${(transparencyRatio * 100).toFixed(0)}% 相似度:${(similarityRatio * 100).toFixed(0)}% 主色:${hexColor}(${isDark ? '深' : '浅'}) | ${isPureColorIcon ? '✓纯色' : '✗复杂'}`
+    // )
 
     if (!isPureColorIcon) {
-      return { isSimpleIcon: false, mainColor: null, isDark: false, needsAdaptation: false }
+      const result = { isSimpleIcon: false, mainColor: null, isDark: false, needsAdaptation: false }
+      analysisCache.set(bufferHash, result)
+      return result
     }
 
-    return {
+    const result = {
       isSimpleIcon: true,
       mainColor: hexColor,
       isDark,
       needsAdaptation: true
     }
+    analysisCache.set(bufferHash, result)
+    return result
   } catch (error) {
     console.error('图片分析失败:', error)
     return { isSimpleIcon: false, mainColor: null, isDark: false, needsAdaptation: false }
