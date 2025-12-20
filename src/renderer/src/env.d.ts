@@ -241,5 +241,4 @@ declare global {
   }
 }
 
-export { }
-
+export {}

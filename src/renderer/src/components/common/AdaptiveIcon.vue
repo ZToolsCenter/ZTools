@@ -9,8 +9,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
-import { useColorScheme } from '../../composables/useColorScheme';
+import { computed, onMounted, ref, watch } from 'vue'
+import { useColorScheme } from '../../composables/useColorScheme'
 
 const props = defineProps<{
   src: string
@@ -62,7 +62,7 @@ const adaptiveClass = computed(() => {
   // - 深色图标 + 深色模式 → 反色（黑色变白色）
   // - 浅色图标 + 浅色模式 → 反色（白色变黑色）
   const shouldInvert = analysisResult.value.isDark === isDark.value
-  
+
   if (shouldInvert) {
     return 'adaptive-invert'
   }
@@ -127,4 +127,3 @@ export default {
   }
 }
 </style>
-

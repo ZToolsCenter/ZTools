@@ -1,8 +1,7 @@
 import { is } from '@electron-toolkit/utils'
-import { app, ipcMain } from 'electron'
+import { app, ipcMain, nativeImage } from 'electron'
 import fs from 'fs/promises'
 import path from 'path'
-import sharp from 'sharp'
 
 interface ImageAnalysisResult {
   isSimpleIcon: boolean // 是否是简单图标
@@ -12,15 +11,11 @@ interface ImageAnalysisResult {
 }
 
 async function analyzeImage(imagePath: string): Promise<ImageAnalysisResult> {
+  const startTime = performance.now()
   try {
     // 提取文件名用于日志显示
     const fileName = imagePath.split(/[/\\]/).pop() || 'unknown'
-    
-    // 调试日志：输出环境和原始路径
-    if (process.env.NODE_ENV !== 'production' || !is.dev) {
-      console.log(`[图片分析] ${fileName} | 环境: ${is.dev ? '开发' : '生产'} | 输入: ${imagePath}`)
-    }
-    
+
     // 1. 处理不同格式的图片输入
     let imageBuffer: Buffer
     if (imagePath.startsWith('data:image/')) {
@@ -33,27 +28,28 @@ async function analyzeImage(imagePath: string): Promise<ImageAnalysisResult> {
     } else {
       // 文件路径格式
       let filePath = imagePath
-      
+
       // 处理 file:// 协议
       if (filePath.startsWith('file:')) {
         // 移除 file: 前缀
-        filePath = filePath.replace(/^file:\/\/\//, '') // file:///C:/path -> C:/path
+        filePath = filePath
+          .replace(/^file:\/\/\//, '') // file:///C:/path -> C:/path
           .replace(/^file:\/\//, '') // file://path -> path
           .replace(/^file:\\/, '') // file:\path -> path (Windows 特殊情况)
           .replace(/^file:/, '') // file:path -> path
-        
+
         // 解码 URL 编码的字符（如 %20 -> 空格）
         filePath = decodeURIComponent(filePath)
-        
+
         // 在 Windows 上，确保路径格式正确
         if (process.platform === 'win32') {
           filePath = filePath.replace(/\//g, '\\')
         }
       }
-      
+
       // 处理相对路径
       const appPath = app.getAppPath()
-      
+
       // 在 Windows 上，以 / 开头的路径会被 path.isAbsolute 认为是绝对路径
       // 但对于 Vite 资源路径（如 /src/assets/...），我们需要特殊处理
       if (filePath.startsWith('/src/')) {
@@ -82,51 +78,53 @@ async function analyzeImage(imagePath: string): Promise<ImageAnalysisResult> {
         // 其他相对路径
         filePath = path.join(appPath, filePath)
       }
-      
-      // 调试日志：输出最终解析的路径
-      if (process.env.NODE_ENV !== 'production' || !is.dev) {
-        console.log(`[图片分析] ${fileName} | 解析路径: ${filePath}`)
-      }
-      
+
       imageBuffer = await fs.readFile(filePath)
     }
 
-    // 2. 加载图片并获取元数据
-    const image = sharp(imageBuffer)
-    const metadata = await image.metadata()
-
-    // 3. 检查是否有透明通道
-    const hasAlpha = metadata.channels === 4
-
-    if (!hasAlpha) {
+    // 2. 使用 Electron nativeImage 加载图片
+    const image = nativeImage.createFromBuffer(imageBuffer)
+    if (image.isEmpty()) {
       return { isSimpleIcon: false, mainColor: null, isDark: false, needsAdaptation: false }
     }
 
-    // 4. 缩小图片以加快分析（32x32足够）
-    const { data, info } = await image
-      .resize(32, 32, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
-      .raw()
-      .toBuffer({ resolveWithObject: true })
+    // 3. 获取原始像素数据（不缩放，避免插值产生的杂色）
+    const size = image.getSize()
+    // 强制转换为 Buffer 以避免 TypeScript 错误
+    const data = image.getBitmap() as unknown as Buffer
 
-    // 5. 先找出最常见的颜色作为主色调
+    // 4. 像素抽样分析
+    // 为了性能，我们不需要遍历几百万个像素，只需要均匀抽样约 1000-2000 个点即可
+    // 这相当于"最近邻插值"的物理版，完全通过跳过像素来实现，保证不修改颜色值
+    const totalPixels = size.width * size.height
+    const targetSamples = 1600 // 相当于分析一张 40x40 的图片
+    const step = Math.max(1, Math.floor(totalPixels / targetSamples)) // 步长
+
     const colorMap = new Map<string, number>()
-    let opaquePixels = 0
+    let opaquePixels = 0 // 抽样到的不透明像素数
+    let totalSampled = 0 // 总抽样数
     let mainColor = ''
     let maxCount = 0
 
-    for (let i = 0; i < data.length; i += 4) {
-      const a = data[i + 3]
+    // BGRA 格式遍历
+    for (let i = 0; i < data.length; i += 4 * step) {
+      // 边界检查
+      if (i + 3 >= data.length) break
 
-      if (a > 128) {
-        // 非透明像素
+      const a = data[i + 3]
+      totalSampled++
+
+      // 阈值设为 20，忽略极低透明度的噪点，但保留大部分半透明可能
+      if (a > 20) {
         opaquePixels++
-        const r = data[i]
+        const b = data[i]
         const g = data[i + 1]
-        const b = data[i + 2]
+        const r = data[i + 2]
+
         const key = `${r},${g},${b}`
         const count = (colorMap.get(key) || 0) + 1
         colorMap.set(key, count)
-        
+
         if (count > maxCount) {
           maxCount = count
           mainColor = key
@@ -134,53 +132,60 @@ async function analyzeImage(imagePath: string): Promise<ImageAnalysisResult> {
       }
     }
 
+    // 如果没有任何不透明像素
     if (opaquePixels === 0) {
       return { isSimpleIcon: false, mainColor: null, isDark: false, needsAdaptation: false }
     }
 
-    // 6. 检测颜色相似度 - 统计有多少像素接近主色调
+    // 5. 检测颜色相似度
     const [mainR, mainG, mainB] = mainColor.split(',').map(Number)
-    const colorThreshold = 30 // RGB欧氏距离 < 30 认为是相似颜色
+    const colorThreshold = 30
     let similarPixels = 0
 
-    for (let i = 0; i < data.length; i += 4) {
+    // 再次遍历采样点计算相似度
+    // 为了性能，如果不重新遍历，可以在第一次遍历时存下来？
+    // 但 sampling 只有 1600 个点，再次遍历 Buffer (按步长) 也是极快的。
+    // 重新遍历 Buffer 比分配新数组存对象更省内存。
+    for (let i = 0; i < data.length; i += 4 * step) {
+      if (i + 3 >= data.length) break
+
       const a = data[i + 3]
 
-      if (a > 128) {
-        const r = data[i]
+      if (a > 20) {
+        const b = data[i]
         const g = data[i + 1]
-        const b = data[i + 2]
-        
-        // 计算与主色调的欧氏距离
+        const r = data[i + 2]
+
         const distance = Math.sqrt(
-          Math.pow(r - mainR, 2) +
-          Math.pow(g - mainG, 2) +
-          Math.pow(b - mainB, 2)
+          Math.pow(r - mainR, 2) + Math.pow(g - mainG, 2) + Math.pow(b - mainB, 2)
         )
-        
+
         if (distance < colorThreshold) {
           similarPixels++
         }
       }
     }
 
-    // 7. 判断是否是纯色图标
-    const totalPixels = info.width * info.height
-    const transparencyRatio = (totalPixels - opaquePixels) / totalPixels
+    // 6. 判断是否是纯色图标
+    // 由于是直接采样，没有杂色，数据非常纯净，我们可以恢复严格的判定标准
+    const transparencyRatio = (totalSampled - opaquePixels) / totalSampled
     const similarityRatio = similarPixels / opaquePixels // 相似像素占比
-    
-    // 纯色检测：相似像素占比 > 85% 且有一定透明背景（> 10%）
-    const isPureColorIcon = similarityRatio > 0.85 && transparencyRatio > 0.1
 
-    // 8. 计算主色调的亮度（判断深色/浅色）
+    // 恢复严格标准：
+    // 1. 相似度 > 85% (因为没有缩放杂色，纯色图标通常能达到 95%+)
+    // 2. 透明度 > 10% (排除满铺的图片)
+    const isPureColorIcon = similarityRatio > 0.85 && transparencyRatio > 0.1 && opaquePixels > 20
+
+    // 7. 计算主色调的亮度
     const [r, g, b] = mainColor.split(',').map(Number)
     const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
     const isDark = luminance < 0.5
     const hexColor = `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`
 
     // 聚合日志输出
+    const duration = (performance.now() - startTime).toFixed(2)
     console.log(
-      `[图标分析] ${fileName} | 颜色数:${colorMap.size} 透明:${(transparencyRatio * 100).toFixed(0)}% 相似度:${(similarityRatio * 100).toFixed(0)}% 主色:${hexColor}(${isDark ? '深' : '浅'}) | ${isPureColorIcon ? '✓纯色' : '✗复杂'}`
+      `[图标分析] ${fileName} | 耗时:${duration}ms | 颜色数:${colorMap.size} 透明:${(transparencyRatio * 100).toFixed(0)}% 相似度:${(similarityRatio * 100).toFixed(0)}% 主色:${hexColor}(${isDark ? '深' : '浅'}) | ${isPureColorIcon ? '✓纯色' : '✗复杂'}`
     )
 
     if (!isPureColorIcon) {
@@ -210,4 +215,3 @@ export function setupImageAnalysisAPI(): void {
     }
   })
 }
-

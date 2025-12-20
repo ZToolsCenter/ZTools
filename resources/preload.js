@@ -358,8 +358,7 @@ window.ztools = {
       await electron.ipcRenderer.invoke('internal:start-hotkey-recording'),
     updateShortcut: async (shortcut) =>
       await electron.ipcRenderer.invoke('internal:update-shortcut', shortcut),
-    getCurrentShortcut: async () =>
-      await electron.ipcRenderer.invoke('get-current-shortcut'),
+    getCurrentShortcut: async () => await electron.ipcRenderer.invoke('get-current-shortcut'),
     onHotkeyRecorded: (callback) => {
       if (callback && typeof callback === 'function') {
         hotkeyRecordedCallbacks.push(callback)
@@ -375,11 +374,9 @@ window.ztools = {
       await electron.ipcRenderer.invoke('internal:set-tray-icon-visible', visible),
     setLaunchAtLogin: async (enabled) =>
       await electron.ipcRenderer.invoke('internal:set-launch-at-login', enabled),
-    getLaunchAtLogin: async () =>
-      await electron.ipcRenderer.invoke('internal:get-launch-at-login'),
+    getLaunchAtLogin: async () => await electron.ipcRenderer.invoke('internal:get-launch-at-login'),
     getAppVersion: async () => await electron.ipcRenderer.invoke('get-app-version'),
-    getSystemVersions: async () =>
-      await electron.ipcRenderer.invoke('get-system-versions'),
+    getSystemVersions: async () => await electron.ipcRenderer.invoke('get-system-versions'),
     getPlatform: () => electron.ipcRenderer.sendSync('internal:get-platform'),
 
     // 通知主渲染进程更新搜索框提示文字

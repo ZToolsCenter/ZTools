@@ -32,10 +32,7 @@
               >
             </div>
 
-            <button
-              class="icon-btn"
-              title="查看文档"
-            >
+            <button class="icon-btn" title="查看文档">
               <Icon name="search" :size="14" />
             </button>
           </div>

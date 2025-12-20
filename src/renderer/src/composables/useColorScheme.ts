@@ -25,4 +25,3 @@ export function useColorScheme() {
 
   return { isDark }
 }
-

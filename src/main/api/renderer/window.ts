@@ -1,6 +1,6 @@
-import { ipcMain } from 'electron';
-import { MAX_WINDOW_HEIGHT, WINDOW_INITIAL_HEIGHT } from '../../common/constants.js';
-import windowManager from '../../managers/windowManager.js';
+import { ipcMain } from 'electron'
+import { MAX_WINDOW_HEIGHT, WINDOW_INITIAL_HEIGHT } from '../../common/constants.js'
+import windowManager from '../../managers/windowManager.js'
 
 /**
  * 窗口管理API - 主程序专用
