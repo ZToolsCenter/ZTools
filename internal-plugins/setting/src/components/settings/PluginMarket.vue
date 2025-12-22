@@ -16,7 +16,12 @@
             @click="openPluginDetail(plugin)"
           >
             <div class="plugin-icon">
-              <AdaptiveIcon :src="plugin.logo" class="plugin-logo-img" alt="icon" draggable="false" />
+              <AdaptiveIcon
+                :src="plugin.logo"
+                class="plugin-logo-img"
+                alt="icon"
+                draggable="false"
+              />
             </div>
             <div class="plugin-info">
               <div class="plugin-name">{{ plugin.name }}</div>

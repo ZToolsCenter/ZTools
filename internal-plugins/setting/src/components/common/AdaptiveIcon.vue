@@ -9,8 +9,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
-import { useColorScheme } from '../../composables/useColorScheme';
+import { computed, onMounted, ref, watch } from 'vue'
+import { useColorScheme } from '../../composables/useColorScheme'
 
 const props = defineProps<{
   src: string
@@ -128,4 +128,3 @@ export default {
   }
 }
 </style>
-
