@@ -205,6 +205,8 @@ const api = {
   // 上次匹配状态管理
   getLastMatchState: () => ipcRenderer.invoke('get-last-match-state'),
   restoreLastMatch: () => ipcRenderer.invoke('restore-last-match'),
+  // 使用统计管理
+  getUsageStats: () => ipcRenderer.invoke('get-usage-stats'),
   // 文件系统检查（异步，通过主进程）
   checkFilePaths: (paths: string[]) => ipcRenderer.invoke('check-file-paths', paths),
   // 获取拖放文件的路径（Electron webUtils）
@@ -385,6 +387,20 @@ declare global {
       getAppName: () => Promise<string>
       getSystemVersions: () => Promise<NodeJS.ProcessVersions>
       getPlatform: () => NodeJS.Platform
+      // 上次匹配状态管理
+      getLastMatchState: () => Promise<any>
+      restoreLastMatch: () => Promise<any>
+      // 使用统计管理
+      getUsageStats: () => Promise<
+        Array<{
+          path: string
+          type: string
+          featureCode?: string | null
+          name: string
+          lastUsed: number
+          useCount: number
+        }>
+      >
     }
   }
 }

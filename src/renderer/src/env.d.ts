@@ -232,6 +232,17 @@ declare global {
       // 上次匹配状态管理
       getLastMatchState: () => Promise<LastMatchState | null>
       restoreLastMatch: () => Promise<LastMatchState | null>
+      // 使用统计管理
+      getUsageStats: () => Promise<
+        Array<{
+          path: string
+          type: string
+          featureCode?: string | null
+          name: string
+          lastUsed: number
+          useCount: number
+        }>
+      >
       // 文件系统检查（异步，通过主进程）
       checkFilePaths: (
         paths: string[]

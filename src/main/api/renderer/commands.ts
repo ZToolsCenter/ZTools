@@ -74,6 +74,22 @@ export class AppsAPI {
     // 上次匹配状态管理
     ipcMain.handle('get-last-match-state', () => this.getLastMatchState())
     ipcMain.handle('restore-last-match', () => this.restoreLastMatch())
+
+    // 使用统计管理
+    ipcMain.handle('get-usage-stats', () => this.getUsageStats())
+  }
+
+  /**
+   * 获取使用统计
+   */
+  private async getUsageStats(): Promise<any[]> {
+    try {
+      const stats = await databaseAPI.dbGet('command-usage-stats')
+      return stats || []
+    } catch (error) {
+      console.error('获取使用统计失败:', error)
+      return []
+    }
   }
 
   /**
@@ -246,6 +262,9 @@ export class AppsAPI {
         this.launchParam.code = featureCode || ''
 
         console.log('启动插件:', { path: appPath, featureCode, name })
+
+        // 更新指令使用统计（所有指令都统计，用于匹配推荐排序）
+        await this.updateUsageStats({ path: appPath, type, featureCode, name })
 
         // 判断是否为匹配指令，保存状态并添加"上次匹配"到历史记录
         const isMatchCommand = ['img', 'over', 'files', 'regex'].includes(cmdType || '')
@@ -506,6 +525,60 @@ export class AppsAPI {
       this.mainWindow?.webContents.send('history-changed')
     } catch (error) {
       console.error('添加历史记录失败:', error)
+    }
+  }
+
+  /**
+   * 更新指令使用统计（独立于历史记录，用于匹配推荐排序）
+   */
+  private async updateUsageStats(options: {
+    path: string
+    type?: 'app' | 'plugin'
+    featureCode?: string
+    name?: string
+  }): Promise<void> {
+    try {
+      const { path: cmdPath, type = 'app', featureCode, name: cmdName } = options
+
+      console.log('更新指令使用统计:', cmdName || cmdPath)
+
+      const now = Date.now()
+
+      // 读取使用统计
+      const stats: any[] = (await databaseAPI.dbGet('command-usage-stats')) || []
+
+      // 查找是否已存在
+      const existingIndex = stats.findIndex((item) => {
+        if (item.type === 'plugin' && type === 'plugin') {
+          return item.path === cmdPath && item.featureCode === featureCode
+        }
+        return item.path === cmdPath
+      })
+
+      if (existingIndex >= 0) {
+        // 已存在，更新使用时间和次数
+        stats[existingIndex].lastUsed = now
+        stats[existingIndex].useCount = (stats[existingIndex].useCount || 0) + 1
+        console.log(`更新统计: ${cmdName || cmdPath}, 使用${stats[existingIndex].useCount}次`)
+      } else {
+        // 新记录
+        stats.push({
+          path: cmdPath,
+          type,
+          featureCode: featureCode || null,
+          name: cmdName || cmdPath,
+          lastUsed: now,
+          useCount: 1
+        })
+        console.log(`新增统计: ${cmdName || cmdPath}, 使用1次`)
+      }
+
+      // 保存统计数据
+      await databaseAPI.dbPut('command-usage-stats', stats)
+
+      console.log('使用统计已更新')
+    } catch (error) {
+      console.error('更新使用统计失败:', error)
     }
   }
 

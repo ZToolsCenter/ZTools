@@ -105,6 +105,20 @@ interface Props {
 
 const props = defineProps<Props>()
 
+// 使用统计数据（用于排序）
+const usageStats = ref<any[]>([])
+
+// 加载使用统计
+async function loadUsageStats(): Promise<void> {
+  try {
+    usageStats.value = await window.ztools.getUsageStats()
+    console.log('[使用统计] 已加载:', usageStats.value.length, '条记录')
+  } catch (error) {
+    console.error('[使用统计] 加载失败:', error)
+    usageStats.value = []
+  }
+}
+
 const windowStore = useWindowStore()
 
 const emit = defineEmits<{
@@ -185,6 +199,39 @@ const searchResults = computed(() => {
   return internalSearchResults.value
 })
 
+/**
+ * 计算时间衰减因子
+ * @param lastUsed 最后使用时间戳
+ * @returns 衰减因子 (0-1)，越近的时间返回值越接近1
+ */
+function calculateTimeDecay(lastUsed: number): number {
+  const now = Date.now()
+  const daysSinceLastUse = (now - lastUsed) / (1000 * 60 * 60 * 24)
+
+  // 使用指数衰减：每30天衰减到50%
+  const halfLife = 30
+  return Math.pow(0.5, daysSinceLastUse / halfLife)
+}
+
+/**
+ * 计算使用频率分数
+ * @param useCount 使用次数
+ * @param lastUsed 最后使用时间戳
+ * @returns 频率分数，越高表示越常用且最近使用过
+ */
+function calculateFrequencyScore(useCount: number, lastUsed: number): number {
+  if (!useCount || useCount === 0) return 0
+
+  // 时间衰减因子
+  const decayFactor = calculateTimeDecay(lastUsed)
+
+  // 使用次数分数（使用对数增长，避免极端值）
+  const countScore = Math.log10(useCount + 1) * 100
+
+  // 应用时间衰减
+  return countScore * decayFactor
+}
+
 // 推荐列表
 const recommendations = computed(() => {
   // 粘贴图片、文本或文件时不显示推荐
@@ -196,13 +243,47 @@ const recommendations = computed(() => {
   const searchResult = search(props.searchQuery)
   const regexResults = searchResult.regexMatches
 
-  // 百度搜索指令 - 只传入 path，其他信息由 specialCommands 提供
+  // 去重：同一个 feature 只保留第一个匹配的 cmd
+  const seenFeatures = new Set<string>()
+  const uniqueRegexResults = regexResults.filter((item) => {
+    const featureKey = item.type === 'plugin' ? `${item.path}:${item.featureCode}` : item.path
+    if (seenFeatures.has(featureKey)) {
+      return false // 已经出现过，跳过
+    }
+    seenFeatures.add(featureKey)
+    return true // 第一次出现，保留
+  })
+
+  // 使用统计数据构建 Map 提升查询性能
+  const statsMap = new Map<string, any>()
+  for (const item of usageStats.value) {
+    const key = item.type === 'plugin' ? `${item.path}:${item.featureCode}` : item.path
+    statsMap.set(key, item)
+  }
+
+  // 对去重后的正则匹配结果按使用统计排序
+  const sortedRegexResults = [...uniqueRegexResults].sort((a, b) => {
+    // 快速查找使用统计
+    const keyA = a.type === 'plugin' ? `${a.path}:${a.featureCode}` : a.path
+    const keyB = b.type === 'plugin' ? `${b.path}:${b.featureCode}` : b.path
+    const statsA = statsMap.get(keyA)
+    const statsB = statsMap.get(keyB)
+
+    // 计算使用频率分数
+    const freqScoreA = statsA ? calculateFrequencyScore(statsA.useCount, statsA.lastUsed) : 0
+    const freqScoreB = statsB ? calculateFrequencyScore(statsB.useCount, statsB.lastUsed) : 0
+
+    // 按频率分数降序排序（分数高的排前面）
+    return freqScoreB - freqScoreA
+  })
+
+  // 百度搜索指令（内置功能，始终放最后）
   const baiduSearch = commandDataStore.applySpecialConfig({
     path: `baidu-search:${props.searchQuery}`
   } as any)
 
-  // 正则匹配结果 + 百度搜索（内置，放最后）
-  return [...regexResults, baiduSearch]
+  // 排序后的正则匹配结果 + 百度搜索
+  return [...sortedRegexResults, baiduSearch]
 })
 
 // 访达功能列表
@@ -923,6 +1004,8 @@ function resetCollapseState(): void {
 onMounted(() => {
   // 监听上下文菜单命令
   window.ztools.onContextMenuCommand(handleContextMenuCommand)
+  // 加载使用统计
+  loadUsageStats()
 })
 
 // 导出方法供父组件调用
