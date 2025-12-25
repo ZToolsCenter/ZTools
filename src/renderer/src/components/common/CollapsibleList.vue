@@ -10,7 +10,7 @@
         {{ isExpanded ? '收起' : `展开 (${apps.length})` }}
       </div>
     </div>
-    <!-- 统一使用 AppList，通过 draggable prop 控制 -->
+    <!-- 统一使用 CommandList，通过 draggable prop 控制 -->
     <div class="list-content">
       <AppList
         :apps="visibleApps"
@@ -28,7 +28,7 @@
 <script setup lang="ts">
 import { computed, toValue, type MaybeRefOrGetter } from 'vue'
 import type { Command } from '../../stores/commandDataStore'
-import AppList from '../search/AppList.vue'
+import AppList from './CommandList.vue'
 
 interface Props {
   title: string // 标题
@@ -112,7 +112,7 @@ function handleAppsUpdate(newOrder: Command[]): void {
 .collapsible-section {
   display: flex;
   flex-direction: column;
-  margin-bottom: 8px; /* 列表间距 */
+  margin-bottom: 4px; /* 列表间距 */
 }
 
 .section-header {
@@ -129,7 +129,7 @@ function handleAppsUpdate(newOrder: Command[]): void {
 .section-header.clickable {
   cursor: pointer;
   margin: 0;
-  padding: 2px 10px;
+  padding: 2px 0;
   min-height: 28px;
 }
 
@@ -140,12 +140,12 @@ function handleAppsUpdate(newOrder: Command[]): void {
 /* 不可展开的标题行 */
 .section-header:not(.clickable) {
   margin: 0;
-  padding: 2px 10px;
+  padding: 2px 0;
   min-height: 28px;
 }
 
 .section-title {
-  font-size: 15px;
+  font-size: 14.5px;
   font-weight: 600;
   padding: 0; /* 移除内边距 */
   line-height: 24px; /* 控制行高 */

@@ -21,7 +21,7 @@
       <!-- 固定栏 -->
       <CollapsibleList
         v-model:expanded="isPinnedExpanded"
-        title="固定"
+        title="已固定"
         :apps="pinnedApps"
         :selected-index="getAbsoluteIndexForSection('pinned')"
         :default-visible-rows="2"
@@ -1094,6 +1094,7 @@ defineExpose({
   overflow-y: auto;
   overflow-x: hidden;
   user-select: none; /* 禁止选取文本 */
+  padding: 0 12px 2px 12px;
 
   /* Firefox 滚动条样式 */
   scrollbar-width: thin;

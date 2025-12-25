@@ -33,7 +33,7 @@ const analysisResult = ref<{
 const isAnalyzing = ref(false)
 
 // 分析图片
-async function analyzeImage() {
+async function analyzeImage(): Promise<void> {
   if (isAnalyzing.value || !props.src) return
 
   isAnalyzing.value = true
@@ -81,7 +81,7 @@ const adaptiveStyle = computed(() => {
 })
 
 // 错误处理
-function onError(event: Event) {
+function onError(event: Event): void {
   emit('error', event)
 }
 

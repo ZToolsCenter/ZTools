@@ -190,13 +190,13 @@ defineExpose({
 .app-list {
   flex: 1;
   overflow-y: auto;
-  padding: 0 10px;
+  padding: 0;
 }
 
 .app-grid {
   display: grid;
   grid-template-columns: repeat(9, 1fr); /* 每行 9 个 */
-  gap: 4px; /* 项目之间的间隙 */
+  gap: 0; /* 项目之间的间隙 */
 }
 
 .app-item {
@@ -244,7 +244,7 @@ defineExpose({
 .app-icon {
   width: 32px;
   height: 32px;
-  margin-bottom: 4px;
+  margin-bottom: 6px;
   border-radius: 6px;
   flex-shrink: 0;
 }
@@ -252,7 +252,7 @@ defineExpose({
 .app-icon-placeholder {
   width: 32px;
   height: 32px;
-  margin-bottom: 4px;
+  margin-bottom: 6px;
   border-radius: 6px;
   background: var(--primary-gradient);
   display: flex;
@@ -278,6 +278,7 @@ defineExpose({
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2; /* 最多显示2行 */
+  line-clamp: 2; /* 标准属性 */
   overflow: hidden;
   word-break: break-all; /* 允许在任意字符间断行 */
 }

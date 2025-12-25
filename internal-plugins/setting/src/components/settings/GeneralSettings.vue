@@ -1170,13 +1170,6 @@ async function handleHotkeyRecorded(newHotkey: string): Promise<void> {
   border: 2px solid var(--border-color);
 }
 
-/* 暗色模式下默认头像反色 */
-@media (prefers-color-scheme: dark) {
-  .avatar-preview.default-avatar {
-    filter: invert(1);
-  }
-}
-
 /* 颜色选择器 */
 .color-control {
   display: flex;

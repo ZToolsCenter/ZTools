@@ -110,15 +110,33 @@
       <div
         v-else
         class="avatar-wrapper"
-        :class="{ loading: isPluginLoading }"
+        :class="{
+          loading: isPluginLoading,
+          'is-default': isDefaultAvatar
+        }"
         @click="handleSettingsClick"
       >
+        <!-- 插件模式下显示操作提示图标 -->
+        <div v-if="windowStore.currentPlugin" class="action-indicator">
+          <svg
+            width="4"
+            height="18"
+            viewBox="0 0 4 18"
+            fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            <circle cx="2" cy="2" r="2" fill="currentColor" opacity="0.7" />
+            <circle cx="2" cy="9" r="2" fill="currentColor" opacity="0.7" />
+            <circle cx="2" cy="16" r="2" fill="currentColor" opacity="0.7" />
+          </svg>
+        </div>
         <AdaptiveIcon
           :src="avatarUrl"
-          :force-adaptive="isDefaultAvatar"
+          :force-adaptive="false"
           :class="[
             'search-btn',
-            { 'plugin-logo': windowStore.currentPlugin?.logo && !isPluginLoading }
+            { 'plugin-logo': windowStore.currentPlugin?.logo && !isPluginLoading },
+            { 'is-default': isDefaultAvatar }
           ]"
           draggable="false"
         />
@@ -854,7 +872,7 @@ defineExpose({
 
 <style scoped>
 .search-box {
-  padding: 5px 15px;
+  padding: 5px 12px;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -891,7 +909,7 @@ defineExpose({
 .measure-text {
   position: absolute;
   white-space: pre;
-  font-size: 24px;
+  font-size: 25px;
   line-height: 1.3; /* 与 .search-input 保持一致 */
   font-family:
     -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
@@ -906,7 +924,7 @@ defineExpose({
   position: absolute;
   left: 0;
   color: #7a7a7a;
-  font-size: 24px;
+  font-size: 25px;
   font-weight: 300;
   line-height: 1.3;
   pointer-events: none;
@@ -930,7 +948,7 @@ defineExpose({
   width: auto; /* 将由 JS 动态设置 */
   height: 48px;
   line-height: 1.3; /* 降低行高，使文本更紧凑 */
-  font-size: 24px;
+  font-size: 25px;
   border: none;
   outline: none;
   background: transparent;
@@ -1112,14 +1130,18 @@ defineExpose({
 }
 
 .search-btn {
-  width: 36px;
-  height: 36px;
+  width: 38px;
+  height: 38px;
   border-radius: 50%;
   object-fit: cover;
   cursor: pointer;
   transition: all 0.2s;
   -webkit-app-region: no-drag;
   /* 按钮不可拖动 */
+  border: none;
+  outline: none;
+  position: relative;
+  z-index: 1;
 }
 
 /* 插件图标：保持原本形状，不使用圆形遮罩 */
@@ -1128,9 +1150,9 @@ defineExpose({
   object-fit: contain;
 }
 
-.search-btn:hover {
-  opacity: 0.8;
-  transform: scale(1.05);
+.search-btn:not(.plugin-logo):hover {
+  transform: scale(0.96);
+  box-shadow: 0 0 6px 1px color-mix(in srgb, var(--primary-color), transparent 60%);
 }
 
 .search-btn:active {
@@ -1142,14 +1164,33 @@ defineExpose({
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: 6px;
 }
 
 .avatar-wrapper.loading .search-btn {
   opacity: 0.9;
 }
 
+.action-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  opacity: 0.6;
+  transition: opacity 0.2s;
+}
+
+.avatar-wrapper:hover .action-indicator {
+  opacity: 1;
+}
+
+.search-btn.is-default {
+  opacity: 1;
+}
+
 .avatar-spinner {
   position: absolute;
+  right: -4px;
   width: 46px;
   height: 46px;
   border-radius: 50%;
