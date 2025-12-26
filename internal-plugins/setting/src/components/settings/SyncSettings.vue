@@ -107,7 +107,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { computed, onMounted, ref } from 'vue'
+import { useToast } from '../../composables/useToast'
+
+const { success, error, warning, confirm } = useToast()
 
 // 同步配置
 const syncEnabled = ref(false)
@@ -194,7 +197,7 @@ async function handleSyncToggle(): Promise<void> {
 // 测试连接
 async function testConnection(): Promise<void> {
   if (!config.value.serverUrl || !config.value.username || !config.value.password) {
-    alert('请填写完整的服务器地址、用户名和密码')
+    warning('请填写完整的服务器地址、用户名和密码')
     return
   }
 
@@ -207,12 +210,12 @@ async function testConnection(): Promise<void> {
     })
 
     if (result.success) {
-      alert('✅ 连接成功！')
+      success('连接成功！')
     } else {
-      alert(`❌ 连接失败：${result.error}`)
+      error(`连接失败：${result.error}`)
     }
-  } catch (error: any) {
-    alert(`❌ 连接失败：${error.message}`)
+  } catch (err: any) {
+    error(`连接失败：${err.message}`)
   } finally {
     testing.value = false
   }
@@ -221,7 +224,7 @@ async function testConnection(): Promise<void> {
 // 保存配置
 async function saveConfig(): Promise<void> {
   if (!config.value.serverUrl || !config.value.username || !config.value.password) {
-    alert('请填写完整的服务器地址、用户名和密码')
+    warning('请填写完整的服务器地址、用户名和密码')
     return
   }
 
@@ -236,16 +239,16 @@ async function saveConfig(): Promise<void> {
     })
 
     if (result.success) {
-      alert('✅ 配置保存成功！')
+      success('配置保存成功！')
       syncStatus.value = syncEnabled.value
       if (syncEnabled.value) {
         loadUnsyncedCount()
       }
     } else {
-      alert(`❌ 保存失败：${result.error}`)
+      error(`保存失败：${result.error}`)
     }
-  } catch (error: any) {
-    alert(`❌ 保存失败：${error.message}`)
+  } catch (err: any) {
+    error(`保存失败：${err.message}`)
   } finally {
     saving.value = false
   }
@@ -261,14 +264,15 @@ async function syncNow(): Promise<void> {
       lastSyncResult.value = result.result
       config.value.lastSyncTime = Date.now()
       loadUnsyncedCount()
-      alert(
-        `✅ 同步完成！\n上传: ${result.result.uploaded}\n下载: ${result.result.downloaded}\n错误: ${result.result.errors}`
+      success(
+        `同步完成！上传 ${result.result.uploaded} 项，下载 ${result.result.downloaded} 项，错误 ${result.result.errors} 项`,
+        4000
       )
     } else {
-      alert(`❌ 同步失败：${result.error}`)
+      error(`同步失败：${result.error}`)
     }
-  } catch (error: any) {
-    alert(`❌ 同步失败：${error.message}`)
+  } catch (err: any) {
+    error(`同步失败：${err.message}`)
   } finally {
     syncing.value = false
   }
@@ -276,9 +280,14 @@ async function syncNow(): Promise<void> {
 
 // 强制从云端同步到本地
 async function forceDownloadFromCloud(): Promise<void> {
-  const confirmed = confirm(
-    '⚠️ 警告：此操作将强制用云端数据覆盖本地数据，本地未同步的修改将丢失！\n\n确定要继续吗？'
-  )
+  // 使用自定义确认对话框
+  const confirmed = await confirm({
+    title: '强制同步警告',
+    message: '此操作将强制用云端数据覆盖本地数据，本地未同步的修改将丢失！\n\n确定要继续吗？',
+    type: 'danger',
+    confirmText: '确定覆盖',
+    cancelText: '取消'
+  })
 
   if (!confirmed) return
 
@@ -290,14 +299,15 @@ async function forceDownloadFromCloud(): Promise<void> {
       lastSyncResult.value = result.result
       config.value.lastSyncTime = Date.now()
       loadUnsyncedCount()
-      alert(
-        `✅ 强制同步完成！\n下载: ${result.result.downloaded}\n错误: ${result.result.errors}\n\n本地数据已被云端数据覆盖。`
+      success(
+        `强制同步完成！下载 ${result.result.downloaded} 项，错误 ${result.result.errors} 项。本地数据已被云端数据覆盖`,
+        5000
       )
     } else {
-      alert(`❌ 强制同步失败：${result.error}`)
+      error(`强制同步失败：${result.error}`)
     }
-  } catch (error: any) {
-    alert(`❌ 强制同步失败：${error.message}`)
+  } catch (err: any) {
+    error(`强制同步失败：${err.message}`)
   } finally {
     forceSyncing.value = false
   }

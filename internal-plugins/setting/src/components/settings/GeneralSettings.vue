@@ -280,6 +280,9 @@ import {
   type ThemeType,
   type PrimaryColor
 } from '../../constants'
+import { useToast } from '../../composables/useToast'
+
+const { success, error, warning, info, confirm } = useToast()
 
 // 当前平台（与 window.ztools.getPlatform 返回类型保持一致）
 const platform = ref<'darwin' | 'win32' | 'linux'>('darwin')
@@ -445,11 +448,11 @@ async function handleKeyUp(e: KeyboardEvent): Promise<void> {
         await saveSettings()
         console.log('新快捷键设置成功:', hotkey.value)
       } else {
-        alert(`快捷键设置失败: ${result.error || '未知错误'}`)
+        error(`快捷键设置失败: ${result.error || '未知错误'}`)
       }
-    } catch (error: any) {
-      console.error('设置快捷键失败:', error)
-      alert(`设置快捷键失败: ${error.message || '未知错误'}`)
+    } catch (err: any) {
+      console.error('设置快捷键失败:', err)
+      error(`设置快捷键失败: ${err.message || '未知错误'}`)
     }
   }
 
@@ -465,11 +468,11 @@ async function resetHotkey(): Promise<void> {
       await saveSettings()
       console.log('重置快捷键成功:', hotkey.value)
     } else {
-      alert(`重置快捷键失败: ${result.error || '未知错误'}`)
+      error(`重置快捷键失败: ${result.error || '未知错误'}`)
     }
-  } catch (error: any) {
-    console.error('重置快捷键失败:', error)
-    alert(`重置快捷键失败: ${error.message || '未知错误'}`)
+  } catch (err: any) {
+    console.error('重置快捷键失败:', err)
+    error(`重置快捷键失败: ${err.message || '未知错误'}`)
   }
 }
 
@@ -703,24 +706,26 @@ async function handleCheckUpdate(): Promise<void> {
   try {
     const result = await window.ztools.internal.updaterCheckUpdate()
     if (result.hasUpdate) {
-      if (
-        confirm(
-          `发现新版本 ${result.latestVersion}，是否立即更新？\n\n` +
-            `更新内容：\n${result.updateInfo?.releaseNotes || '无'}`
-        )
-      ) {
+      const shouldUpdate = await confirm({
+        title: '发现新版本',
+        message: `发现新版本 ${result.latestVersion}，是否立即更新？\n\n更新内容：\n${result.updateInfo?.releaseNotes || '无'}`,
+        type: 'info',
+        confirmText: '立即更新',
+        cancelText: '稍后'
+      })
+      if (shouldUpdate) {
         await window.ztools.internal.updaterStartUpdate(result.updateInfo)
       }
     } else {
       if (result.error) {
-        alert('检查更新出错: ' + result.error)
+        error('检查更新出错: ' + result.error)
       } else {
-        alert('当前已是最新版本')
+        info('当前已是最新版本')
       }
     }
-  } catch (error: any) {
-    console.error('检查更新失败:', error)
-    alert('检查更新失败: ' + (error.message || '未知错误'))
+  } catch (err: any) {
+    console.error('检查更新失败:', err)
+    error('检查更新失败: ' + (err.message || '未知错误'))
   } finally {
     isCheckingUpdate.value = false
   }
@@ -966,11 +971,11 @@ async function handleHotkeyRecorded(newHotkey: string): Promise<void> {
       await saveSettings()
       console.log('新快捷键设置成功:', hotkey.value)
     } else {
-      alert(`快捷键设置失败: ${result.error || '未知错误'}`)
+      error(`快捷键设置失败: ${result.error || '未知错误'}`)
     }
-  } catch (error: any) {
-    console.error('设置快捷键失败:', error)
-    alert(`设置快捷键失败: ${error.message || '未知错误'}`)
+  } catch (err: any) {
+    console.error('设置快捷键失败:', err)
+    error(`设置快捷键失败: ${err.message || '未知错误'}`)
   }
 
   // 停止前端录制状态
@@ -1167,7 +1172,7 @@ async function handleHotkeyRecorded(newHotkey: string): Promise<void> {
   height: 36px;
   border-radius: 50%;
   object-fit: cover;
-  border: 2px solid var(--border-color);
+  border: 2px solid var(--control-border);
 }
 
 /* 颜色选择器 */

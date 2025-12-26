@@ -71,6 +71,7 @@ export interface Command {
   // 系统设置字段（新增）
   settingUri?: string // ms-settings URI
   category?: string // 分类（用于分组显示）
+  confirmDialog?: any // 确认对话框配置
 }
 
 interface MatchInfo {
@@ -169,8 +170,9 @@ export const useCommandDataStore = defineStore('commandData', () => {
     }
 
     try {
-      // 并行加载历史记录、固定列表和指令列表
-      await Promise.all([loadHistoryData(), loadPinnedData(), loadCommands()])
+      // 先加载指令列表，再加载历史记录和固定列表（历史记录清理需要依赖指令列表）
+      await loadCommands()
+      await Promise.all([loadHistoryData(), loadPinnedData()])
 
       // 监听后端历史记录变化事件
       window.ztools.onHistoryChanged(() => {
@@ -211,23 +213,35 @@ export const useCommandDataStore = defineStore('commandData', () => {
   // 加载历史记录数据
   async function loadHistoryData(): Promise<void> {
     try {
-      const [data, plugins] = await Promise.all([
-        window.ztools.dbGet(HISTORY_DOC_ID),
-        window.ztools.getPlugins()
-      ])
+      const data = await window.ztools.dbGet(HISTORY_DOC_ID)
 
       if (data && Array.isArray(data)) {
-        // 获取所有已安装插件的路径 Set
-        const installedPluginPaths = new Set(plugins.map((p: any) => p.path))
+        // 创建当前所有指令的 path Set（用于验证历史记录是否仍然有效）
+        const currentCommandPaths = new Set(commands.value.map((cmd) => cmd.path))
+
+        console.log(`当前指令列表数量: ${commands.value.length}`)
+        console.log(`历史记录数量: ${data.length}`)
 
         let needsSave = false
 
-        // 过滤掉已卸载的插件，并清理系统设置的旧图标路径
+        // 过滤掉已卸载的插件、无效的指令，并清理系统设置的旧图标路径
         const filteredData = data
           .filter((item: any) => {
-            if (item.type === 'plugin') {
-              return installedPluginPaths.has(item.path)
+            // 特殊指令不检查，直接保留
+            if (item.path === 'special:last-match') {
+              return true
             }
+
+            // 检查所有类型的历史记录（包括插件、应用、系统设置等）
+            // 如果在当前指令列表中找不到，就清理掉
+            if (!currentCommandPaths.has(item.path)) {
+              console.log(
+                `清理无效指令的历史记录: ${item.name} (type: ${item.type}, path: ${item.path})`
+              )
+              needsSave = true
+              return false
+            }
+
             return true
           })
           .map((item: any) => {
@@ -443,6 +457,7 @@ export const useCommandDataStore = defineStore('commandData', () => {
             subType: 'system-setting' as const,
             settingUri: s.uri,
             category: s.category,
+            confirmDialog: s.confirmDialog, // 传递确认对话框配置
             pinyin: pinyin(s.name, { toneType: 'none', type: 'string' })
               .replace(/\s+/g, '')
               .toLowerCase(),

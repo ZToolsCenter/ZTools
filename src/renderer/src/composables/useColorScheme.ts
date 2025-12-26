@@ -1,9 +1,9 @@
-import { onMounted, onUnmounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref, type Ref } from 'vue'
 
-export function useColorScheme() {
+export function useColorScheme(): { isDark: Ref<boolean> } {
   const isDark = ref(false)
 
-  const updateTheme = () => {
+  const updateTheme = (): void => {
     isDark.value = window.matchMedia('(prefers-color-scheme: dark)').matches
   }
 

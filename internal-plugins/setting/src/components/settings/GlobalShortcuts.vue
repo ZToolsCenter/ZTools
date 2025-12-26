@@ -92,6 +92,9 @@
 import { onMounted, ref } from 'vue'
 import ShortcutEditor from './ShortcutEditor.vue'
 import Icon from '../common/Icon.vue'
+import { useToast } from '../../composables/useToast'
+
+const { success, error, warning, info, confirm } = useToast()
 
 interface GlobalShortcut {
   id: string
@@ -163,7 +166,7 @@ async function handleSave(recordedShortcut: string, targetCommand: string): Prom
       (s) => s.id !== editingShortcut.value!.id && s.shortcut === recordedShortcut
     )
     if (exists) {
-      alert('该快捷键已被其他指令占用，请使用其他快捷键')
+      warning('该快捷键已被其他指令占用，请使用其他快捷键')
       return
     }
 
@@ -191,7 +194,7 @@ async function handleSave(recordedShortcut: string, targetCommand: string): Prom
 
         // 保存到数据库
         await saveShortcuts()
-        alert('快捷键更新成功!')
+        success('快捷键更新成功!')
         closeEditor()
       } else {
         // 注册失败，恢复旧快捷键
@@ -201,9 +204,9 @@ async function handleSave(recordedShortcut: string, targetCommand: string): Prom
             editingShortcut.value.target
           )
         }
-        alert(`快捷键注册失败: ${result.error}`)
+        error(`快捷键注册失败: ${result.error}`)
       }
-    } catch (error: any) {
+    } catch (err: any) {
       // 注册失败，恢复旧快捷键
       if (oldShortcut !== recordedShortcut) {
         await window.ztools.internal.registerGlobalShortcut(
@@ -211,8 +214,8 @@ async function handleSave(recordedShortcut: string, targetCommand: string): Prom
           editingShortcut.value.target
         )
       }
-      console.error('更新快捷键失败:', error)
-      alert(`更新快捷键失败: ${error.message || '未知错误'}`)
+      console.error('更新快捷键失败:', err)
+      error(`更新快捷键失败: ${err.message || '未知错误'}`)
     }
     return
   }
@@ -220,7 +223,7 @@ async function handleSave(recordedShortcut: string, targetCommand: string): Prom
   // 添加模式：检查快捷键是否已存在
   const exists = shortcuts.value.some((s) => s.shortcut === recordedShortcut)
   if (exists) {
-    alert('该快捷键已存在，请使用其他快捷键')
+    warning('该快捷键已存在，请使用其他快捷键')
     return
   }
 
@@ -244,20 +247,20 @@ async function handleSave(recordedShortcut: string, targetCommand: string): Prom
       targetCommand
     )
     if (result.success) {
-      alert('快捷键添加成功!')
+      success('快捷键添加成功!')
       closeEditor()
     } else {
       // 如果注册失败，从列表中移除
       shortcuts.value = shortcuts.value.filter((s) => s.id !== newShortcut.id)
       await saveShortcuts()
-      alert(`快捷键注册失败: ${result.error}`)
+      error(`快捷键注册失败: ${result.error}`)
     }
-  } catch (error: any) {
+  } catch (err: any) {
     // 如果注册失败，从列表中移除
     shortcuts.value = shortcuts.value.filter((s) => s.id !== newShortcut.id)
     await saveShortcuts()
-    console.error('注册快捷键失败:', error)
-    alert(`注册快捷键失败: ${error.message || '未知错误'}`)
+    console.error('注册快捷键失败:', err)
+    error(`注册快捷键失败: ${err.message || '未知错误'}`)
   }
 }
 
@@ -266,9 +269,14 @@ async function handleDelete(id: string): Promise<void> {
   const shortcut = shortcuts.value.find((s) => s.id === id)
   if (!shortcut) return
 
-  if (!confirm(`确定要删除快捷键"${shortcut.shortcut}"吗？`)) {
-    return
-  }
+  const confirmed = await confirm({
+    title: '删除快捷键',
+    message: `确定要删除快捷键"${shortcut.shortcut}"吗？`,
+    type: 'danger',
+    confirmText: '删除',
+    cancelText: '取消'
+  })
+  if (!confirmed) return
 
   isDeleting.value = true
   try {
@@ -279,11 +287,11 @@ async function handleDelete(id: string): Promise<void> {
       shortcuts.value = shortcuts.value.filter((s) => s.id !== id)
       await saveShortcuts()
     } else {
-      alert(`快捷键删除失败: ${result.error}`)
+      error(`快捷键删除失败: ${result.error}`)
     }
-  } catch (error: any) {
-    console.error('删除快捷键失败:', error)
-    alert(`删除快捷键失败: ${error.message || '未知错误'}`)
+  } catch (err: any) {
+    console.error('删除快捷键失败:', err)
+    error(`删除快捷键失败: ${err.message || '未知错误'}`)
   } finally {
     isDeleting.value = false
   }

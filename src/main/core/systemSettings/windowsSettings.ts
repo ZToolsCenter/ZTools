@@ -1,3 +1,4 @@
+import type { ConfirmDialogOptions } from '../commandLauncher/types'
 import { MS_SETTINGS_URIS } from './msSettingsUris'
 
 export interface SystemSetting {
@@ -5,6 +6,7 @@ export interface SystemSetting {
   uri: string
   category: string
   icon?: string
+  confirmDialog?: ConfirmDialogOptions // 确认对话框配置
 }
 
 // 合并所有系统设置并统一添加图标
@@ -147,7 +149,26 @@ const allSettings: Omit<SystemSetting, 'icon'>[] = [
     category: '安全'
   },
 
-  // 常用系统工具（15项）
+  // 常用系统工具（16项）
+  {
+    name: '回收站',
+    uri: 'shell:RecycleBinFolder',
+    category: '系统'
+  },
+  {
+    name: '清空回收站',
+    uri: 'PowerShell.exe -NoProfile -Command "Clear-RecycleBin -Force"',
+    category: '系统',
+    confirmDialog: {
+      type: 'warning',
+      buttons: ['取消', '清空回收站'],
+      defaultId: 0,
+      cancelId: 0,
+      title: '清空回收站',
+      message: '确定要清空回收站吗？',
+      detail: '回收站的全部文件将永久删除!'
+    }
+  },
   {
     name: '命令提示符',
     uri: 'cmd.exe',

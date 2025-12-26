@@ -186,6 +186,9 @@ import { onMounted, onUnmounted, ref } from 'vue'
 import AdaptiveIcon from '../common/AdaptiveIcon.vue'
 import Icon from '../common/Icon.vue'
 import PluginDetail from './PluginDetail.vue'
+import { useToast } from '../../composables/useToast'
+
+const { success, error, warning, info, confirm } = useToast()
 
 // 插件相关状态
 const plugins = ref<any[]>([])
@@ -246,13 +249,13 @@ async function importPlugin(): Promise<void> {
     if (result.success) {
       // 重新加载插件列表
       await loadPlugins()
-      alert('插件导入成功!')
+      success('插件导入成功!')
     } else {
-      alert(`插件导入失败: ${result.error}`)
+      error(`插件导入失败: ${result.error}`)
     }
-  } catch (error: any) {
-    console.error('导入插件失败:', error)
-    alert(`导入插件失败: ${error.message || '未知错误'}`)
+  } catch (err: any) {
+    console.error('导入插件失败:', err)
+    error(`导入插件失败: ${err.message || '未知错误'}`)
   } finally {
     isImporting.value = false
   }
@@ -268,13 +271,13 @@ async function importDevPlugin(): Promise<void> {
     if (result.success) {
       // 重新加载插件列表
       await loadPlugins()
-      alert('开发中插件添加成功!')
+      success('开发中插件添加成功!')
     } else {
-      alert(`添加开发中插件失败: ${result.error}`)
+      error(`添加开发中插件失败: ${result.error}`)
     }
-  } catch (error: any) {
-    console.error('添加开发中插件失败:', error)
-    alert(`添加开发中插件失败: ${error.message || '未知错误'}`)
+  } catch (err: any) {
+    console.error('添加开发中插件失败:', err)
+    error(`添加开发中插件失败: ${err.message || '未知错误'}`)
   } finally {
     isImportingDev.value = false
   }
@@ -285,9 +288,14 @@ async function handleDeletePlugin(plugin: any): Promise<void> {
   if (isDeleting.value) return
 
   // 确认删除
-  if (!confirm(`确定要删除插件"${plugin.name}"吗？\n\n此操作将删除插件文件，无法恢复。`)) {
-    return
-  }
+  const confirmed = await confirm({
+    title: '删除插件',
+    message: `确定要删除插件"${plugin.name}"吗？\n\n此操作将删除插件文件，无法恢复。`,
+    type: 'danger',
+    confirmText: '删除',
+    cancelText: '取消'
+  })
+  if (!confirmed) return
 
   isDeleting.value = true
   try {
@@ -296,11 +304,11 @@ async function handleDeletePlugin(plugin: any): Promise<void> {
       // 重新加载插件列表
       await loadPlugins()
     } else {
-      alert(`插件删除失败: ${result.error}`)
+      error(`插件删除失败: ${result.error}`)
     }
-  } catch (error: any) {
-    console.error('删除插件失败:', error)
-    alert(`删除插件失败: ${error.message || '未知错误'}`)
+  } catch (err: any) {
+    console.error('删除插件失败:', err)
+    error(`删除插件失败: ${err.message || '未知错误'}`)
   } finally {
     isDeleting.value = false
   }
@@ -317,11 +325,11 @@ async function handleKillPlugin(plugin: any): Promise<void> {
       // 重新加载运行状态
       await loadRunningPlugins()
     } else {
-      alert(`终止插件失败: ${result.error}`)
+      error(`终止插件失败: ${result.error}`)
     }
-  } catch (error: any) {
-    console.error('终止插件失败:', error)
-    alert(`终止插件失败: ${error.message || '未知错误'}`)
+  } catch (err: any) {
+    console.error('终止插件失败:', err)
+    error(`终止插件失败: ${err.message || '未知错误'}`)
   } finally {
     isKilling.value = false
   }
@@ -339,11 +347,11 @@ async function handleOpenPlugin(plugin: any): Promise<void> {
 
     // 检查返回结果
     if (result && !result.success) {
-      alert(`无法打开插件: ${result.error || '未知错误'}`)
+      error(`无法打开插件: ${result.error || '未知错误'}`)
     }
-  } catch (error: any) {
-    console.error('打开插件失败:', error)
-    alert(`打开插件失败: ${error.message || '未知错误'}`)
+  } catch (err: any) {
+    console.error('打开插件失败:', err)
+    error(`打开插件失败: ${err.message || '未知错误'}`)
   }
 }
 
@@ -351,9 +359,9 @@ async function handleOpenPlugin(plugin: any): Promise<void> {
 async function handleOpenFolder(plugin: any): Promise<void> {
   try {
     await window.ztools.internal.revealInFinder(plugin.path)
-  } catch (error: any) {
-    console.error('打开目录失败:', error)
-    alert(`打开目录失败: ${error.message || '未知错误'}`)
+  } catch (err: any) {
+    console.error('打开目录失败:', err)
+    error(`打开目录失败: ${err.message || '未知错误'}`)
   }
 }
 
@@ -368,13 +376,13 @@ async function handleReloadPlugin(plugin: any): Promise<void> {
       // 重新加载插件列表
       await loadPlugins()
       // 注意：插件重载后，主程序会自动刷新指令列表
-      alert('插件重载成功!')
+      success('插件重载成功!')
     } else {
-      alert(`插件重载失败: ${result.error}`)
+      error(`插件重载失败: ${result.error}`)
     }
-  } catch (error: any) {
-    console.error('重载插件失败:', error)
-    alert(`重载插件失败: ${error.message || '未知错误'}`)
+  } catch (err: any) {
+    console.error('重载插件失败:', err)
+    error(`重载插件失败: ${err.message || '未知错误'}`)
   } finally {
     isReloading.value = false
   }

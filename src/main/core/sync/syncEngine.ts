@@ -559,7 +559,11 @@ export class SyncEngine {
           const mimeType = cloudMetadata?.type || 'application/octet-stream'
 
           // 保存附件到本地
-          const saveResult = await this.db.promises.postAttachment(attachmentId, attachment, mimeType)
+          const saveResult = await this.db.promises.postAttachment(
+            attachmentId,
+            attachment,
+            mimeType
+          )
           if (saveResult.ok) {
             // 更新同步状态（存储到 attachment-ext 中）
             const attachmentDb = this.db.getAttachmentDb()

@@ -780,6 +780,17 @@ async function handleSelectApp(app: any): Promise<void> {
       featureCode: app.featureCode,
       name: app.name, // 传递 cmd 名称用于历史记录显示
       cmdType: app.cmdType || 'text', // 传递 cmdType 用于判断是否添加历史
+      confirmDialog: app.confirmDialog
+        ? {
+            type: app.confirmDialog.type,
+            buttons: [...app.confirmDialog.buttons],
+            defaultId: app.confirmDialog.defaultId,
+            cancelId: app.confirmDialog.cancelId,
+            title: app.confirmDialog.title,
+            message: app.confirmDialog.message,
+            detail: app.confirmDialog.detail
+          }
+        : undefined, // 解构为纯对象，避免 Proxy
       param: {
         payload,
         type, // 传递 cmd 的实际类型

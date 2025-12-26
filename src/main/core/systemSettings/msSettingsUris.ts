@@ -36,11 +36,6 @@ export const MS_SETTINGS_URIS: Omit<SystemSetting, 'icon'>[] = [
     category: '系统'
   },
   {
-    name: '屏幕旋转方向',
-    uri: 'ms-settings:screenrotation',
-    category: '系统'
-  },
-  {
     name: '夜间护眼模式',
     uri: 'ms-settings:nightlight',
     category: '系统'
@@ -170,11 +165,6 @@ export const MS_SETTINGS_URIS: Omit<SystemSetting, 'icon'>[] = [
     uri: 'ms-settings:about',
     category: '系统'
   },
-  {
-    name: '人体存在感知',
-    uri: 'ms-settings:presence',
-    category: '系统'
-  },
 
   // === 设备（Devices）===
   {
@@ -203,23 +193,8 @@ export const MS_SETTINGS_URIS: Omit<SystemSetting, 'icon'>[] = [
     category: '设备'
   },
   {
-    name: '触摸屏',
-    uri: 'ms-settings:devices-touch',
-    category: '设备'
-  },
-  {
     name: '笔记本触摸板',
     uri: 'ms-settings:devices-touchpad',
-    category: '设备'
-  },
-  {
-    name: '手写笔 Ink',
-    uri: 'ms-settings:pen',
-    category: '设备'
-  },
-  {
-    name: '移动设备自动播放',
-    uri: 'ms-settings:autoplay',
     category: '设备'
   },
   {
@@ -267,11 +242,6 @@ export const MS_SETTINGS_URIS: Omit<SystemSetting, 'icon'>[] = [
   {
     name: '网络代理',
     uri: 'ms-settings:network-proxy',
-    category: '网络'
-  },
-  {
-    name: '拨号连接',
-    uri: 'ms-settings:network-dialup',
     category: '网络'
   },
   {
@@ -327,16 +297,6 @@ export const MS_SETTINGS_URIS: Omit<SystemSetting, 'icon'>[] = [
     category: '个性化'
   },
   {
-    name: '虚拟触摸键盘',
-    uri: 'ms-settings:personalization-touchkeyboard',
-    category: '个性化'
-  },
-  {
-    name: '输入文本建议',
-    uri: 'ms-settings:devicestyping-hwkbtextsuggestions',
-    category: '个性化'
-  },
-  {
     name: '快速控制中心',
     uri: 'ms-settings:controlcenter',
     category: '个性化'
@@ -351,26 +311,6 @@ export const MS_SETTINGS_URIS: Omit<SystemSetting, 'icon'>[] = [
   {
     name: '默认程序',
     uri: 'ms-settings:defaultapps',
-    category: '应用'
-  },
-  {
-    name: '网站关联应用',
-    uri: 'ms-settings:appsforwebsites',
-    category: '应用'
-  },
-  {
-    name: '离线地图管理',
-    uri: 'ms-settings:maps',
-    category: '应用'
-  },
-  {
-    name: '地图下载',
-    uri: 'ms-settings:maps-downloadmaps',
-    category: '应用'
-  },
-  {
-    name: '视频播放器',
-    uri: 'ms-settings:videoplayback',
     category: '应用'
   },
   {
@@ -398,31 +338,6 @@ export const MS_SETTINGS_URIS: Omit<SystemSetting, 'icon'>[] = [
   {
     name: '登录方式',
     uri: 'ms-settings:signinoptions',
-    category: '账户'
-  },
-  {
-    name: '动态锁屏',
-    uri: 'ms-settings:signinoptions-dynamiclock',
-    category: '账户'
-  },
-  {
-    name: 'Hello 面部识别',
-    uri: 'ms-settings:signinoptions-launchfaceenrollment',
-    category: '账户'
-  },
-  {
-    name: 'Hello 指纹识别',
-    uri: 'ms-settings:signinoptions-launchfingerprintenrollment',
-    category: '账户'
-  },
-  {
-    name: '硬件安全密钥',
-    uri: 'ms-settings:signinoptions-launchsecuritykeyenrollment',
-    category: '账户'
-  },
-  {
-    name: '工作学校账户',
-    uri: 'ms-settings:workplace',
     category: '账户'
   },
   {
@@ -472,115 +387,6 @@ export const MS_SETTINGS_URIS: Omit<SystemSetting, 'icon'>[] = [
     uri: 'ms-settings:speech',
     category: '语言'
   },
-  {
-    name: '日文输入法 IME',
-    uri: 'ms-settings:regionlanguage-jpnime',
-    category: '语言'
-  },
-  {
-    name: '中文拼音 IME',
-    uri: 'ms-settings:regionlanguage-chsime-pinyin',
-    category: '语言'
-  },
-  {
-    name: '五笔 IME',
-    uri: 'ms-settings:regionlanguage-chsime-wubi',
-    category: '语言'
-  },
-
-  // === 游戏（Gaming）===
-  {
-    name: 'Xbox 游戏工具栏',
-    uri: 'ms-settings:gaming-gamebar',
-    category: '游戏'
-  },
-  {
-    name: '游戏录制截图',
-    uri: 'ms-settings:gaming-gamedvr',
-    category: '游戏'
-  },
-  {
-    name: '游戏性能模式',
-    uri: 'ms-settings:gaming-gamemode',
-    category: '游戏'
-  },
-  {
-    name: 'Xbox 联机网络',
-    uri: 'ms-settings:gaming-xboxnetworking',
-    category: '游戏'
-  },
-
-  // === 轻松访问（Ease of Access）===
-  {
-    name: '辅助功能',
-    uri: 'ms-settings:easeofaccess',
-    category: '轻松访问'
-  },
-  {
-    name: '辅助显示缩放',
-    uri: 'ms-settings:easeofaccess-display',
-    category: '轻松访问'
-  },
-  {
-    name: '辅助鼠标指针',
-    uri: 'ms-settings:easeofaccess-mouse',
-    category: '轻松访问'
-  },
-  {
-    name: '屏幕放大镜',
-    uri: 'ms-settings:easeofaccess-magnifier',
-    category: '轻松访问'
-  },
-  {
-    name: '辅助颜色滤镜',
-    uri: 'ms-settings:easeofaccess-colorfilter',
-    category: '轻松访问'
-  },
-  {
-    name: '高对比度主题',
-    uri: 'ms-settings:easeofaccess-highcontrast',
-    category: '轻松访问'
-  },
-  {
-    name: '屏幕讲述人',
-    uri: 'ms-settings:easeofaccess-narrator',
-    category: '轻松访问'
-  },
-  {
-    name: '辅助音频',
-    uri: 'ms-settings:easeofaccess-audio',
-    category: '轻松访问'
-  },
-  {
-    name: '视频隐藏字幕',
-    uri: 'ms-settings:easeofaccess-closedcaptioning',
-    category: '轻松访问'
-  },
-  {
-    name: '辅助语音',
-    uri: 'ms-settings:easeofaccess-speech',
-    category: '轻松访问'
-  },
-  {
-    name: '辅助键盘',
-    uri: 'ms-settings:easeofaccess-keyboard',
-    category: '轻松访问'
-  },
-  {
-    name: '眼球追踪控制',
-    uri: 'ms-settings:easeofaccess-eyecontrol',
-    category: '轻松访问'
-  },
-  {
-    name: '输入光标样式',
-    uri: 'ms-settings:easeofaccess-cursor',
-    category: '轻松访问'
-  },
-  {
-    name: '辅助视觉效果',
-    uri: 'ms-settings:easeofaccess-visualeffects',
-    category: '轻松访问'
-  },
 
   // === 隐私和安全（Privacy）===
   {
@@ -591,26 +397,6 @@ export const MS_SETTINGS_URIS: Omit<SystemSetting, 'icon'>[] = [
   {
     name: '隐私常规设置',
     uri: 'ms-settings:privacy-general',
-    category: '隐私'
-  },
-  {
-    name: '隐私语音识别',
-    uri: 'ms-settings:privacy-speech',
-    category: '隐私'
-  },
-  {
-    name: '手写键入个性化',
-    uri: 'ms-settings:privacy-speechtyping',
-    category: '隐私'
-  },
-  {
-    name: '诊断数据反馈',
-    uri: 'ms-settings:privacy-feedback',
-    category: '隐私'
-  },
-  {
-    name: '活动历史',
-    uri: 'ms-settings:privacy-activityhistory',
     category: '隐私'
   },
   {
@@ -626,111 +412,6 @@ export const MS_SETTINGS_URIS: Omit<SystemSetting, 'icon'>[] = [
   {
     name: '麦克风录音权限',
     uri: 'ms-settings:privacy-microphone',
-    category: '隐私'
-  },
-  {
-    name: '语音唤醒',
-    uri: 'ms-settings:privacy-voiceactivation',
-    category: '隐私'
-  },
-  {
-    name: '通知访问权限',
-    uri: 'ms-settings:privacy-notifications',
-    category: '隐私'
-  },
-  {
-    name: '账户信息权限',
-    uri: 'ms-settings:privacy-accountinfo',
-    category: '隐私'
-  },
-  {
-    name: '联系人访问',
-    uri: 'ms-settings:privacy-contacts',
-    category: '隐私'
-  },
-  {
-    name: '日历访问',
-    uri: 'ms-settings:privacy-calendar',
-    category: '隐私'
-  },
-  {
-    name: '电话通话权限',
-    uri: 'ms-settings:privacy-phonecalls',
-    category: '隐私'
-  },
-  {
-    name: '通话记录访问',
-    uri: 'ms-settings:privacy-callhistory',
-    category: '隐私'
-  },
-  {
-    name: '邮件访问',
-    uri: 'ms-settings:privacy-email',
-    category: '隐私'
-  },
-  {
-    name: '任务访问',
-    uri: 'ms-settings:privacy-tasks',
-    category: '隐私'
-  },
-  {
-    name: '消息短信权限',
-    uri: 'ms-settings:privacy-messaging',
-    category: '隐私'
-  },
-  {
-    name: '无线电设备控制',
-    uri: 'ms-settings:privacy-radios',
-    category: '隐私'
-  },
-  {
-    name: '其他设备同步',
-    uri: 'ms-settings:privacy-customdevices',
-    category: '隐私'
-  },
-  {
-    name: '后台应用权限',
-    uri: 'ms-settings:privacy-backgroundapps',
-    category: '隐私'
-  },
-  {
-    name: '应用诊断信息',
-    uri: 'ms-settings:privacy-appdiagnostics',
-    category: '隐私'
-  },
-  {
-    name: '自动下载文件',
-    uri: 'ms-settings:privacy-automaticfiledownloads',
-    category: '隐私'
-  },
-  {
-    name: '文档库访问',
-    uri: 'ms-settings:privacy-documents',
-    category: '隐私'
-  },
-  {
-    name: '图片库访问',
-    uri: 'ms-settings:privacy-pictures',
-    category: '隐私'
-  },
-  {
-    name: '视频库访问',
-    uri: 'ms-settings:privacy-videos',
-    category: '隐私'
-  },
-  {
-    name: '完整文件系统',
-    uri: 'ms-settings:privacy-broadfilesystemaccess',
-    category: '隐私'
-  },
-  {
-    name: '下载文件夹访问',
-    uri: 'ms-settings:privacy-downloadsfolder',
-    category: '隐私'
-  },
-  {
-    name: '音乐库访问',
-    uri: 'ms-settings:privacy-musiclibrary',
     category: '隐私'
   },
 

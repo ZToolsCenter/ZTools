@@ -16,6 +16,8 @@ const api = {
     featureCode?: string
     param?: any
     name?: string
+    cmdType?: string
+    confirmDialog?: any
   }) => ipcRenderer.invoke('launch', options),
   hideWindow: () => ipcRenderer.send('hide-window'),
   resizeWindow: (height: number) => ipcRenderer.send('resize-window', height),

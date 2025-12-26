@@ -127,6 +127,9 @@
 import { onMounted, onUnmounted, ref } from 'vue'
 import AdaptiveIcon from '../common/AdaptiveIcon.vue'
 import PluginDetail from './PluginDetail.vue'
+import { useToast } from '../../composables/useToast'
+
+const { success, error, warning, info, confirm } = useToast()
 
 interface Plugin {
   name: string
@@ -204,7 +207,7 @@ function closePluginDetail(): void {
 
 async function handleOpenPlugin(plugin: Plugin): Promise<void> {
   if (!plugin.path) {
-    alert('无法打开插件: 路径未知')
+    error('无法打开插件: 路径未知')
     return
   }
   try {
@@ -217,11 +220,11 @@ async function handleOpenPlugin(plugin: Plugin): Promise<void> {
 
     // 检查返回结果
     if (result && !result.success) {
-      alert(`无法打开插件: ${result.error || '未知错误'}`)
+      error(`无法打开插件: ${result.error || '未知错误'}`)
     }
-  } catch (error: any) {
-    console.error('打开插件失败:', error)
-    alert(`打开插件失败: ${error.message || '未知错误'}`)
+  } catch (err: any) {
+    console.error('打开插件失败:', err)
+    error(`打开插件失败: ${err.message || '未知错误'}`)
   }
 }
 
@@ -249,13 +252,17 @@ function canUpgrade(plugin: Plugin): boolean {
 async function handleUpgradePlugin(plugin: Plugin): Promise<void> {
   if (installingPlugin.value) return
   if (!plugin.path) {
-    alert('无法升级：找不到插件路径')
+    error('无法升级：找不到插件路径')
     return
   }
 
-  const confirmUpgrade = confirm(
-    `发现新版本 ${plugin.version}，当前版本 ${plugin.localVersion}，是否升级？\n升级将先卸载旧版本。`
-  )
+  const confirmUpgrade = await confirm({
+    title: '升级插件',
+    message: `发现新版本 ${plugin.version}，当前版本 ${plugin.localVersion}，是否升级？\n\n升级将先卸载旧版本。`,
+    type: 'warning',
+    confirmText: '升级',
+    cancelText: '取消'
+  })
   if (!confirmUpgrade) return
 
   installingPlugin.value = plugin.name
@@ -286,9 +293,9 @@ async function handleUpgradePlugin(plugin: Plugin): Promise<void> {
     } else {
       throw new Error(`安装失败: ${installResult.error}`)
     }
-  } catch (error: any) {
-    console.error('升级出错:', error)
-    alert(`升级出错: ${error.message}`)
+  } catch (err: any) {
+    console.error('升级出错:', err)
+    error(`升级出错: ${err.message}`)
     // 如果卸载成功但安装失败，可能需要刷新列表让用户重新下载
     await fetchPlugins()
   } finally {
@@ -317,11 +324,11 @@ async function downloadPlugin(plugin: Plugin): Promise<void> {
       // await fetchPlugins()
     } else {
       console.error('插件安装失败:', result.error)
-      alert(`安装失败: ${result.error}`)
+      error(`安装失败: ${result.error}`)
     }
-  } catch (error: any) {
-    console.error('安装出错:', error)
-    alert(`安装出错: ${error.message}`)
+  } catch (err: any) {
+    console.error('安装出错:', err)
+    error(`安装出错: ${err.message}`)
   } finally {
     installingPlugin.value = null
   }

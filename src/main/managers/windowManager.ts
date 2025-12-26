@@ -355,17 +355,19 @@ class WindowManager {
     if (!this.mainWindow) return
 
     const isFocused = this.mainWindow.isFocused()
-    console.log(`切换窗口状态 - 当前可见性: ${isFocused}`)
+    const isVisible = this.mainWindow.isVisible()
+    console.log(`切换窗口状态 - 聚焦: ${isFocused}, 可见: ${isVisible}`)
 
     // 判断窗口是否聚焦显示
-    if (isFocused) {
-      // 窗口已显示 → 隐藏
+    // 修复：同时检查聚焦和可见状态，避免alert弹窗后判断错误
+    if (isFocused && isVisible) {
+      // 窗口已显示且聚焦 → 隐藏
       console.log('隐藏窗口')
       this.mainWindow.blur()
       this.mainWindow.hide()
       // this.restorePreviousWindow() // 该用panel窗体不会失焦
     } else {
-      // 窗口已隐藏 → 显示
+      // 窗口已隐藏或失焦 → 显示并强制激活
       console.log('显示窗口')
       // 记录打开窗口前的激活窗口
       const currentWindow = clipboardManager.getCurrentWindow()
@@ -378,9 +380,38 @@ class WindowManager {
 
       // 移动到鼠标所在显示器（恢复该显示器记忆的位置或居中）
       this.moveWindowToCursor()
-      this.mainWindow.show()
-      this.mainWindow.focus()
+
+      // 强制激活窗口（修复alert弹窗后无法唤起的问题）
+      this.forceActivateWindow()
     }
+  }
+
+  /**
+   * 强制激活窗口（解决alert等弹窗后无法唤起的问题）
+   */
+  private forceActivateWindow(): void {
+    if (!this.mainWindow) return
+
+    // 1. 显示窗口
+    this.mainWindow.show()
+
+    // 2. macOS特殊处理：激活应用
+    if (platform.isMacOS) {
+      app.show() // 激活应用到前台
+    }
+
+    // 3. 设置窗口层级为最前
+    this.mainWindow.setAlwaysOnTop(true)
+
+    // 4. 聚焦窗口
+    this.mainWindow.focus()
+
+    // 5. 短暂延迟后恢复正常层级（避免一直置顶）
+    setTimeout(() => {
+      if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+        this.mainWindow.setAlwaysOnTop(false)
+      }
+    }, 100)
   }
 
   /**
@@ -434,8 +465,9 @@ class WindowManager {
 
     // 移动到鼠标所在显示器（恢复该显示器记忆的位置或居中）
     this.moveWindowToCursor()
-    this.mainWindow.show()
-    this.mainWindow.webContents.focus()
+
+    // 使用强制激活逻辑
+    this.forceActivateWindow()
   }
 
   /**
@@ -584,9 +616,8 @@ class WindowManager {
 
       // 智能定位：将窗口移动到鼠标所在的显示器（同步，从内存读取）
       this.moveWindowToCursor()
-      // 直接显示窗口，位置已同步设置完成
-      this.mainWindow.show()
-      this.mainWindow.webContents.focus()
+      // 使用强制激活逻辑显示窗口
+      this.forceActivateWindow()
     } catch (error) {
       console.error('打开设置插件失败:', error)
     }

@@ -5,7 +5,7 @@ import { promises as fs } from 'fs'
 import path from 'path'
 import { promisify } from 'util'
 import { normalizeIconPath } from '../../common/iconUtils'
-import { launchApp } from '../../core/commandLauncher'
+import { launchApp, type ConfirmDialogOptions } from '../../core/commandLauncher'
 import { scanApplications } from '../../core/commandScanner'
 import { pluginFeatureAPI } from '../plugin/feature'
 import databaseAPI from '../shared/database'
@@ -240,8 +240,9 @@ export class AppsAPI {
     param?: any
     name?: string // cmd 名称（用于历史记录显示）
     cmdType?: string // cmd 类型（用于判断是否添加历史记录）
+    confirmDialog?: ConfirmDialogOptions // 确认对话框配置
   }): Promise<any> {
-    const { path: appPath, type, param, name, cmdType } = options
+    const { path: appPath, type, param, name, cmdType, confirmDialog } = options
     let { featureCode } = options
     this.launchParam = param || {}
 
@@ -353,7 +354,7 @@ export class AppsAPI {
           await shell.openExternal(appPath)
         } else {
           // 普通应用
-          await launchApp(appPath)
+          await launchApp(appPath, confirmDialog)
         }
 
         // 添加到历史记录
@@ -655,14 +656,30 @@ export class AppsAPI {
     try {
       const originalHistory: any[] = (await databaseAPI.dbGet('command-history')) || []
 
+      console.log('删除前历史记录数量:', originalHistory.length)
+      console.log('要删除的 path:', appPath)
+      console.log('要删除的 featureCode:', featureCode)
+
+      // 打印所有历史记录的 path，方便对比
+      console.log('历史记录中的所有 path:')
+      originalHistory.forEach((item, index) => {
+        console.log(`  [${index}] ${item.name}: ${item.path}`)
+      })
+
       // 过滤掉要删除的项
       const history = originalHistory.filter((item) => {
         // 对于插件，需要同时匹配 path 和 featureCode
         if (item.type === 'plugin' && featureCode !== undefined) {
           return !(item.path === appPath && item.featureCode === featureCode)
         }
-        return item.path !== appPath
+        const shouldKeep = item.path !== appPath
+        if (!shouldKeep) {
+          console.log('找到匹配项，将删除:', item.name, item.path)
+        }
+        return shouldKeep
       })
+
+      console.log('删除后历史记录数量:', history.length)
 
       await databaseAPI.dbPut('command-history', history)
       console.log('已从历史记录删除:', appPath, featureCode)

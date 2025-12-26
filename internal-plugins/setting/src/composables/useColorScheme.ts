@@ -1,13 +1,13 @@
-import { onMounted, onUnmounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref, type Ref } from 'vue'
 
 /**
  * 检测和监听系统主题变化
  * 复用自主程序的 useColorScheme composable
  */
-export function useColorScheme() {
+export function useColorScheme(): { isDark: Ref<boolean> } {
   const isDark = ref(false)
 
-  const updateTheme = () => {
+  const updateTheme = (): void => {
     isDark.value = window.matchMedia('(prefers-color-scheme: dark)').matches
   }
 

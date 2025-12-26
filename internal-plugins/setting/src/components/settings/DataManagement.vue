@@ -98,6 +98,9 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import AdaptiveIcon from '../common/AdaptiveIcon.vue'
 import DetailPanel from '../common/DetailPanel.vue'
 import Icon from '../common/Icon.vue'
+import { useToast } from '../../composables/useToast'
+
+const { success, error, warning, info, confirm } = useToast()
 
 interface PluginData {
   pluginName: string
@@ -204,28 +207,29 @@ async function handleClearData(): Promise<void> {
   if (!currentPluginName.value) return
 
   // 确认操作
-  if (
-    !confirm(
-      `确定要清空插件"${currentPluginName.value}"的所有数据吗？\n\n此操作将删除该插件的所有文档，无法恢复。`
-    )
-  ) {
-    return
-  }
+  const confirmed = await confirm({
+    title: '清空数据',
+    message: `确定要清空插件"${currentPluginName.value}"的所有数据吗？\n\n此操作将删除该插件的所有文档，无法恢复。`,
+    type: 'danger',
+    confirmText: '清空',
+    cancelText: '取消'
+  })
+  if (!confirmed) return
 
   try {
     const result = await window.ztools.internal.clearPluginData(currentPluginName.value)
     if (result.success) {
-      alert(`已成功清空 ${result.deletedCount} 个文档`)
+      success(`已成功清空 ${result.deletedCount} 个文档`)
       // 关闭弹窗
       closeDocListModal()
       // 重新加载插件数据统计
       await loadPluginData()
     } else {
-      alert(`清空数据失败: ${result.error}`)
+      error(`清空数据失败: ${result.error}`)
     }
-  } catch (error) {
-    console.error('清空数据失败:', error)
-    alert('清空数据失败')
+  } catch (err) {
+    console.error('清空数据失败:', err)
+    error('清空数据失败')
   }
 }
 

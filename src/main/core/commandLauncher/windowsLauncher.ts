@@ -1,5 +1,6 @@
 import { spawn } from 'child_process'
-import { shell } from 'electron'
+import { dialog, shell } from 'electron'
+import type { ConfirmDialogOptions } from './types'
 
 /**
  * 执行系统命令（不等待进程结束，适用于 GUI 应用）
@@ -29,7 +30,30 @@ function execCommand(command: string, args: string[] = []): void {
   subprocess.unref()
 }
 
-export async function launchApp(appPath: string): Promise<void> {
+export async function launchApp(
+  appPath: string,
+  confirmDialog?: ConfirmDialogOptions
+): Promise<void> {
+  // 如果需要确认，先显示确认对话框
+  if (confirmDialog) {
+    const result = await dialog.showMessageBox({
+      type: confirmDialog.type,
+      buttons: confirmDialog.buttons,
+      defaultId: confirmDialog.defaultId ?? 0,
+      cancelId: confirmDialog.cancelId ?? 0,
+      title: confirmDialog.title,
+      message: confirmDialog.message,
+      detail: confirmDialog.detail,
+      noLink: true
+    })
+
+    // 如果用户点击取消按钮，则不执行
+    if (result.response === confirmDialog.cancelId) {
+      console.log('用户取消了操作')
+      return
+    }
+  }
+
   // 检查是否是系统设置 URI
   if (appPath.startsWith('ms-settings:')) {
     try {
@@ -42,7 +66,26 @@ export async function launchApp(appPath: string): Promise<void> {
     }
   }
 
-  // 检查是否是带参数的系统命令（rundll32、control.exe、msdt.exe 等）
+  // 检查是否是 PowerShell 命令（需要特殊处理，直接执行而不是通过 cmd.exe）
+  if (appPath.startsWith('PowerShell.exe ') || appPath.startsWith('powershell.exe ')) {
+    try {
+      // 使用 shell: true 让系统自动解析命令行参数（包括引号）
+      const subprocess = spawn(appPath, [], {
+        detached: true,
+        stdio: 'ignore',
+        shell: true
+      })
+      subprocess.unref()
+
+      console.log(`成功执行 PowerShell 命令: ${appPath}`)
+      return
+    } catch (error) {
+      console.error('执行 PowerShell 命令失败:', error)
+      throw error
+    }
+  }
+
+  // 检查是否是其他带参数的系统命令（rundll32、control.exe、msdt.exe 等）
   if (
     appPath.startsWith('rundll32 ') ||
     appPath.startsWith('control.exe ') ||
