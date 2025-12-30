@@ -175,16 +175,6 @@ class WindowManager {
       }
     })
 
-    // this.mainWindow.on('hide', () => {
-    //   console.log('窗口隐藏')
-    //   // 恢复到原来的焦点窗口
-    //   if (this.shouldRestoreFocus) {
-    //     app.hide()
-    //   }
-    //   // 重置为默认值
-    //   this.shouldRestoreFocus = true
-    // })
-
     // 监听窗口大小变化
     this.mainWindow.on('resize', () => {
       if (this.mainWindow) {
@@ -262,26 +252,7 @@ class WindowManager {
         this.tray.popUpContextMenu(this.trayMenu)
       }
     })
-
-    // 监听系统主题变化（Windows/Linux）
-    // if (!platform.isMacOS) {
-    //   nativeTheme.on('updated', () => {
-    //     this.updateTrayIcon()
-    //   })
-    // }
   }
-
-  /**
-   * 更新托盘图标（用于主题切换）
-   */
-  // private updateTrayIcon(): void {
-  //   if (!this.tray || platform.isMacOS) return
-
-  //   // 暗色模式用 light（白色图标），亮色模式用 dark（黑色图标）
-  //   const iconPath = nativeTheme.shouldUseDarkColors ? trayIconLight : trayIcon
-  //   const icon = nativeImage.createFromPath(iconPath)
-  //   this.tray.setImage(icon)
-  // }
 
   /**
    * 创建托盘菜单
@@ -376,7 +347,6 @@ class WindowManager {
       console.log('隐藏窗口')
       this.mainWindow.blur()
       this.mainWindow.hide()
-      // this.restorePreviousWindow() // 该用panel窗体不会失焦
     } else {
       // 窗口已隐藏或失焦 → 显示并强制激活
       console.log('显示窗口')
@@ -408,7 +378,7 @@ class WindowManager {
 
     // 2. macOS特殊处理：激活应用
     if (platform.isMacOS) {
-      app.show() // 激活应用到前台
+      return
     }
 
     // 3. 设置窗口层级为最前
@@ -487,7 +457,6 @@ class WindowManager {
   public hideWindow(_restoreFocus: boolean = true): void {
     console.log('隐藏窗口', _restoreFocus)
     this.mainWindow?.hide()
-    this.restorePreviousWindow()
   }
 
   /**
@@ -500,38 +469,6 @@ class WindowManager {
     timestamp: number
   } | null {
     return this.previousActiveWindow
-  }
-
-  /**
-   * 恢复之前激活的窗口
-   */
-  public async restorePreviousWindow(): Promise<boolean> {
-    if (!this.previousActiveWindow) {
-      console.log('没有记录的前一个激活窗口')
-      return false
-    }
-
-    // 忽略同类启动器工具，避免激活冲突
-    const ignoredApps = ['uTools', 'Alfred', 'Raycast', 'Wox', 'Listary']
-    if (ignoredApps.includes(this.previousActiveWindow.appName)) {
-      console.log(`跳过恢复同类工具: ${this.previousActiveWindow.appName}`)
-      return false
-    }
-
-    try {
-      const success = clipboardManager.activateApp(this.previousActiveWindow)
-      if (success) {
-        console.log(`已恢复激活窗口: ${this.previousActiveWindow.appName}`)
-        return true
-      } else {
-        // 静默失败，不报错（可能进程已关闭或窗口已销毁）
-        console.log(`无法恢复窗口: ${this.previousActiveWindow.appName}`)
-        return false
-      }
-    } catch (error) {
-      console.log('恢复激活窗口时出现异常:', error)
-      return false
-    }
   }
 
   /**
