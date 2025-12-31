@@ -637,8 +637,6 @@ async function handleWindowMaterialChange(): Promise<void> {
     await window.ztools.internal.setWindowMaterial(windowMaterial.value)
     // 设置插件自己也需要更新 data-material 属性
     document.documentElement.setAttribute('data-material', windowMaterial.value)
-    // 应用亚克力背景色叠加效果
-    applyAcrylicOverlay()
   } catch (error) {
     console.error('更新窗口材质失败:', error)
   }
@@ -648,10 +646,8 @@ async function handleWindowMaterialChange(): Promise<void> {
 async function handleAcrylicLightOpacityChange(): Promise<void> {
   try {
     await saveSettings()
-    // 通知主渲染进程更新
+    // 通知主渲染进程更新（主渲染进程会应用 CSS 叠加效果）
     await window.ztools.internal.updateAcrylicOpacity(acrylicLightOpacity.value, acrylicDarkOpacity.value)
-    // 应用亚克力背景色叠加效果
-    applyAcrylicOverlay()
   } catch (error) {
     console.error('更新亚克力明亮模式透明度失败:', error)
   }
@@ -661,51 +657,10 @@ async function handleAcrylicLightOpacityChange(): Promise<void> {
 async function handleAcrylicDarkOpacityChange(): Promise<void> {
   try {
     await saveSettings()
-    // 通知主渲染进程更新
+    // 通知主渲染进程更新（主渲染进程会应用 CSS 叠加效果）
     await window.ztools.internal.updateAcrylicOpacity(acrylicLightOpacity.value, acrylicDarkOpacity.value)
-    // 应用亚克力背景色叠加效果
-    applyAcrylicOverlay()
   } catch (error) {
     console.error('更新亚克力暗黑模式透明度失败:', error)
-  }
-}
-
-// 应用亚克力背景色叠加效果
-function applyAcrylicOverlay(): void {
-  // 移除旧的样式
-  const existingStyle = document.getElementById('acrylic-overlay-style')
-  if (existingStyle) {
-    existingStyle.remove()
-  }
-
-  // 只在亚克力材质时添加样式
-  if (windowMaterial.value === 'acrylic') {
-    const style = document.createElement('style')
-    style.id = 'acrylic-overlay-style'
-    style.textContent = `
-      body::after {
-        content: "";
-        position: fixed;
-        inset: 0;
-        pointer-events: none;
-        z-index: -1;
-      }
-
-      /* 明亮模式 */
-      @media (prefers-color-scheme: light) {
-        body::after {
-          background: rgb(255 255 255 / ${acrylicLightOpacity.value}%);
-        }
-      }
-
-      /* 暗黑模式 */
-      @media (prefers-color-scheme: dark) {
-        body::after {
-          background: rgb(0 0 0 / ${acrylicDarkOpacity.value}%);
-        }
-      }
-    `
-    document.head.appendChild(style)
   }
 }
 
@@ -949,9 +904,6 @@ async function loadSettings(): Promise<void> {
       if (primaryColor.value === 'custom') {
         applyCustomColor(customColor.value)
       }
-
-      // 应用亚克力背景色叠加效果
-      applyAcrylicOverlay()
     }
 
     // 获取当前实际注册的快捷键
