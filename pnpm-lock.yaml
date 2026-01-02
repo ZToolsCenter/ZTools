@@ -80,7 +80,7 @@ importers:
         version: 10.0.0
       '@vitejs/plugin-vue':
         specifier: ^6.0.1
-        version: 6.0.3(vite@7.3.0(@types/node@22.19.3))(vue@3.5.26(typescript@5.9.3))
+        version: 6.0.3(vite@7.3.0(@types/node@22.19.3)(yaml@2.8.2))(vue@3.5.26(typescript@5.9.3))
       concurrently:
         specifier: ^9.1.2
         version: 9.2.1
@@ -92,7 +92,7 @@ importers:
         version: 25.1.8(electron-builder-squirrel-windows@25.1.8)
       electron-vite:
         specifier: ^4.0.1
-        version: 4.0.1(vite@7.3.0(@types/node@22.19.3))
+        version: 4.0.1(vite@7.3.0(@types/node@22.19.3)(yaml@2.8.2))
       eslint:
         specifier: ^9.36.0
         version: 9.39.2
@@ -110,7 +110,7 @@ importers:
         version: 5.9.3
       vite:
         specifier: ^7.1.6
-        version: 7.3.0(@types/node@22.19.3)
+        version: 7.3.0(@types/node@22.19.3)(yaml@2.8.2)
       vue:
         specifier: ^3.5.21
         version: 3.5.26(typescript@5.9.3)
@@ -120,6 +120,9 @@ importers:
       vue-tsc:
         specifier: ^3.0.7
         version: 3.1.8(typescript@5.9.3)
+      yaml:
+        specifier: ^2.8.2
+        version: 2.8.2
 
 packages:
 
@@ -3033,6 +3036,11 @@ packages:
     resolution: {integrity: sha512-YgvUTfwqyc7UXVMrB+SImsVYSmTS8X/tSrtdNZMImM+n7+QTriRXyXim0mBrTXNeqzVF0KWGgHPeiyViFFrNDw==}
     engines: {node: '>=18'}
 
+  yaml@2.8.2:
+    resolution: {integrity: sha512-mplynKqc1C2hTVYxd0PU2xQAc22TI1vShAYGksCCfxbn/dFwnHTNi1bvYsBTkhdUNtGIf5xNOg938rrSSYvS9A==}
+    engines: {node: '>= 14.6'}
+    hasBin: true
+
   yargs-parser@21.1.1:
     resolution: {integrity: sha512-tVpsJW7DdjecAiFpbIB1e3qxIQsE6NoPc5/eTdrbbIC4h0LVsWhnoa3g+m2HclBIujHzsxZ4VJVA+GUuc2/LBw==}
     engines: {node: '>=12'}
@@ -3829,10 +3837,10 @@ snapshots:
       '@typescript-eslint/types': 8.50.0
       eslint-visitor-keys: 4.2.1
 
-  '@vitejs/plugin-vue@6.0.3(vite@7.3.0(@types/node@22.19.3))(vue@3.5.26(typescript@5.9.3))':
+  '@vitejs/plugin-vue@6.0.3(vite@7.3.0(@types/node@22.19.3)(yaml@2.8.2))(vue@3.5.26(typescript@5.9.3))':
     dependencies:
       '@rolldown/pluginutils': 1.0.0-beta.53
-      vite: 7.3.0(@types/node@22.19.3)
+      vite: 7.3.0(@types/node@22.19.3)(yaml@2.8.2)
       vue: 3.5.26(typescript@5.9.3)
 
   '@volar/language-core@2.4.26':
@@ -4503,7 +4511,7 @@ snapshots:
 
   electron-to-chromium@1.5.267: {}
 
-  electron-vite@4.0.1(vite@7.3.0(@types/node@22.19.3)):
+  electron-vite@4.0.1(vite@7.3.0(@types/node@22.19.3)(yaml@2.8.2)):
     dependencies:
       '@babel/core': 7.28.5
       '@babel/plugin-transform-arrow-functions': 7.27.1(@babel/core@7.28.5)
@@ -4511,7 +4519,7 @@ snapshots:
       esbuild: 0.25.12
       magic-string: 0.30.21
       picocolors: 1.1.1
-      vite: 7.3.0(@types/node@22.19.3)
+      vite: 7.3.0(@types/node@22.19.3)(yaml@2.8.2)
     transitivePeerDependencies:
       - supports-color
 
@@ -5994,7 +6002,7 @@ snapshots:
       extsprintf: 1.4.1
     optional: true
 
-  vite@7.3.0(@types/node@22.19.3):
+  vite@7.3.0(@types/node@22.19.3)(yaml@2.8.2):
     dependencies:
       esbuild: 0.27.2
       fdir: 6.5.0(picomatch@4.0.3)
@@ -6005,6 +6013,7 @@ snapshots:
     optionalDependencies:
       '@types/node': 22.19.3
       fsevents: 2.3.3
+      yaml: 2.8.2
 
   vscode-uri@3.1.0: {}
 
@@ -6107,6 +6116,8 @@ snapshots:
   yallist@4.0.0: {}
 
   yallist@5.0.0: {}
+
+  yaml@2.8.2: {}
 
   yargs-parser@21.1.1: {}
 

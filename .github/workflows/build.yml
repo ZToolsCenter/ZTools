@@ -77,6 +77,23 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Check out git repository
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 9
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
       - name: Download macOS artifact
         uses: actions/download-artifact@v4
         with:
@@ -89,13 +106,17 @@ jobs:
           name: artifact-windows-latest
           path: dist
 
+      # 生成更新信息和下载链接
+      - name: Generate update info
+        run: pnpm updater
+
       # 只上传指定的三类文件到 Release
       - name: Upload Release Assets
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
+          body_path: changelog.md
           files: |
             dist/*.exe
             dist/*.dmg
             dist/*.zip
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            latest.yml
