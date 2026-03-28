@@ -12,6 +12,7 @@ import {
   readClipboardFiles,
   writeClipboardFiles
 } from '../utils/clipboardFiles'
+import { formatText } from '../utils/textFormatter'
 import { sleep } from '../utils/common'
 import pluginManager from './pluginManager'
 import ClipboardMonitor, { WindowMonitor, WindowManager } from '../core/native'
@@ -40,6 +41,7 @@ interface ClipboardItem {
   appName?: string // 复制时的应用名称
   bundleId?: string // 复制时的应用 Bundle ID
   content?: string // text: 文本内容
+  formattedContent?: string // text: 格式化前的原始文本（仅当自动格式化且与格式化后不同时存在）
   files?: FileItem[] // file: 文件列表
   imagePath?: string // image: 保存的图片路径
   resolution?: string // image: 图片分辨率 "width * height"
@@ -66,13 +68,15 @@ interface ClipboardConfig {
   maxItems: number // 最大条数
   maxImageSize: number // 单张图片最大大小（bytes）
   maxTotalImageSize: number // 图片总大小限制（bytes）
+  autoFormatText: boolean // 复制文本时自动格式化（清理多余空白）
 }
 
 // 默认配置
 const DEFAULT_CONFIG: ClipboardConfig = {
   maxItems: 1000,
   maxImageSize: 10 * 1024 * 1024, // 10MB
-  maxTotalImageSize: 500 * 1024 * 1024 // 500MB
+  maxTotalImageSize: 500 * 1024 * 1024, // 500MB
+  autoFormatText: false
 }
 
 // 剪贴板准备等待时间（复制后有些应用需要一点时间才能真正写入剪贴板）
@@ -348,10 +352,24 @@ class ClipboardManager {
       return null as any
     }
 
-    // 记录最后一次复制的文本
+    let finalText = text
+    let formattedContent: string | undefined
+
+    // 自动格式化：若开启则格式化文本并写回剪贴板
+    if (this.config.autoFormatText) {
+      const formatted = formatText(text)
+      if (formatted !== text) {
+        formattedContent = text // 保存原始文本供参考
+        this.temporaryCancelWatch()
+        clipboard.writeText(formatted)
+        finalText = formatted
+      }
+    }
+
+    // 记录最后一次复制的文本（使用格式化后的内容）
     this.lastCopiedContent = {
       type: 'text',
-      data: text,
+      data: finalText,
       timestamp: Date.now()
     }
 
@@ -359,9 +377,10 @@ class ClipboardManager {
       id: uuidv4(),
       type: 'text',
       timestamp: Date.now(),
-      hash: createHash('md5').update(text).digest('hex'),
-      content: text,
-      preview: text.length > 100 ? text.slice(0, 100) + '...' : text
+      hash: createHash('md5').update(finalText).digest('hex'),
+      content: finalText,
+      formattedContent,
+      preview: finalText.length > 100 ? finalText.slice(0, 100) + '...' : finalText
     }
   }
 
@@ -383,6 +402,7 @@ class ClipboardManager {
         appName: item.appName,
         bundleId: item.bundleId,
         content: item.content,
+        formattedContent: item.formattedContent,
         files: item.files,
         imagePath: item.imagePath,
         resolution: item.resolution,
@@ -501,8 +521,12 @@ class ClipboardManager {
       if (filter) {
         const keyword = filter.toLowerCase()
         allItems = allItems.filter((item) => {
-          // 搜索文本内容
+          // 搜索文本内容（格式化后）
           if (item.content?.toLowerCase().includes(keyword)) {
+            return true
+          }
+          // 搜索原始文本（格式化前，若存在）
+          if (item.formattedContent?.toLowerCase().includes(keyword)) {
             return true
           }
           // 搜索文件名（搜索 files 数组中的所有文件名）

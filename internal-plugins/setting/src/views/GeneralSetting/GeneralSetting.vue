@@ -131,6 +131,9 @@ const recentRows = ref(2)
 const pinnedRows = ref(2)
 const searchMode = ref<'aggregate' | 'list'>('aggregate')
 
+// 剪贴板设置
+const clipboardAutoFormatText = ref(false)
+
 // Tab 键目标指令
 const tabTargetCommand = ref('')
 
@@ -148,6 +151,7 @@ const superPanelBlockedApps = ref<Array<{ app: string; bundleId?: string; label?
 
 // 超级面板翻译设置
 const superPanelTranslateEnabled = ref(false)
+const superPanelAiFormatEnabled = ref(false)
 const translationStatus = ref<'idle' | 'downloading' | 'initializing' | 'ready' | 'error'>('idle')
 
 // 超级面板触发模式（计算属性）
@@ -419,6 +423,18 @@ async function handleAutoPasteChange(): Promise<void> {
   }
 }
 
+// 处理剪贴板自动格式化变化
+async function handleClipboardAutoFormatTextChange(): Promise<void> {
+  try {
+    await saveSettings()
+    await window.ztools.internal.updateClipboardConfig({
+      autoFormatText: clipboardAutoFormatText.value
+    })
+  } catch (error) {
+    console.error('保存剪贴板自动格式化配置失败:', error)
+  }
+}
+
 // 处理自动清空配置变化
 async function handleAutoClearChange(): Promise<void> {
   try {
@@ -631,6 +647,10 @@ async function handleSuperPanelTranslateChange(): Promise<void> {
   } catch (err) {
     console.error('更新超级面板翻译开关失败:', err)
   }
+}
+
+async function handleSuperPanelAiFormatChange(): Promise<void> {
+  await saveSettings()
 }
 
 // 轮询翻译引擎状态
@@ -1042,6 +1062,9 @@ async function loadSettings(): Promise<void> {
       primaryColor.value = data.primaryColor ?? 'blue'
       searchMode.value = data.searchMode ?? 'aggregate'
       autoCheckUpdate.value = data.autoCheckUpdate ?? true
+      // 剪贴板设置
+      clipboardAutoFormatText.value = data.clipboardAutoFormatText ?? false
+
       // Tab 键目标指令
       tabTargetCommand.value = data.tabTargetCommand ?? ''
       // 空格打开指令
@@ -1055,6 +1078,7 @@ async function loadSettings(): Promise<void> {
       superPanelLongPressMs.value = data.superPanelLongPressMs ?? 500
       superPanelBlockedApps.value = data.superPanelBlockedApps ?? []
       superPanelTranslateEnabled.value = data.superPanelTranslateEnabled ?? false
+      superPanelAiFormatEnabled.value = data.superPanelAiFormatEnabled ?? false
       if (superPanelTranslateEnabled.value) {
         pollTranslationStatus()
       }
@@ -1134,6 +1158,7 @@ async function saveSettings(): Promise<void> {
       superPanelLongPressMs: superPanelLongPressMs.value,
       superPanelBlockedApps: superPanelBlockedApps.value.map((item) => ({ ...item })),
       superPanelTranslateEnabled: superPanelTranslateEnabled.value,
+      superPanelAiFormatEnabled: superPanelAiFormatEnabled.value,
       theme: theme.value,
       primaryColor: primaryColor.value,
       customColor: customColor.value,
@@ -1146,7 +1171,8 @@ async function saveSettings(): Promise<void> {
       proxyUrl: proxyUrl.value,
       pluginMarketCustom: pluginMarketCustom.value,
       pluginMarketUrl: pluginMarketUrl.value,
-      autoCheckUpdate: autoCheckUpdate.value
+      autoCheckUpdate: autoCheckUpdate.value,
+      clipboardAutoFormatText: clipboardAutoFormatText.value
     })
   } catch (error) {
     console.error('保存设置失败:', error)
@@ -1692,6 +1718,28 @@ onUnmounted(() => {
       </div>
     </div>
 
+    <!-- ==================== 剪贴板 ==================== -->
+    <div class="setting-group">
+      <h3 class="setting-group-title">剪贴板</h3>
+
+      <div class="setting-item">
+        <div class="setting-label">
+          <span>自动格式化文本</span>
+          <span class="setting-desc">复制文本时自动清理多余空白、统一换行，不改变文字内容</span>
+        </div>
+        <div class="setting-control">
+          <label class="toggle">
+            <input
+              v-model="clipboardAutoFormatText"
+              type="checkbox"
+              @change="handleClipboardAutoFormatTextChange"
+            />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+      </div>
+    </div>
+
     <!-- ==================== 超级面板 ==================== -->
     <div class="setting-group">
       <h3 class="setting-group-title">超级面板</h3>
@@ -1788,6 +1836,25 @@ onUnmounted(() => {
               v-model="superPanelTranslateEnabled"
               type="checkbox"
               @change="handleSuperPanelTranslateChange"
+            />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+      </div>
+
+      <div v-if="superPanelEnabled" class="setting-item">
+        <div class="setting-label">
+          <span>AI 格式化文本</span>
+          <span class="setting-desc"
+            >触发超级面板时，若剪贴板为文本，显示"格式化为 Markdown"选项（需配置 AI 模型）</span
+          >
+        </div>
+        <div class="setting-control">
+          <label class="toggle">
+            <input
+              v-model="superPanelAiFormatEnabled"
+              type="checkbox"
+              @change="handleSuperPanelAiFormatChange"
             />
             <span class="toggle-slider"></span>
           </label>

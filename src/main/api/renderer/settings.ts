@@ -5,6 +5,7 @@ import { getCurrentShortcut, updateShortcut } from '../../index.js'
 import doubleTapManager from '../../core/doubleTapManager.js'
 import proxyManager from '../../managers/proxyManager.js'
 import windowManager from '../../managers/windowManager.js'
+import clipboardManager from '../../managers/clipboardManager.js'
 import databaseAPI from '../shared/database'
 
 /**
@@ -104,6 +105,11 @@ export class SettingsAPI {
         if (data.windowDefaultHeight !== undefined) {
           this.pluginManager?.setPluginDefaultHeight(data.windowDefaultHeight)
           console.log('[Settings] 启动时应用插件默认高度设置:', data.windowDefaultHeight)
+        }
+        // 应用剪贴板自动格式化设置
+        if (data.clipboardAutoFormatText !== undefined) {
+          clipboardManager.updateConfig({ autoFormatText: data.clipboardAutoFormatText })
+          console.log('[Settings] 启动时应用剪贴板自动格式化设置:', data.clipboardAutoFormatText)
         }
       }
 

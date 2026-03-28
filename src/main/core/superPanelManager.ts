@@ -10,6 +10,7 @@ import clipboardManager from '../managers/clipboardManager.js'
 import { readClipboardFiles } from '../utils/clipboardFiles.js'
 import { applyWindowMaterial, getDefaultWindowMaterial } from '../utils/windowUtils.js'
 import translationManager from './translationManager.js'
+import pluginAiAPI from '../api/plugin/ai.js'
 
 // 超级面板窗口尺寸
 const SUPER_PANEL_WIDTH = 250
@@ -632,6 +633,11 @@ class SuperPanelManager {
     // 超级面板请求加载固定列表（从搜索模式切换回固定模式）
     ipcMain.on('super-panel:show-pinned', () => {
       this.loadPinnedCommands()
+    })
+
+    // 超级面板 AI 格式化文本
+    ipcMain.handle('super-panel:ai-format', async (_event, text: string) => {
+      return await pluginAiAPI.formatTextForSuperPanel(text)
     })
 
     // 超级面板头像点击：隐藏超级面板，显示主搜索窗口

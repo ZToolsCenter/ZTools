@@ -747,6 +747,18 @@ export class InternalPluginAPI {
       return translationManager.getStatus()
     })
 
+    // ==================== 剪贴板配置 API ====================
+    ipcMain.handle(
+      'internal:update-clipboard-config',
+      async (event, config: { autoFormatText?: boolean }) => {
+        if (!requireInternalPlugin(this.pluginManager, event)) {
+          throw new PermissionDeniedError('internal:update-clipboard-config')
+        }
+        clipboardManager.updateConfig(config)
+        return { success: true }
+      }
+    )
+
     // ==================== 图片分析 API ====================
     // 直接转发到共享的 analyze-image handler（已在 imageAnalysis.ts 中注册）
     ipcMain.handle('internal:analyze-image', async (event, imagePath: string) => {

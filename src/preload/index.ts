@@ -346,6 +346,12 @@ const api = {
     ipcRenderer.on('super-panel-data', (_event, data) => callback(data))
   },
   superPanelLaunch: (command: any) => ipcRenderer.invoke('super-panel:launch', command),
+  superPanelAiFormat: (text: string) =>
+    ipcRenderer.invoke('super-panel:ai-format', text) as Promise<{
+      success: boolean
+      text?: string
+      error?: string
+    }>,
   superPanelReady: () => ipcRenderer.send('super-panel:ready'),
   superPanelShowPinned: () => ipcRenderer.send('super-panel:show-pinned'),
   superPanelShowMainWindow: () => ipcRenderer.send('super-panel:show-main-window'),

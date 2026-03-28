@@ -879,6 +879,10 @@ window.ztools = {
       await electron.ipcRenderer.invoke('super-panel:unpin-command', path, featureCode),
     getSuperPanelPinned: async () => await electron.ipcRenderer.invoke('super-panel:get-pinned'),
 
+    // ==================== 剪贴板配置 API ====================
+    updateClipboardConfig: async (config) =>
+      await electron.ipcRenderer.invoke('internal:update-clipboard-config', config),
+
     // ==================== AI 模型管理 API ====================
     aiModels: {
       getAll: async () => await electron.ipcRenderer.invoke('internal:ai-models-get-all'),

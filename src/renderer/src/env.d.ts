@@ -353,6 +353,9 @@ declare global {
         }) => void
       ) => void
       superPanelLaunch: (command: any) => Promise<{ success: boolean; error?: string }>
+      superPanelAiFormat: (
+        text: string
+      ) => Promise<{ success: boolean; text?: string; error?: string }>
       superPanelReady: () => void
       superPanelShowPinned: () => void
       superPanelShowMainWindow: () => void

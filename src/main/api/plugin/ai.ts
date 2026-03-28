@@ -81,6 +81,7 @@ class PluginAiAPI {
   private pluginManager: PluginManager | null = null
   private mainWindow: Electron.BrowserWindow | null = null
   private abortControllers: Map<string, AbortController> = new Map()
+  private clientCache: Map<string, OpenAI> = new Map()
 
   public init(mainWindow: Electron.BrowserWindow, pluginManager: PluginManager): void {
     this.mainWindow = mainWindow
@@ -222,10 +223,17 @@ class PluginAiAPI {
   }
 
   private createClient(modelConfig: AiModel): OpenAI {
-    return new OpenAI({
-      apiKey: modelConfig.apiKey,
-      baseURL: modelConfig.apiUrl
-    })
+    const cacheKey = `${modelConfig.id}:${modelConfig.apiKey}:${modelConfig.apiUrl}`
+    if (!this.clientCache.has(cacheKey)) {
+      this.clientCache.set(
+        cacheKey,
+        new OpenAI({
+          apiKey: modelConfig.apiKey,
+          baseURL: modelConfig.apiUrl
+        })
+      )
+    }
+    return this.clientCache.get(cacheKey)!
   }
   /**
    * 将 Message[] 转为 OpenAI SDK 格式
@@ -523,6 +531,45 @@ class PluginAiAPI {
     if (abortController) {
       abortController.abort()
       this.abortControllers.delete(requestId)
+    }
+  }
+
+  public async formatTextForSuperPanel(
+    text: string
+  ): Promise<{ success: boolean; text?: string; error?: string }> {
+    const modelConfig = await this.getModelConfig()
+    if (!modelConfig) {
+      return { success: false, error: '未找到 AI 模型配置，请先在设置中添加模型' }
+    }
+
+    try {
+      const client = this.createClient(modelConfig)
+      const response = await client.chat.completions.create({
+        model: modelConfig.id,
+        messages: [
+          {
+            role: 'system',
+            content:
+              '你是一个文本格式整理助手。请对用户提供的文本做最小化的 Markdown 格式修正：修复错误换行、合并被截断的句子、去除多余空行、统一标点间距。如果原文已有列表或标题结构，用对应的 Markdown 语法（- 或 #）规范化；如果原文是连续段落，保持段落形式不变，不得主动拆分或增加结构。严格保留所有原始文字内容和原有结构，不得增删、改写、重组任何内容，不得添加原文中不存在的表情（包括 emoji）。只返回整理后的文本，不要添加任何说明或解释。'
+          },
+          {
+            role: 'user',
+            content: text
+          }
+        ]
+      })
+
+      const result = response.choices[0]?.message?.content
+      if (!result) {
+        return { success: false, error: 'AI 返回结果为空' }
+      }
+      return { success: true, text: result.trim() }
+    } catch (error: unknown) {
+      console.error('[AI] 超级面板格式整理失败:', error)
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : '未知错误'
+      }
     }
   }
 }

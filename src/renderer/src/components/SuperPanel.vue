@@ -160,30 +160,76 @@
       <!-- 搜索结果列表 -->
       <div class="search-list">
         <div
-          v-for="(result, index) in searchResults"
-          :key="`${result.name}|${result.path}-${result.featureCode || ''}`"
+          v-for="(item, index) in displayItems"
+          :key="
+            '__aiFormat' in item
+              ? '__ai_format__'
+              : `${(item as CommandItem).name}|${(item as CommandItem).path}-${(item as CommandItem).featureCode || ''}`
+          "
           class="list-item"
           :class="{ selected: index === selectedIndex }"
-          @click="launch(result)"
+          @click="'__aiFormat' in item ? requestAiFormat() : launch(item as CommandItem)"
           @mouseenter="selectedIndex = index"
         >
-          <img
-            v-if="result.icon && !iconErrors.has(getItemKey(result))"
-            :src="result.icon"
-            class="list-icon"
-            draggable="false"
-            @error="iconErrors.add(getItemKey(result))"
-          />
-          <div v-else class="list-icon-placeholder">
-            {{ result.name.charAt(0).toUpperCase() }}
-          </div>
-          <div class="list-info">
-            <span class="list-name">{{ result.name }}</span>
-            <span v-if="result.pluginExplain" class="list-desc">{{ result.pluginExplain }}</span>
-          </div>
+          <!-- AI 格式化项 -->
+          <template v-if="'__aiFormat' in item">
+            <div class="md-format-icon">
+              <svg
+                v-if="aiFormatLoading"
+                class="spin-icon"
+                width="13"
+                height="13"
+                viewBox="0 0 13 13"
+                fill="none"
+              >
+                <circle
+                  cx="6.5"
+                  cy="6.5"
+                  r="5"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-dasharray="14 7"
+                />
+              </svg>
+              <span v-else class="md-format-icon-text">MD</span>
+            </div>
+            <div class="list-info">
+              <span class="list-name">
+                <template v-if="aiFormatLoading">格式化中…</template>
+                <template v-else-if="aiFormatDone">✓ 已格式化，可直接粘贴</template>
+                <template v-else-if="aiFormatError">{{ aiFormatError }}</template>
+                <template v-else>格式化为 Markdown</template>
+              </span>
+              <span v-if="!aiFormatDone && !aiFormatError && !aiFormatLoading" class="list-desc"
+                >使用 AI 整理为规范 Markdown 格式</span
+              >
+            </div>
+          </template>
+          <!-- 普通搜索结果项 -->
+          <template v-else>
+            <img
+              v-if="(item as CommandItem).icon && !iconErrors.has(getItemKey(item as CommandItem))"
+              :src="(item as CommandItem).icon"
+              class="list-icon"
+              draggable="false"
+              @error="iconErrors.add(getItemKey(item as CommandItem))"
+            />
+            <div v-else class="list-icon-placeholder">
+              {{ (item as CommandItem).name.charAt(0).toUpperCase() }}
+            </div>
+            <div class="list-info">
+              <span class="list-name">{{ (item as CommandItem).name }}</span>
+              <span v-if="(item as CommandItem).pluginExplain" class="list-desc">{{
+                (item as CommandItem).pluginExplain
+              }}</span>
+            </div>
+          </template>
         </div>
         <!-- 空状态 -->
-        <div v-if="searchResults.length === 0" class="empty-state">
+        <div
+          v-if="searchResults.length === 0 && !currentClipboardContent?.text"
+          class="empty-state"
+        >
           <span class="empty-text">无匹配结果</span>
         </div>
       </div>
@@ -394,12 +440,31 @@ const mode = ref<'pinned' | 'search' | 'loading'>('loading')
 const pinnedCommands = ref<GridItem[]>([])
 const searchResults = ref<CommandItem[]>([])
 const selectedIndex = ref(0)
+
+type AiFormatItem = { __aiFormat: true }
+const AI_FORMAT_ITEM: AiFormatItem = { __aiFormat: true }
+const aiFormatFeatureEnabled = ref(false)
+const displayItems = computed<(CommandItem | AiFormatItem)[]>(() => {
+  if (
+    aiFormatFeatureEnabled.value &&
+    currentClipboardContent.value?.type === 'text' &&
+    currentClipboardContent.value.text
+  ) {
+    return [AI_FORMAT_ITEM, ...searchResults.value]
+  }
+  return searchResults.value
+})
 const iconErrors = ref<Set<string>>(new Set())
 // 保存当前的剪贴板内容（由搜索结果携带）
 const currentClipboardContent = ref<ClipboardContent | null>(null)
 // 翻译结果
 const translationText = ref('')
 const pendingTranslation = ref<{ text: string; sourceText?: string } | null>(null)
+// AI 整理状态
+const aiFormatLoading = ref(false)
+const aiFormatDone = ref(false)
+const aiFormatError = ref('')
+let aiFormatResetTimer: ReturnType<typeof setTimeout> | null = null
 // 头像（默认使用内置头像）
 const avatar = ref(defaultAvatar)
 const acrylicLightOpacity = ref(78)
@@ -782,9 +847,54 @@ function getItemKey(item: GridItem): string {
   return `${item.path}-${item.featureCode || ''}-${item.name}`
 }
 
+function resetAiFormatState(): void {
+  if (aiFormatResetTimer !== null) {
+    clearTimeout(aiFormatResetTimer)
+    aiFormatResetTimer = null
+  }
+  aiFormatLoading.value = false
+  aiFormatDone.value = false
+  aiFormatError.value = ''
+}
+
+function scheduleAiFormatReset(): void {
+  if (aiFormatResetTimer !== null) clearTimeout(aiFormatResetTimer)
+  aiFormatResetTimer = setTimeout(() => {
+    aiFormatDone.value = false
+    aiFormatError.value = ''
+    aiFormatResetTimer = null
+  }, 3000)
+}
+
+async function requestAiFormat(): Promise<void> {
+  const text = currentClipboardContent.value?.text
+  if (!text || aiFormatLoading.value || aiFormatDone.value) return
+
+  aiFormatLoading.value = true
+  aiFormatError.value = ''
+
+  try {
+    const result = await window.ztools.superPanelAiFormat(text)
+    if (result.success && result.text) {
+      await window.ztools.copyToClipboard(result.text)
+      aiFormatDone.value = true
+      if (currentClipboardContent.value) {
+        currentClipboardContent.value = { ...currentClipboardContent.value, text: result.text }
+      }
+    } else {
+      aiFormatError.value = result.error || 'AI 整理失败'
+    }
+  } catch (e: unknown) {
+    aiFormatError.value = e instanceof Error ? e.message : 'AI 整理失败'
+  } finally {
+    aiFormatLoading.value = false
+    scheduleAiFormatReset()
+  }
+}
+
 // 获取当前显示的列表
-function getCurrentList(): (GridItem | CommandItem)[] {
-  return mode.value === 'pinned' ? pinnedCommands.value : searchResults.value
+function getCurrentList(): (GridItem | CommandItem | AiFormatItem)[] {
+  return mode.value === 'pinned' ? pinnedCommands.value : displayItems.value
 }
 
 // 启动指令（携带剪贴板内容和窗口信息）
@@ -842,9 +952,9 @@ function handleKeydown(event: KeyboardEvent): void {
         event.preventDefault()
         {
           const item = list[selectedIndex.value]
-          if (item && isFolder(item)) {
+          if (item && !('__aiFormat' in item) && isFolder(item)) {
             openFolderPopup(item, selectedIndex.value)
-          } else if (item) {
+          } else if (item && !('__aiFormat' in item)) {
             launch(item as CommandItem)
           }
         }
@@ -876,7 +986,12 @@ function handleKeydown(event: KeyboardEvent): void {
       case 'Enter':
         event.preventDefault()
         if (list[selectedIndex.value]) {
-          launch(list[selectedIndex.value] as CommandItem)
+          const selected = list[selectedIndex.value]
+          if ('__aiFormat' in selected) {
+            requestAiFormat()
+          } else {
+            launch(selected as CommandItem)
+          }
         }
         break
       case 'Escape':
@@ -948,6 +1063,7 @@ onMounted(() => {
       selectedIndex.value = 0
       currentClipboardContent.value = null
       syncTranslationForClipboardContent(null)
+      resetAiFormatState()
       scrollToTop()
     } else if (data.type === 'search') {
       mode.value = 'search'
@@ -956,6 +1072,7 @@ onMounted(() => {
       // 保存搜索结果携带的剪贴板内容
       currentClipboardContent.value = data.clipboardContent || null
       syncTranslationForClipboardContent(currentClipboardContent.value)
+      resetAiFormatState()
       scrollToTop()
     }
   })
@@ -978,6 +1095,7 @@ onMounted(() => {
         avatar.value = settings.avatar
       }
       if (settings) {
+        aiFormatFeatureEnabled.value = settings.superPanelAiFormatEnabled ?? false
         acrylicLightOpacity.value = settings.acrylicLightOpacity ?? 78
         acrylicDarkOpacity.value = settings.acrylicDarkOpacity ?? 50
         if (settings.primaryColor) {
@@ -1162,6 +1280,7 @@ onUnmounted(() => {
   document.removeEventListener('focusout', handleFocusOut)
   cleanupContextMenuListener?.()
   cleanupContextMenuListener = null
+  if (aiFormatResetTimer !== null) clearTimeout(aiFormatResetTimer)
 })
 </script>
 
@@ -1375,6 +1494,39 @@ onUnmounted(() => {
   line-clamp: 3;
   overflow: hidden;
   word-break: break-all;
+}
+
+.md-format-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: 1.5px solid var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--text-secondary);
+}
+
+.md-format-icon-text {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+  line-height: 1;
+}
+
+.spin-icon {
+  animation: spin 1s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* ========== 列表模式 ========== */
