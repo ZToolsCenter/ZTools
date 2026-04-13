@@ -9,7 +9,6 @@ import lmdbInstance from './lmdb/lmdbInstance'
 import devToolsShortcut, { getDevToolsMode } from '../utils/devToolsShortcut'
 import { WINDOW_WIDTH } from '../common/constants'
 import { registerExternalLinkInterceptor } from '../managers/pluginManager'
-import pluginWindowManager from './pluginWindowManager'
 import { getDetachedWindowSizeKey } from '../../shared/pluginRuntimeNamespace'
 
 const __filename = fileURLToPath(import.meta.url)
@@ -279,8 +278,6 @@ class DetachedWindowManager {
           clearTimeout(timer)
           this.resizeSaveTimers.delete(windowId)
         }
-        // 关闭该插件通过 createBrowserWindow 创建的所有独立窗口
-        pluginWindowManager.closeByPlugin(pluginPath)
         // 销毁插件视图的 webContents
         if (!pluginView.webContents.isDestroyed()) {
           pluginView.webContents.close()
@@ -645,7 +642,12 @@ class DetachedWindowManager {
     for (const [windowId, info] of this.detachedWindowMap.entries()) {
       try {
         if (!info.window.isDestroyed()) {
+          // 向标题栏页面发送
           info.window.webContents.send(channel, ...args)
+        }
+        if (!info.view.webContents.isDestroyed()) {
+          // 向插件内容页面发送
+          info.view.webContents.send(channel, ...args)
         }
       } catch (error) {
         console.error(`[DetachedWindow] 广播消息到分离窗口 ${windowId} 失败:`, error)

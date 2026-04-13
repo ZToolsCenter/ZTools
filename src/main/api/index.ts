@@ -109,6 +109,10 @@ class APIManager {
     pluginAiAPI.init(mainWindow, pluginManager)
     pluginLifecycleAPI.init(mainWindow, pluginManager)
     pluginUIAPI.init(mainWindow, pluginManager)
+    // 注入主题信息变更钩子：当主题色/材质变更时通知所有插件视图
+    windowManager.setOnThemeInfoChanged(() => {
+      pluginUIAPI.broadcastThemeInfoToAllPlugins()
+    })
     pluginClipboardAPI.init()
     pluginDeviceAPI.init()
     pluginDialogAPI.init(mainWindow)

@@ -2,6 +2,10 @@ import { ipcMain, nativeTheme, Notification } from 'electron'
 import type { PluginManager } from '../../managers/pluginManager'
 import { fileURLToPath } from 'url'
 import detachedWindowManager from '../../core/detachedWindowManager'
+import databaseAPI from '../shared/database'
+import windowManager from '../../managers/windowManager'
+import pluginWindowManager from '../../core/pluginWindowManager'
+import { registerPluginApiServices } from './pluginApiDispatcher'
 
 /**
  * 插件UI控制API - 插件专用
@@ -14,9 +18,17 @@ export class PluginUIAPI {
     this.mainWindow = mainWindow
     this.pluginManager = pluginManager
     this.setupIPC()
+    this.setupThemeChangeListeners()
   }
 
   private setupIPC(): void {
+    // 注册 getThemeInfo 到统一分发器（同步 API）
+    registerPluginApiServices({
+      getThemeInfo: (event: Electron.IpcMainEvent) => {
+        event.returnValue = this.buildThemeInfo()
+      }
+    })
+
     // 显示系统通知
     ipcMain.handle('show-notification', (event, body: string) => this.showNotification(event, body))
 
@@ -306,6 +318,62 @@ export class PluginUIAPI {
     if (this.pluginManager) {
       this.pluginManager.hidePluginView()
     }
+  }
+
+  /**
+   * 构建当前主题信息
+   */
+  private buildThemeInfo(): {
+    isDark: boolean
+    primaryColor: string
+    customColor?: string
+    windowMaterial: string
+  } {
+    const settings = databaseAPI.dbGet('settings-general')
+    return {
+      isDark: nativeTheme.shouldUseDarkColors,
+      primaryColor: settings?.primaryColor || 'blue',
+      customColor: settings?.customColor,
+      windowMaterial: windowManager.getWindowMaterial()
+    }
+  }
+
+  /**
+   * 向所有插件视图广播消息
+   */
+  private broadcastToAllPluginViews(channel: string, data: any): void {
+    // 主窗口中的插件视图
+    const views = this.pluginManager?.getAllPluginViews() || []
+    for (const { view } of views) {
+      try {
+        if (!view.webContents.isDestroyed()) {
+          view.webContents.send(channel, data)
+        }
+      } catch {
+        // webContents 可能在遍历期间被销毁
+      }
+    }
+    // 分离窗口中的插件
+    detachedWindowManager.broadcastToAllWindows(channel, data)
+    // 插件创建的独立窗口
+    pluginWindowManager.broadcastToAll(channel, data)
+  }
+
+  /**
+   * 广播主题信息到所有插件视图
+   */
+  public broadcastThemeInfoToAllPlugins(): void {
+    const themeInfo = this.buildThemeInfo()
+    this.broadcastToAllPluginViews('update-theme-info', themeInfo)
+  }
+
+  /**
+   * 监听主题变更（系统深浅色切换）
+   */
+  private setupThemeChangeListeners(): void {
+    nativeTheme.on('updated', () => {
+      this.broadcastThemeInfoToAllPlugins()
+    })
   }
 }
 

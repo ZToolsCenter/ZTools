@@ -62,10 +62,6 @@ export class SettingsAPI {
     try {
       const data = databaseAPI.dbGet('settings-general')
       console.log('[Settings] 加载到的设置:', data)
-      // 应用托盘图标显示设置（默认显示，在 if(data) 块外确保首次启动也能创建托盘）
-      windowManager.setTrayIconVisible(data?.showTrayIcon ?? true)
-      console.log('[Settings] 启动时应用托盘图标显示设置:', data?.showTrayIcon ?? true)
-
       if (data) {
         // 应用透明度设置
         if (data.opacity !== undefined && this.mainWindow) {
@@ -78,6 +74,9 @@ export class SettingsAPI {
           const success = updateShortcut(data.hotkey)
           console.log('[Settings] 启动时应用快捷键设置:', data.hotkey, success ? '成功' : '失败')
         }
+        // 应用托盘图标显示设置（默认显示）
+        windowManager.setTrayIconVisible(data.showTrayIcon ?? true)
+        console.log('[Settings] 启动时应用托盘图标显示设置:', data.showTrayIcon ?? true)
         // 应用主题设置
         if (data.theme) {
           this.setTheme(data.theme)

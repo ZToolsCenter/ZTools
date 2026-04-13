@@ -82,6 +82,7 @@ class WindowManager {
   private blurHideTimer: ReturnType<typeof setTimeout> | null = null // Linux blur 延迟隐藏定时器
   private appShortcuts: Map<string, string> = new Map() // 应用快捷键映射表 (快捷键 -> 目标指令)
   private wakeupBlacklist: Array<{ app: string; bundleId?: string; label?: string }> = [] // 唤醒黑名单
+  private onThemeInfoChanged: (() => void) | null = null // 主题信息变更回调钩子
   // 应用快捷键触发时携带的当前输入上下文
   private appShortcutLaunchContext: AppShortcutLaunchContext = {
     searchQuery: '',
@@ -903,6 +904,9 @@ class WindowManager {
 
     // 发送给超级面板窗口
     superPanelManager.updateWindowMaterial(material)
+
+    // 通知插件主题信息变更
+    this.notifyThemeInfoChanged()
   }
 
   /**
@@ -915,6 +919,9 @@ class WindowManager {
 
     // 发送给所有分离窗口
     detachedWindowManager.broadcastToAllWindows('update-primary-color', data)
+
+    // 通知插件主题信息变更
+    this.notifyThemeInfoChanged()
   }
 
   /**
@@ -991,6 +998,20 @@ class WindowManager {
       console.error('[Window] 获取窗口材质失败:', error)
       return getDefaultWindowMaterial()
     }
+  }
+
+  /**
+   * 设置主题信息变更回调钩子
+   */
+  public setOnThemeInfoChanged(callback: (() => void) | null): void {
+    this.onThemeInfoChanged = callback
+  }
+
+  /**
+   * 通知插件主题信息变更（供外部调用）
+   */
+  public notifyThemeInfoChanged(): void {
+    this.onThemeInfoChanged?.()
   }
 
   /**

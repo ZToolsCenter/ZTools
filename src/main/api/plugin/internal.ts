@@ -811,6 +811,9 @@ export class InternalPluginAPI {
         // 广播到所有分离窗口
         detachedWindowManager.broadcastToAllWindows('update-primary-color', data)
 
+        // 通知插件主题信息变更
+        windowManager.notifyThemeInfoChanged()
+
         return { success: true }
       }
     )

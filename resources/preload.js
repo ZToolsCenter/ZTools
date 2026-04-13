@@ -65,6 +65,7 @@ let pluginDetachCallback = null
 let mainPushCallback = null // { callback, selectCallback }
 let hotkeyRecordedCallback = null
 let windowMaterialChangeCallback = null
+let themeChangeCallback = null
 let logEntriesCallback = null
 let foundInPageCallback = null
 // 插件侧注册的 MCP 工具处理器，实际执行时由主进程回调到这里。
@@ -178,6 +179,11 @@ const lazyHotkeyRecorded = lazyListen('hotkey-recorded', (_e, shortcut) => {
 // 窗口材质更新事件（由 internal.onUpdateWindowMaterial 触发注册）
 const lazyWindowMaterial = lazyListen('update-window-material', (_e, material) => {
   if (windowMaterialChangeCallback) windowMaterialChangeCallback(material)
+})
+
+// 主题信息更新事件（由 onThemeChange 触发注册）
+const lazyThemeChange = lazyListen('update-theme-info', (_e, themeInfo) => {
+  if (themeChangeCallback) themeChangeCallback(themeInfo)
 })
 
 // 调试日志推送事件（由 internal.onLogEntries 触发注册）
@@ -305,6 +311,17 @@ window.ztools = {
   getWindowType: () => electron.ipcRenderer.sendSync('get-window-type'),
   // 是否深色主题
   isDarkColors: () => electron.ipcRenderer.sendSync('is-dark-colors'),
+  // 获取当前主题信息（isDark, primaryColor, customColor, windowMaterial）
+  getThemeInfo: () => ipcSendSync('getThemeInfo'),
+  // 监听主题变更
+  onThemeChange: (callback) => {
+    if (typeof callback === 'function') {
+      themeChangeCallback = callback
+      lazyThemeChange.attach()
+    } else {
+      themeChangeCallback = null
+    }
+  },
   sendInputEvent: async (event) => await electron.ipcRenderer.invoke('send-input-event', event),
   // 在当前页面中查找文本
   findInPage: (text, options) => electron.ipcRenderer.invoke('find-in-page', text, options),
