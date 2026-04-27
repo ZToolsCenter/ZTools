@@ -507,7 +507,7 @@ export class AppsAPI {
         }
 
         // 添加到历史记录
-        this.addToHistory({ path: appPath, type: 'app', name, cmdType: 'text' })
+        this.addToHistory({ path: appPath, type: type || 'app', name, cmdType: 'text' })
 
         // 隐藏当前插件视图（如果有）
         this.pluginManager?.hidePluginView()
@@ -566,7 +566,7 @@ export class AppsAPI {
       console.log(`[Commands] 以管理员身份启动: ${appPath}`)
 
       // 添加到历史记录
-      this.addToHistory({ path: appPath, type: 'app', name, cmdType: 'text' })
+      this.addToHistory({ path: appPath, type: 'direct', name, cmdType: 'text' })
 
       // 隐藏当前插件视图（如果有）
       this.pluginManager?.hidePluginView()
@@ -584,7 +584,7 @@ export class AppsAPI {
    */
   private async addToHistory(options: {
     path: string
-    type?: 'app' | 'plugin' | 'builtin' | 'file'
+    type?: 'app' | 'direct' | 'plugin' | 'builtin' | 'file'
     featureCode?: string
     param?: any
     name?: string // cmd 名称（用于历史记录显示）
@@ -666,11 +666,14 @@ export class AppsAPI {
         if (app) {
           appInfo = {
             name: cmdName || app.name, // 优先使用传入的 cmd 名称
+            originalName: app.name,
             path: app.path,
             icon: app.icon,
             pinyin: app.pinyin,
             pinyinAbbr: app.pinyinAbbr,
-            type: 'app'
+            type: 'direct',
+            subType: 'app',
+            cmdType: cmdType || 'text'
           }
         } else {
           // 如果不是普通应用，尝试从系统设置中查找
@@ -716,10 +719,12 @@ export class AppsAPI {
       const history: any[] = databaseAPI.dbGet('command-history') || []
 
       // 查找是否已存在（非插件类型需要同时匹配 name 和 path，支持同路径不同名应用）
+      const historyMatchType =
+        appInfo.type === 'direct' && appInfo.subType === 'app' ? 'app' : appInfo.type
       const existingIndex = findCommandIndex(
         history,
         appPath,
-        type,
+        historyMatchType,
         featureCode,
         appInfo.pluginName || appInfo.name
       )
@@ -732,8 +737,12 @@ export class AppsAPI {
         history[existingIndex].path = appInfo.path
         history[existingIndex].name = appInfo.name
         history[existingIndex].icon = appInfo.icon
+        history[existingIndex].type = appInfo.type
+        history[existingIndex].subType = appInfo.subType
+        history[existingIndex].cmdType = appInfo.cmdType
         history[existingIndex].pluginName = appInfo.pluginName
         history[existingIndex].pluginExplain = appInfo.pluginExplain
+        history[existingIndex].originalName = appInfo.originalName
       } else {
         // 新记录
         history.push({
@@ -899,8 +908,13 @@ export class AppsAPI {
     try {
       const pinnedApps: any[] = databaseAPI.dbGet('pinned-commands') || []
 
+      const isDirectApp = app.type === 'direct' && app.subType === 'app'
+      const persistedName = isDirectApp ? app.persistedName || app.name : undefined
+      const matchName =
+        app.type === 'plugin' ? app.pluginName || app.name : persistedName || app.name
+
       // 检查是否已固定（非插件类型需要同时匹配 name 和 path，支持同路径不同名应用）
-      const exists = hasCommand(pinnedApps, app.path, app.featureCode, app.pluginName || app.name)
+      const exists = hasCommand(pinnedApps, app.path, app.featureCode, matchName)
 
       if (exists) {
         console.log('[Commands] 应用已固定:', app.path)
@@ -909,15 +923,19 @@ export class AppsAPI {
 
       // 添加到固定列表
       pinnedApps.push({
-        name: app.name,
+        name: persistedName || app.name,
         path: app.path,
         icon: app.icon,
         type: app.type,
+        subType: app.subType,
         featureCode: app.featureCode,
         pluginExplain: app.pluginExplain,
         pinyin: app.pinyin,
         pinyinAbbr: app.pinyinAbbr,
-        pluginName: app.pluginName
+        pluginName: app.pluginName,
+        cmdType: app.cmdType,
+        originalName: app.originalName,
+        persistedName: app.persistedName
       })
 
       databaseAPI.dbPut('pinned-commands', pinnedApps)
@@ -955,17 +973,24 @@ export class AppsAPI {
   private updatePinnedOrder(newOrder: any[]): void {
     try {
       // 清理数据，只保存必要字段
-      const cleanData = newOrder.map((app) => ({
-        name: app.name,
-        path: app.path,
-        icon: app.icon,
-        type: app.type,
-        featureCode: app.featureCode,
-        pluginExplain: app.pluginExplain,
-        pinyin: app.pinyin,
-        pinyinAbbr: app.pinyinAbbr,
-        pluginName: app.pluginName
-      }))
+      const cleanData = newOrder.map((app) => {
+        const isDirectApp = app.type === 'direct' && app.subType === 'app'
+        return {
+          name: isDirectApp ? app.persistedName || app.name : app.name,
+          path: app.path,
+          icon: app.icon,
+          type: app.type,
+          subType: app.subType,
+          featureCode: app.featureCode,
+          pluginExplain: app.pluginExplain,
+          pinyin: app.pinyin,
+          pinyinAbbr: app.pinyinAbbr,
+          pluginName: app.pluginName,
+          cmdType: app.cmdType,
+          originalName: app.originalName,
+          persistedName: app.persistedName
+        }
+      })
 
       databaseAPI.dbPut('pinned-commands', cleanData)
       console.log('[Commands] 固定列表顺序已更新')

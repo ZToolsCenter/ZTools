@@ -25,7 +25,7 @@ declare global {
       isWindows: () => Promise<boolean>
       launch: (options: {
         path: string
-        type?: 'direct' | 'plugin' | 'file'
+        type?: 'direct' | 'plugin' | 'builtin' | 'file'
         featureCode?: string
         param?: any
         name?: string
@@ -157,6 +157,8 @@ declare global {
             width?: number
             height?: number
             appPath?: string
+            className?: string
+            hwnd?: number
           } | null
         ) => void
       ) => void
@@ -187,7 +189,7 @@ declare global {
       onIpcLaunch: (
         callback: (options: {
           path: string
-          type?: 'app' | 'plugin'
+          type?: 'app' | 'direct' | 'plugin' | 'builtin' | 'file'
           featureCode?: string
           param?: any
           name?: string
@@ -247,7 +249,20 @@ declare global {
       // 窗口相关
       windowPaste: () => Promise<{ success: boolean; error?: string }>
       onWindowInfoChanged: (
-        callback: (windowInfo: { appName: string; bundleId: string; timestamp: number }) => void
+        callback: (windowInfo: {
+          app: string
+          bundleId?: string
+          pid?: number
+          title?: string
+          x?: number
+          y?: number
+          width?: number
+          height?: number
+          appPath?: string
+          timestamp?: number
+          className?: string
+          hwnd?: number
+        }) => void
       ) => void
       getLastCopiedContent: (timeLimit?: number) => Promise<{
         type: 'text' | 'image' | 'file'

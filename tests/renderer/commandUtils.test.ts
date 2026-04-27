@@ -8,7 +8,7 @@ import {
 // ========== getCommandId ==========
 
 describe('getCommandId', () => {
-  it('应生成完整格式的 ID', () => {
+  it('应生成完整格式的插件 ID', () => {
     const cmd = {
       name: '翻译',
       path: '/plugins/translate',
@@ -19,12 +19,17 @@ describe('getCommandId', () => {
     expect(getCommandId(cmd)).toBe('translate-plugin:translate:翻译:regex')
   })
 
-  it('缺省字段应使用空字符串和默认 cmdType', () => {
-    const cmd = { name: 'App', path: 'C:\\app.exe' }
-    expect(getCommandId(cmd)).toBe('::App:text')
+  it('direct/app 应使用基于 path 的稳定 ID', () => {
+    const cmd = {
+      name: 'App',
+      path: 'C:\\app.exe',
+      type: 'direct' as const,
+      subType: 'app' as const
+    }
+    expect(getCommandId(cmd)).toBe('direct:app:C:/app.exe')
   })
 
-  it('cmdType 为 undefined 时应默认为 text', () => {
+  it('cmdType 为 undefined 时插件应默认为 text', () => {
     const cmd = {
       name: '功能',
       path: '/plugin',
@@ -61,6 +66,40 @@ describe('getCommandId', () => {
 
     expect(installed).not.toBe(development)
   })
+
+  it('应将 Windows 反斜杠路径规范化为稳定 ID', () => {
+    const winPath = getCommandId({
+      name: '记事本',
+      path: 'C:\\Windows\\System32\\notepad.exe',
+      type: 'direct' as const,
+      subType: 'app' as const
+    })
+    const normalizedPath = getCommandId({
+      name: '记事本',
+      path: 'C:/Windows/System32/notepad.exe',
+      type: 'direct' as const,
+      subType: 'app' as const
+    })
+
+    expect(winPath).toBe(normalizedPath)
+  })
+
+  it('应区分同名但不同路径的系统应用', () => {
+    const first = getCommandId({
+      name: '微信',
+      path: 'C:\\Program Files\\Tencent\\WeChat.exe',
+      type: 'direct' as const,
+      subType: 'app' as const
+    })
+    const second = getCommandId({
+      name: '微信',
+      path: 'D:\\Portable\\WeChat.exe',
+      type: 'direct' as const,
+      subType: 'app' as const
+    })
+
+    expect(first).not.toBe(second)
+  })
 })
 
 // ========== applySpecialConfig ==========
@@ -83,14 +122,14 @@ describe('applySpecialConfig', () => {
     expect(result.name).toBe('上次匹配')
     expect(result.icon).toBe('arrow-icon')
     expect(result.type).toBe('builtin')
-    expect(result.path).toBe('special:last-match') // path 不变
+    expect(result.path).toBe('special:last-match')
   })
 
   it('应通过 subType 匹配并合并配置', () => {
     const cmd = { name: '蓝牙设置', path: 'ms-settings:bluetooth', subType: 'system-setting' }
     const result = applySpecialConfig(cmd, specialCommands as any)
     expect(result.icon).toBe('settings-icon')
-    expect(result.name).toBe('蓝牙设置') // name 不变
+    expect(result.name).toBe('蓝牙设置')
   })
 
   it('path 匹配应优先于 subType 匹配', () => {
@@ -100,7 +139,6 @@ describe('applySpecialConfig', () => {
       subType: 'system-setting'
     }
     const result = applySpecialConfig(cmd, specialCommands as any)
-    // 应使用 path 匹配的结果，不是 subType
     expect(result.name).toBe('上次匹配')
     expect(result.icon).toBe('arrow-icon')
   })
@@ -164,7 +202,6 @@ describe('calculateMatchScore', () => {
   it('匹配长度占比越高分数越高', () => {
     const scoreShort = calculateMatchScore('a very long application name', 'a', makeMatch([[0, 0]]))
     const scoreLong = calculateMatchScore('chrome', 'chrom', makeMatch([[0, 4]]))
-    // chrom/chrome = 83% 比 a/a very long... = ~3.5% 匹配比例高
     expect(scoreLong).toBeGreaterThan(scoreShort)
   })
 })

@@ -148,7 +148,7 @@ export class InternalPluginAPI {
         aliasCount: inputAliasCount
       })
 
-      // alias 保存链路：归一化 -> 持久化 -> 失效 commands cache -> 通知主窗口刷新搜索索引。
+      // alias 保存链路：归一化 -> 持久化 -> 通知主窗口按当前缓存重建 alias 搜索索引。
       const normalizedAliases = normalizeCommandAliases(aliases)
       const normalizedCommandCount = Object.keys(normalizedAliases).length
       const normalizedAliasEntries = Object.values(normalizedAliases).flat()
@@ -170,10 +170,8 @@ export class InternalPluginAPI {
           commandCount: normalizedCommandCount,
           aliasCount: normalizedAliasEntries.length
         })
-        commandsAPI.invalidateCommandsCache(false)
-        // 只通知渲染进程刷新别名搜索索引，不触发系统应用扫描
         this.mainWindow?.webContents.send('command-aliases-changed')
-        console.log('[Internal] 指令缓存已失效并通知主窗口刷新 alias 搜索索引')
+        console.log('[Internal] 已通知主窗口按当前缓存刷新 alias 搜索索引')
 
         return { success: true }
       } catch (error) {

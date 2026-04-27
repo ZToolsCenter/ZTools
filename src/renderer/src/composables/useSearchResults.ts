@@ -55,8 +55,14 @@ export function useSearchResults(props: {
 } {
   const commandDataStore = useCommandDataStore()
   const windowStore = useWindowStore()
-  const { search, searchInCommands, searchImageCommands, searchTextCommands, searchFileCommands } =
-    commandDataStore
+  const {
+    search,
+    searchInCommands,
+    searchImageCommands,
+    searchTextCommands,
+    searchFileCommands,
+    matchesWindowCommand
+  } = commandDataStore
 
   // 使用统计缓存（key: "path:featureCode", value: useCount）
   const usageStatsMap = ref<Map<string, number>>(new Map())
@@ -84,6 +90,15 @@ export function useSearchResults(props: {
     },
     { immediate: true }
   )
+
+  function filterUnavailableWindowCommands<
+    T extends { cmdType?: string; matchCmd?: { type?: string } }
+  >(results: T[]): T[] {
+    return results.filter((cmd) => {
+      const cmdType = cmd.cmdType || cmd.matchCmd?.type
+      return cmdType !== 'window' || matchesWindowCommand(cmd as any, windowStore.currentWindow)
+    })
+  }
 
   // 统一的搜索结果（只执行一次搜索）
   const unifiedSearchResult = computed(() => {
@@ -134,7 +149,7 @@ export function useSearchResults(props: {
       return []
     }
 
-    return unifiedSearchResult.value.bestMatches
+    return filterUnavailableWindowCommands(unifiedSearchResult.value.bestMatches)
   })
 
   // 最佳匹配（匹配指令：regex/img/files 类型）

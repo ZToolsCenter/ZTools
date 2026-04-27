@@ -271,7 +271,7 @@ declare global {
         }>
 
         // 指令管理
-        // 返回设置页使用的原始指令快照，用于构建 alias 目标列表
+        // 返回设置页使用的原始指令快照，用于构建 alias 目标列表（commands 文本指令 + regexCommands 中可直接触发的 window 指令）
         getCommands: () => Promise<{
           commands: any[]
           regexCommands: any[]
@@ -410,6 +410,8 @@ declare global {
           pid?: number
           title?: string
           appPath?: string
+          className?: string
+          hwnd?: number
         } | null>
 
         // 唤醒黑名单

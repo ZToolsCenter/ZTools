@@ -184,7 +184,9 @@ class DetachedWindowManager {
           }
         }
       }
+
       const win = new BrowserWindow(windowConfig)
+
       // Windows 11 应用窗口材质（与主窗口保持一致）
       if (isWindows) {
         this.applyWindowMaterial(win)

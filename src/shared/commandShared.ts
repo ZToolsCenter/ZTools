@@ -6,6 +6,9 @@ export interface CommandIdLike {
   pluginName?: string
   featureCode?: string
   cmdType?: string
+  type?: string
+  subType?: string
+  path?: string
 }
 
 /**
@@ -28,15 +31,38 @@ export type CommandAliasStore = Record<string, CommandAliasEntry[]>
  * 设置插件和主窗口渲染进程都会通过该 key 读取同一份映射
  */
 export const COMMAND_ALIASES_KEY = 'command-aliases'
+export const DIRECT_APP_ALIAS_GROUP_KEY = '__direct_app__'
+export const DIRECT_APP_ALIAS_GROUP_TITLE = '系统应用'
+
+function normalizeDirectAppPath(path?: string): string {
+  return (path || '').replace(/\\/g, '/')
+}
 
 /**
  * 生成指令唯一标识
- * 格式: pluginName:featureCode:name:cmdType
- * cmdType 默认回退为 text，保证功能指令、别名映射和设置页目标选择使用同一主键规则
+ * - 插件指令保持现有规则：pluginName:featureCode:name:cmdType
+ * - direct/app 改为基于 path 的稳定 ID，避免同名应用冲突
+ * - 其它类型继续沿用旧规则
  */
 export function getCommandId(cmd: CommandIdLike): string {
   const cmdType = cmd.cmdType || 'text'
+
+  if (cmd.type === 'direct' && cmd.subType === 'app') {
+    const normalizedPath = normalizeDirectAppPath(cmd.path)
+    if (normalizedPath) {
+      return `direct:app:${normalizedPath}`
+    }
+  }
+
   return `${cmd.pluginName || ''}:${cmd.featureCode || ''}:${cmd.name}:${cmdType}`
+}
+
+/**
+ * direct/app 兼容旧版 name-based 禁用键。
+ * 旧版本按应用名称持久化禁用状态，因此 alias 生效后仍需回退到原名命中旧记录。
+ */
+export function getLegacyDirectAppCommandId(name: string, cmdType = 'text'): string {
+  return getCommandId({ name, cmdType })
 }
 
 /**

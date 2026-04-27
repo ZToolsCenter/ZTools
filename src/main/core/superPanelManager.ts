@@ -14,7 +14,7 @@ import translationManager from './translationManager.js'
 const SUPER_PANEL_WIDTH = 250
 const SUPER_PANEL_HEIGHT = 400
 
-// 模拟复制后等待剪贴板监听更新的时间窗口
+// 模拟复制后等待剪贴板更新的时间窗口
 const CLIPBOARD_WAIT_MS = 180
 
 // 剪贴板内容类型
@@ -185,6 +185,8 @@ class SuperPanelManager {
     width?: number
     height?: number
     appPath?: string
+    className?: string
+    hwnd?: number
   } | null = null
 
   /**

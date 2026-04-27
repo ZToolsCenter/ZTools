@@ -12,6 +12,8 @@ interface WindowInfo {
   y?: number
   width?: number
   height?: number
+  className?: string
+  hwnd?: number
   timestamp?: number
 }
 

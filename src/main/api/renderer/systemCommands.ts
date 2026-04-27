@@ -8,10 +8,61 @@ import windowManager from '../../managers/windowManager'
 import webSearchAPI from './webSearch'
 import databaseAPI from '../shared/database'
 import { ColorPicker } from '../../core/native/index.js'
+import { getExplorerFolderPathFromWindow } from '../../utils/common'
 
 interface SystemCommandContext {
   mainWindow: Electron.BrowserWindow | null
   pluginManager: PluginManager | null
+}
+
+function openWindowsCmd(folderPath: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let settled = false
+    let timeout: ReturnType<typeof setTimeout> | null = null
+
+    const settle = (error?: unknown): void => {
+      if (settled) return
+      settled = true
+      if (timeout) {
+        clearTimeout(timeout)
+        timeout = null
+      }
+
+      if (error) {
+        reject(error)
+        return
+      }
+      resolve()
+    }
+
+    const child = spawn('cmd.exe', ['/c', 'start', '', 'cmd.exe'], {
+      cwd: folderPath,
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true
+    })
+
+    timeout = setTimeout(() => settle(new Error('启动终端超时')), 3000)
+    child.once('error', settle)
+    child.once('exit', (code) => {
+      if (code && code !== 0) {
+        settle(new Error(`cmd.exe 启动终端失败，退出码: ${code}`))
+        return
+      }
+      settle()
+    })
+    child.once('close', (code) => {
+      if (code && code !== 0) {
+        settle(new Error(`cmd.exe 启动终端失败，退出码: ${code}`))
+        return
+      }
+      settle()
+    })
+    child.once('spawn', () => {
+      child.unref()
+      settle()
+    })
+  })
 }
 
 /**
@@ -107,10 +158,10 @@ export async function executeSystemCommand(
       return handleWindowInfo(ctx)
 
     case 'copy-path':
-      return handleCopyPath(ctx, execAsync)
+      return handleCopyPath(ctx, execAsync, param)
 
     case 'open-terminal':
-      return handleOpenTerminal(ctx, execAsync)
+      return handleOpenTerminal(ctx, execAsync, param)
 
     case 'color-picker':
       return handleColorPicker(ctx)
@@ -378,13 +429,30 @@ function handleWindowInfo(ctx: SystemCommandContext): any {
 
 async function handleCopyPath(
   ctx: SystemCommandContext,
-  execAsync: (cmd: string) => Promise<{ stdout: string; stderr: string }>
+  execAsync: (cmd: string) => Promise<{ stdout: string; stderr: string }>,
+  param?: any
 ): Promise<any> {
   console.log('[SystemCmd] 执行复制路径')
-  const previousWindow = windowManager.getPreviousActiveWindow()
+  const windowInfo =
+    (param?.type === 'window' && param?.payload) || windowManager.getPreviousActiveWindow()
 
-  if (!previousWindow) {
+  if (!windowInfo) {
     return { success: false, error: '无法获取当前窗口信息' }
+  }
+
+  if (process.platform === 'win32') {
+    const folderPath =
+      windowInfo.app === 'explorer.exe'
+        ? getExplorerFolderPathFromWindow(windowInfo, 'SystemCmd')
+        : null
+    if (!folderPath) {
+      return { success: false, error: '未读取到当前 "文件资源管理器" 窗口目录' }
+    }
+
+    clipboard.writeText(folderPath)
+    console.log('[SystemCmd] 已复制路径:', folderPath)
+    ctx.mainWindow?.hide()
+    return { success: true, path: folderPath }
   }
 
   if (process.platform === 'darwin') {
@@ -414,13 +482,36 @@ async function handleCopyPath(
 
 async function handleOpenTerminal(
   ctx: SystemCommandContext,
-  execAsync: (cmd: string) => Promise<{ stdout: string; stderr: string }>
+  execAsync: (cmd: string) => Promise<{ stdout: string; stderr: string }>,
+  param?: any
 ): Promise<any> {
   console.log('[SystemCmd] 执行在终端打开')
-  const previousWindow = windowManager.getPreviousActiveWindow()
+  const windowInfo =
+    (param?.type === 'window' && param?.payload) || windowManager.getPreviousActiveWindow()
 
-  if (!previousWindow) {
+  if (!windowInfo) {
     return { success: false, error: '无法获取当前窗口信息' }
+  }
+
+  if (process.platform === 'win32') {
+    try {
+      const folderPath =
+        windowInfo.app === 'explorer.exe'
+          ? getExplorerFolderPathFromWindow(windowInfo, 'SystemCmd')
+          : null
+      if (!folderPath) {
+        return { success: false, error: '未读取到当前 "文件资源管理器" 窗口目录' }
+      }
+
+      await openWindowsCmd(folderPath)
+      console.log('[SystemCmd] 已在终端打开:', folderPath)
+      ctx.mainWindow?.webContents.send('app-launched')
+      ctx.mainWindow?.hide()
+      return { success: true, path: folderPath }
+    } catch (error) {
+      console.error('[SystemCmd] 在终端打开失败:', error)
+      return { success: false, error: String(error) }
+    }
   }
 
   if (process.platform === 'darwin') {

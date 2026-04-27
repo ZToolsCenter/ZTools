@@ -9,11 +9,17 @@ export type ShortcutsSettingTab = 'global' | 'app' | 'alias'
  */
 export interface ShortcutsSettingAliasDraftTarget extends HistoryState {
   commandId: string
+  type: 'plugin' | 'direct'
+  subType?: 'app' | 'system-setting' | 'local-shortcut'
+  path?: string
+  groupKey: string
+  groupTitle: string
+  featureCode: string
+  subtitle: string
   pluginName: string
   pluginTitle: string
-  featureCode: string
   cmdName: string
-  cmdType: 'text'
+  cmdType: 'text' | 'window'
   icon?: string
 }
 

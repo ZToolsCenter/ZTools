@@ -9,12 +9,17 @@ import {
   jumpFunctionShortcutsSetting,
   type ShortcutsSettingAliasDraftTarget
 } from '@/views/ShortcutsSetting/ShortcutsSetting'
-import { getCommandId as _getCommandId } from '@shared/commandShared'
+import {
+  DIRECT_APP_ALIAS_GROUP_KEY,
+  DIRECT_APP_ALIAS_GROUP_TITLE,
+  getCommandId as _getCommandId,
+  getLegacyDirectAppCommandId
+} from '@shared/commandShared'
 
 // 定义 Command 类型（从 commandDataStore 复制）
 export type CommandType = 'direct' | 'plugin' | 'builtin'
 export type CommandSubType = 'app' | 'system-setting' | 'local-shortcut'
-export type CommandCmdType = 'text' | 'regex' | 'over'
+export type CommandCmdType = 'text' | 'regex' | 'over' | 'img' | 'files' | 'window'
 
 export interface Command {
   name: string
@@ -63,14 +68,30 @@ const searchPinned = ref<any[]>([])
 const SEARCH_PINNED_KEY = 'pinned-commands'
 
 // 生成指令唯一标识
-// 格式: pluginName:featureCode:cmdName:cmdType
 function getCommandId(
+  command: Pick<Command, 'name' | 'path' | 'type' | 'subType' | 'featureCode' | 'cmdType'> & {
+    pluginName?: string
+  }
+): string {
+  return _getCommandId({
+    type: command.type,
+    subType: command.subType,
+    path: command.path,
+    pluginName: command.pluginName,
+    featureCode: command.featureCode,
+    name: command.name,
+    cmdType: command.cmdType
+  })
+}
+
+function getPluginCommandId(
   pluginName: string,
   featureCode: string,
   cmdName: string,
   cmdType: string
 ): string {
-  return _getCommandId({
+  return getCommandId({
+    type: 'plugin',
     pluginName,
     featureCode,
     name: cmdName,
@@ -78,79 +99,120 @@ function getCommandId(
   })
 }
 
-function buildAliasDraftTarget(
+function buildPluginAliasDraftTarget(
   pluginName: string,
   featureCode: string,
-  cmdName: string
+  cmdName: string,
+  cmdType: 'text' | 'window'
 ): ShortcutsSettingAliasDraftTarget {
   const pluginTitle = selectedSource.value?.title || pluginName
-  const commandIcon = commands.value.find(
+  const sourceCommands = cmdType === 'window' ? regexCommands.value : commands.value
+  const commandIcon = sourceCommands.find(
     (command) =>
       command.path === selectedSource.value?.path &&
       command.featureCode === featureCode &&
       command.name === cmdName &&
-      command.cmdType === 'text'
+      command.cmdType === cmdType
   )?.icon
 
-  // 路由状态只保留 alias 草稿所需的最小字段，避免把完整 command 对象塞进 history state
   return {
-    commandId: getCommandId(pluginName, featureCode, cmdName, 'text'),
+    commandId: getPluginCommandId(pluginName, featureCode, cmdName, cmdType),
+    type: 'plugin',
+    path: selectedSource.value?.path,
+    groupKey: pluginName,
+    groupTitle: pluginTitle,
+    featureCode,
+    subtitle: featureCode,
     pluginName,
     pluginTitle,
-    featureCode,
     cmdName,
-    cmdType: 'text',
+    cmdType,
     icon: commandIcon || selectedSource.value?.logo
   }
 }
 
-// 检查指令是否被禁用
+function isDirectAppCommand(cmd: Command): boolean {
+  return cmd.type === 'direct' && cmd.subType === 'app'
+}
+
+function buildAppAliasDraftTarget(cmd: Command): ShortcutsSettingAliasDraftTarget {
+  return {
+    commandId: getCommandId(cmd),
+    type: 'direct',
+    subType: 'app',
+    path: cmd.path,
+    groupKey: DIRECT_APP_ALIAS_GROUP_KEY,
+    groupTitle: DIRECT_APP_ALIAS_GROUP_TITLE,
+    featureCode: cmd.path || '',
+    subtitle: cmd.path || '',
+    pluginName: DIRECT_APP_ALIAS_GROUP_KEY,
+    pluginTitle: DIRECT_APP_ALIAS_GROUP_TITLE,
+    cmdName: cmd.name,
+    cmdType: 'text',
+    icon: cmd.icon
+  }
+}
+
 function isCommandDisabled(
   pluginName: string,
   featureCode: string,
   cmdName: string,
   cmdType: string
 ): boolean {
-  const id = getCommandId(pluginName, featureCode, cmdName, cmdType)
+  const id = getPluginCommandId(pluginName, featureCode, cmdName, cmdType)
   return disabledCommands.value.includes(id)
 }
 
-// 切换指令禁用状态
+function isDirectAppCommandDisabled(cmd: Command): boolean {
+  const nextId = getCommandId(cmd)
+  const legacyId = getLegacyDirectAppCommandId(cmd.name, cmd.cmdType || 'text')
+  return disabledCommands.value.includes(nextId) || disabledCommands.value.includes(legacyId)
+}
+
 async function toggleCommandDisabled(
   pluginName: string,
   featureCode: string,
   cmdName: string,
   cmdType: string
 ): Promise<void> {
-  const id = getCommandId(pluginName, featureCode, cmdName, cmdType)
+  const id = getPluginCommandId(pluginName, featureCode, cmdName, cmdType)
   const index = disabledCommands.value.indexOf(id)
 
   if (index === -1) {
-    // 添加到禁用列表
     disabledCommands.value.push(id)
   } else {
-    // 从禁用列表移除
     disabledCommands.value.splice(index, 1)
   }
 
-  // 保存到数据库
   await saveDisabledCommands()
 }
 
-// 保存禁用指令列表到数据库
+async function toggleDirectAppCommandDisabled(cmd: Command): Promise<void> {
+  const nextId = getCommandId(cmd)
+  const legacyId = getLegacyDirectAppCommandId(cmd.name, cmd.cmdType || 'text')
+  const nextIndex = disabledCommands.value.indexOf(nextId)
+  const legacyIndex = disabledCommands.value.indexOf(legacyId)
+  const isDisabled = nextIndex !== -1 || legacyIndex !== -1
+
+  if (isDisabled) {
+    disabledCommands.value = disabledCommands.value.filter((id) => id !== nextId && id !== legacyId)
+  } else {
+    disabledCommands.value = [...disabledCommands.value.filter((id) => id !== legacyId), nextId]
+  }
+
+  await saveDisabledCommands()
+}
+
 async function saveDisabledCommands(): Promise<void> {
   try {
-    // 将 Vue 响应式数组转换为普通数组，避免 IPC 克隆错误
     const plainArray = [...disabledCommands.value]
     await window.ztools.internal.dbPut(DISABLED_COMMANDS_KEY, plainArray)
-    // 通知主渲染进程禁用指令列表已更改
     await window.ztools.internal.notifyDisabledCommandsChanged()
   } catch (error) {
     console.error('保存禁用指令列表失败:', error)
   }
 }
 
-// 加载禁用指令列表
 async function loadDisabledCommands(): Promise<void> {
   try {
     const data = await window.ztools.internal.dbGet(DISABLED_COMMANDS_KEY)
@@ -162,7 +224,6 @@ async function loadDisabledCommands(): Promise<void> {
   }
 }
 
-// 加载超级面板固定列表
 async function loadSuperPanelPinned(): Promise<void> {
   try {
     superPanelPinned.value = await window.ztools.internal.getSuperPanelPinned()
@@ -171,7 +232,6 @@ async function loadSuperPanelPinned(): Promise<void> {
   }
 }
 
-// 检查指令是否已固定到超级面板
 function isPinnedToSuperPanel(pluginName: string, featureCode: string, cmdName: string): boolean {
   return superPanelPinned.value.some(
     (item) =>
@@ -179,14 +239,12 @@ function isPinnedToSuperPanel(pluginName: string, featureCode: string, cmdName: 
   )
 }
 
-// 检查系统应用是否已固定到超级面板（基于 path + name 匹配）
 function isAppPinnedToSuperPanel(cmd: Command): boolean {
   return superPanelPinned.value.some(
     (item) => item.path === cmd.path && item.name === cmd.name && item.type === 'direct'
   )
 }
 
-// 固定/取消固定到超级面板
 async function toggleSuperPanelPin(
   pluginName: string,
   featureCode: string,
@@ -195,7 +253,6 @@ async function toggleSuperPanelPin(
   const isPinned = isPinnedToSuperPanel(pluginName, featureCode, cmdName)
 
   if (isPinned) {
-    // 取消固定 - 需要找到对应的 path
     const item = superPanelPinned.value.find(
       (i) => i.name === cmdName && i.featureCode === featureCode && i.pluginName === pluginName
     )
@@ -203,7 +260,6 @@ async function toggleSuperPanelPin(
       await window.ztools.internal.unpinSuperPanelCommand(item.path, item.featureCode)
     }
   } else {
-    // 查找对应的指令信息
     const command = commands.value.find(
       (c) =>
         c.path === selectedSource.value?.path && c.featureCode === featureCode && c.name === cmdName
@@ -216,18 +272,16 @@ async function toggleSuperPanelPin(
         icon: command.icon || '',
         type: command.type,
         featureCode: command.featureCode || '',
-        pluginName: pluginName,
+        pluginName,
         pluginExplain: command.pluginExplain || '',
         cmdType: command.cmdType || 'text'
       })
     }
   }
 
-  // 刷新本地缓存
   await loadSuperPanelPinned()
 }
 
-// 固定/取消固定系统应用到超级面板
 async function toggleAppSuperPanelPin(cmd: Command): Promise<void> {
   const isPinned = isAppPinnedToSuperPanel(cmd)
 
@@ -246,11 +300,9 @@ async function toggleAppSuperPanelPin(cmd: Command): Promise<void> {
     })
   }
 
-  // 刷新本地缓存
   await loadSuperPanelPinned()
 }
 
-// 加载搜索窗口固定列表
 async function loadSearchPinned(): Promise<void> {
   try {
     const data = await window.ztools.internal.dbGet(SEARCH_PINNED_KEY)
@@ -262,19 +314,16 @@ async function loadSearchPinned(): Promise<void> {
   }
 }
 
-// 检查指令是否已固定到搜索窗口
 function isPinnedToSearch(featureCode: string): boolean {
   return searchPinned.value.some(
     (item) => item.path === selectedSource.value?.path && item.featureCode === featureCode
   )
 }
 
-// 检查系统应用是否已固定到搜索窗口（基于 path + name 匹配）
 function isAppPinnedToSearch(cmd: Command): boolean {
   return searchPinned.value.some((item) => item.path === cmd.path && item.name === cmd.name)
 }
 
-// 固定/取消固定到搜索窗口
 async function toggleSearchPin(
   pluginName: string,
   featureCode: string,
@@ -283,10 +332,8 @@ async function toggleSearchPin(
   const pinned = isPinnedToSearch(featureCode)
 
   if (pinned) {
-    // 取消固定
     await window.ztools.internal.unpinApp(selectedSource.value?.path || '', featureCode, cmdName)
   } else {
-    // 查找对应的指令信息
     const command = commands.value.find(
       (c) =>
         c.path === selectedSource.value?.path && c.featureCode === featureCode && c.name === cmdName
@@ -297,11 +344,9 @@ async function toggleSearchPin(
     }
   }
 
-  // 重新加载固定列表
   await loadSearchPinned()
 }
 
-// 固定/取消固定系统应用到搜索窗口
 async function toggleAppSearchPin(cmd: Command): Promise<void> {
   const pinned = isAppPinnedToSearch(cmd)
 
@@ -314,21 +359,24 @@ async function toggleAppSearchPin(cmd: Command): Promise<void> {
   await loadSearchPinned()
 }
 
-// 系统应用下拉菜单项
 function getAppMenuItems(cmd: Command): TagDropdownMenuItem[] {
   const items: TagDropdownMenuItem[] = []
-  // 与 commandUtils.getCommandId 格式一致：pluginName:featureCode:name:cmdType
-  const cmdId = getCommandId('', '', cmd.name, cmd.cmdType || 'text')
-  const disabled = disabledCommands.value.includes(cmdId)
+  const disabled = isDirectAppCommandDisabled(cmd)
 
-  // 打开应用
   items.push({
     key: 'open',
     label: '打开应用',
     icon: 'i-z-play'
   })
 
-  // 固定到超级面板
+  if (isDirectAppCommand(cmd)) {
+    items.push({
+      key: 'custom-alias',
+      label: '自定义别名',
+      icon: 'i-z-alias'
+    })
+  }
+
   const superPinned = isAppPinnedToSuperPanel(cmd)
   items.push({
     key: 'pin-super-panel',
@@ -336,7 +384,6 @@ function getAppMenuItems(cmd: Command): TagDropdownMenuItem[] {
     icon: 'i-z-pin'
   })
 
-  // 固定到搜索窗口
   const pinned = isAppPinnedToSearch(cmd)
   items.push({
     key: 'pin-search',
@@ -344,7 +391,6 @@ function getAppMenuItems(cmd: Command): TagDropdownMenuItem[] {
     icon: 'i-z-pin'
   })
 
-  // 启用/禁用指令
   items.push({
     key: 'toggle',
     label: disabled ? '启用指令' : '禁用指令',
@@ -355,10 +401,8 @@ function getAppMenuItems(cmd: Command): TagDropdownMenuItem[] {
   return items
 }
 
-// 处理系统应用下拉菜单选择
 async function handleAppMenuSelect(key: string, cmd: Command): Promise<void> {
   if (key === 'open') {
-    // 打开应用
     try {
       await window.ztools.internal.launch({
         path: cmd.path || '',
@@ -369,23 +413,22 @@ async function handleAppMenuSelect(key: string, cmd: Command): Promise<void> {
     } catch (error) {
       console.error('打开应用失败:', error)
     }
+  } else if (key === 'custom-alias') {
+    if (!isDirectAppCommand(cmd)) return
+    openAppAliasShortcut(cmd)
   } else if (key === 'pin-super-panel') {
     await toggleAppSuperPanelPin(cmd)
   } else if (key === 'pin-search') {
     await toggleAppSearchPin(cmd)
   } else if (key === 'toggle') {
-    const cmdId = getCommandId('', '', cmd.name, cmd.cmdType || 'text')
-    const index = disabledCommands.value.indexOf(cmdId)
-    if (index === -1) {
-      disabledCommands.value.push(cmdId)
-    } else {
-      disabledCommands.value.splice(index, 1)
-    }
-    await saveDisabledCommands()
+    await toggleDirectAppCommandDisabled(cmd)
   }
 }
 
-// 下拉菜单项
+function isAliasableCmdType(cmdType?: string): cmdType is 'text' | 'window' {
+  return cmdType === 'text' || cmdType === 'window'
+}
+
 function getMenuItems(
   isDisabled: boolean,
   cmdType?: string,
@@ -393,10 +436,10 @@ function getMenuItems(
   featureCode?: string,
   cmdName?: string
 ): TagDropdownMenuItem[] {
-  // @unocss-include
   const items: TagDropdownMenuItem[] = []
 
-  // 只有功能指令（text 类型）才显示"打开指令"
+  const canAddAlias = isAliasableCmdType(cmdType) && pluginName && featureCode && cmdName
+
   if (cmdType === 'text') {
     items.push({
       key: 'open',
@@ -404,7 +447,6 @@ function getMenuItems(
       icon: 'i-z-play'
     })
 
-    // 功能指令支持固定到超级面板
     if (pluginName && featureCode && cmdName) {
       const pinned = isPinnedToSuperPanel(pluginName, featureCode, cmdName)
       items.push({
@@ -413,7 +455,6 @@ function getMenuItems(
         icon: 'i-z-pin'
       })
 
-      // 固定到搜索窗口
       const searchPinnedState = isPinnedToSearch(featureCode)
       items.push({
         key: 'pin-search',
@@ -421,23 +462,22 @@ function getMenuItems(
         icon: 'i-z-pin'
       })
 
-      // 设置全局快捷键
       items.push({
         key: 'set-global-shortcut',
         label: '设置全局快捷键',
         icon: 'i-z-keyboard'
       })
-
-      // alias 只对插件文本指令开放；direct / builtin / regex 等类型不走这条设置路径
-      items.push({
-        key: 'custom-alias',
-        label: '自定义别名',
-        icon: 'i-z-alias'
-      })
     }
   }
 
-  // 启用/禁用指令（所有类型都支持）
+  if (canAddAlias) {
+    items.push({
+      key: 'custom-alias',
+      label: '自定义别名',
+      icon: 'i-z-alias'
+    })
+  }
+
   items.push({
     key: 'toggle',
     label: isDisabled ? '启用指令' : '禁用指令',
@@ -448,15 +488,27 @@ function getMenuItems(
   return items
 }
 
-function openAliasShortcut(pluginName: string, featureCode: string, cmdName: string): void {
-  // 统一从“所有指令”跳转到 alias tab，并预先带上当前指令作为草稿目标
+function openAliasShortcut(
+  pluginName: string,
+  featureCode: string,
+  cmdName: string,
+  cmdType: 'text' | 'window'
+): void {
   jumpFunctionShortcutsSetting({
     tab: 'alias',
-    draftTarget: buildAliasDraftTarget(pluginName, featureCode, cmdName)
+    draftTarget: buildPluginAliasDraftTarget(pluginName, featureCode, cmdName, cmdType)
   })
 }
 
-// 处理下拉菜单选择
+function openAppAliasShortcut(cmd: Command): void {
+  if (!isDirectAppCommand(cmd)) return
+
+  jumpFunctionShortcutsSetting({
+    tab: 'alias',
+    draftTarget: buildAppAliasDraftTarget(cmd)
+  })
+}
+
 async function handleMenuSelect(
   key: string,
   pluginName: string,
@@ -467,27 +519,22 @@ async function handleMenuSelect(
   if (key === 'toggle') {
     toggleCommandDisabled(pluginName, featureCode, cmdName, cmdType)
   } else if (key === 'open') {
-    // 打开指令
     await openCommand(pluginName, featureCode, cmdName, cmdType)
   } else if (key === 'pin-super-panel') {
-    // 固定/取消固定到超级面板
     await toggleSuperPanelPin(pluginName, featureCode, cmdName)
   } else if (key === 'pin-search') {
-    // 固定/取消固定到搜索窗口
     await toggleSearchPin(pluginName, featureCode, cmdName)
   } else if (key === 'set-global-shortcut') {
-    // 跳转到全局快捷键页面并打开添加面板，预填目标指令（插件标题/指令名称）
     const pluginTitle = selectedSource.value?.title || pluginName
     jumpFunctionShortcutsSetting({
       payload: `${pluginTitle}/${cmdName}`
     })
   } else if (key === 'custom-alias') {
-    // 这里只负责导航到设置页，不直接做 alias 持久化
-    openAliasShortcut(pluginName, featureCode, cmdName)
+    if (!isAliasableCmdType(cmdType)) return
+    openAliasShortcut(pluginName, featureCode, cmdName, cmdType)
   }
 }
 
-// 打开指令
 async function openCommand(
   pluginName: string,
   featureCode: string,
@@ -495,7 +542,6 @@ async function openCommand(
   cmdType: string
 ): Promise<void> {
   try {
-    // 查找对应的指令
     const command = commands.value.find(
       (c) =>
         c.path === selectedSource.value?.path &&
@@ -511,14 +557,13 @@ async function openCommand(
 
     console.log('打开指令:', command)
 
-    // 启动指令（使用内置插件 API）
     await window.ztools.internal.launch({
       path: command.path || '',
       type: command.type,
       featureCode: command.featureCode,
       name: command.name,
       param: {
-        payload: '' // 功能指令默认空 payload
+        payload: ''
       }
     })
   } catch (error) {
@@ -979,7 +1024,10 @@ onMounted(async () => {
               :menu-items="
                 getMenuItems(
                   isCommandDisabled(selectedSource?.name || '', feature.code, cmd.name, cmd.type),
-                  cmd.type
+                  cmd.type,
+                  selectedSource?.name || '',
+                  feature.code,
+                  cmd.name
                 )
               "
               @select="

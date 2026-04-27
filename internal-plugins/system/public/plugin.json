@@ -90,7 +90,7 @@
           "type": "window",
           "label": "复制路径",
           "match": {
-            "app": ["Finder.app"]
+            "app": ["Finder.app", "explorer.exe"]
           }
         }
       ]
@@ -104,7 +104,7 @@
           "type": "window",
           "label": "在终端打开",
           "match": {
-            "app": ["Finder.app"]
+            "app": ["Finder.app", "explorer.exe"]
           }
         }
       ]

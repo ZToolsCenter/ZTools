@@ -490,11 +490,17 @@ async function handleAppContextMenu(
 
   // 只在历史记录中显示"从使用记录删除"
   if (!fromSearch && !fromPinned) {
+    const historyMatchName =
+      app.type === 'plugin'
+        ? app.pluginName || app.name
+        : app.type === 'direct' && app.subType === 'app'
+          ? app.persistedName || app.name
+          : app.name
     menuItems.push({
       id: `remove-from-history:${JSON.stringify({
         path: app.path,
         featureCode: app.featureCode,
-        name: app.pluginName || app.name
+        name: historyMatchName
       })}`,
       label: '从使用记录删除'
     })
@@ -520,19 +526,26 @@ async function handleAppContextMenu(
   }
 
   // 根据是否已固定显示不同选项
-  if (isPinned(app.path, app.featureCode, app.pluginName || app.name)) {
+  const pinMatchName =
+    app.type === 'plugin'
+      ? app.pluginName || app.name
+      : app.type === 'direct' && app.subType === 'app'
+        ? app.persistedName || app.name
+        : app.name
+  if (isPinned(app.path, app.featureCode, pinMatchName)) {
     menuItems.push({
       id: `unpin-app:${JSON.stringify({
         path: app.path,
         featureCode: app.featureCode,
-        name: app.pluginName || app.name
+        name: pinMatchName
       })}`,
       label: '从搜索框取消固定'
     })
   } else {
     menuItems.push({
       id: `pin-app:${JSON.stringify({
-        name: app.name,
+        name:
+          app.type === 'direct' && app.subType === 'app' ? app.persistedName || app.name : app.name,
         path: app.path,
         icon: app.icon,
         pinyin: app.pinyin,
@@ -540,7 +553,11 @@ async function handleAppContextMenu(
         type: app.type,
         featureCode: app.featureCode,
         pluginName: app.pluginName,
-        pluginExplain: app.pluginExplain
+        pluginExplain: app.pluginExplain,
+        subType: app.subType,
+        cmdType: app.cmdType,
+        originalName: app.originalName,
+        persistedName: app.persistedName
       })}`,
       label: '固定到搜索框'
     })
@@ -666,6 +683,10 @@ async function handleSelectApp(app: any): Promise<void> {
         path: file.path
       })) as MatchFile[]
     } else if (app.cmdType === 'window') {
+      if (!commandDataStore.matchesWindowCommand(app, windowStore.currentWindow)) {
+        console.warn('window 指令与当前窗口不匹配，已阻止启动:', app.name)
+        return
+      }
       payload = JSON.parse(JSON.stringify(windowStore.currentWindow))
     }
 

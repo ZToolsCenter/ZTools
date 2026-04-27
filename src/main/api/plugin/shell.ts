@@ -1,10 +1,10 @@
 import { execFile } from 'child_process'
 import os from 'os'
-import path from 'path'
-import { app, ipcMain, shell } from 'electron'
+import { ipcMain, shell } from 'electron'
 import { getFileIconAsBase64 } from '../../core/iconProtocol'
 import { WindowManager } from '../../core/native/index.js'
 import type ClipboardManager from '../../managers/clipboardManager'
+import { getExplorerFolderPathFromWindow } from '../../utils/common'
 
 const MAC_BROWSER_APP_MAP = {
   'com.apple.Safari': 'Safari',
@@ -298,41 +298,16 @@ export class PluginShellAPI {
     }
 
     // 3. 根据窗口类名判断并获取路径
-    const { className } = windowInfo
-
-    // CabinetWClass: 标准 Explorer 文件夹窗口
-    // ExploreWClass: 旧版 Explorer 窗口（兼容）
-    if (className === 'CabinetWClass' || className === 'ExploreWClass') {
-      if (windowInfo.hwnd == null) {
-        console.error('[PluginShell] readCurrentFolderPath: Explorer 窗口缺少 hwnd')
-        throw new Error('未读取到当前 "文件资源管理器" 窗口目录')
-      }
-
-      // 通过 COM IShellWindows 查询当前窗口的文件夹路径
-      const folderUrl = WindowManager.getExplorerFolderPath(windowInfo.hwnd)
-      if (!folderUrl) {
-        console.error(`[PluginShell] readCurrentFolderPath: COM 查询失败 (hwnd=${windowInfo.hwnd})`)
-        throw new Error('未读取到当前 "文件资源管理器" 窗口目录')
-      }
-
-      // 解码 file:/// URL 为本地路径（使用 decodeURIComponent 处理 # 等特殊字符）
-      const folderPath = path.resolve(decodeURIComponent(folderUrl.replace(/^file:\/\/\//, '')))
+    const folderPath = getExplorerFolderPathFromWindow(windowInfo, 'PluginShell')
+    if (folderPath) {
       console.log(`[PluginShell] readCurrentFolderPath: Explorer 窗口路径=${folderPath}`)
       return folderPath
     }
 
-    // Progman: 桌面主窗口；WorkerW: 桌面壁纸层窗口
-    if (className === 'Progman' || className === 'WorkerW') {
-      const desktopPath = app.getPath('desktop')
-      console.log(`[PluginShell] readCurrentFolderPath: 桌面路径=${desktopPath}`)
-      return desktopPath
-    }
-
-    // 未知的窗口类名
     console.warn(
-      `[PluginShell] readCurrentFolderPath: 未识别的窗口类 "${className}" (app=${windowInfo.app})`
+      `[PluginShell] readCurrentFolderPath: 未识别的窗口类 "${windowInfo.className}" (app=${windowInfo.app})`
     )
-    throw new Error(`当前活动窗口类 "${className}" 未识别`)
+    throw new Error(`当前活动窗口类 "${windowInfo.className}" 未识别`)
   }
 
   /**

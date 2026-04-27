@@ -94,7 +94,7 @@ watch(
 const pluginOptions = computed<AliasPluginOption[]>(() => {
   const pluginMap = new Map<string, AliasPluginOption>()
 
-  // 目标选择器采用两级结构：先按插件分组，再在插件内选具体文本指令
+  // 目标选择器采用两级结构：先按分组选择，再在分组内选具体指令。
   for (const item of props.targetOptions) {
     const existing = pluginMap.get(item.pluginName)
     if (existing) {
@@ -107,7 +107,7 @@ const pluginOptions = computed<AliasPluginOption[]>(() => {
 
     pluginMap.set(item.pluginName, {
       pluginName: item.pluginName,
-      pluginTitle: item.pluginTitle,
+      pluginTitle: item.groupTitle,
       icon: item.icon,
       commands: [item]
     })
@@ -146,11 +146,11 @@ const filteredPluginCommands = computed(() => {
     return commands
   }
 
-  // 进入插件后，搜索范围收敛到该插件的文本指令列表
+  // 进入插件后，搜索范围收敛到该插件的可选指令列表
   return weightedSearch(commands, query, [
     { value: (item) => item.cmdName || '', weight: 10 },
     { value: (item) => item.label || '', weight: 8 },
-    { value: (item) => item.featureCode || '', weight: 4 }
+    { value: (item) => item.subtitle || '', weight: 4 }
   ])
 })
 
@@ -158,9 +158,9 @@ const filteredPluginCommands = computed(() => {
 const displayIcon = computed(() => icon.value || target.value?.icon)
 const dialogTitle = computed(() => (mode.value === 'edit' ? '编辑指令别名' : '添加指令别名'))
 const selectorTitle = computed(() =>
-  selectedPlugin.value ? `${selectedPlugin.value.pluginTitle} 的指令` : '所有可用插件'
+  selectedPlugin.value ? `${selectedPlugin.value.pluginTitle} 的指令` : '所有可用目标'
 )
-const selectorPlaceholder = computed(() => (selectedPlugin.value ? '搜索该插件的指令' : '搜索插件'))
+const selectorPlaceholder = computed(() => (selectedPlugin.value ? '搜索该分组的指令' : '搜索分组'))
 
 function handleCancel(): void {
   emit('cancel')
@@ -336,7 +336,7 @@ defineExpose({
               </div>
               <div class="target-card-texts">
                 <div class="target-card-title">{{ target.label }}</div>
-                <div class="target-card-subtitle">{{ target.featureCode }}</div>
+                <div class="target-card-subtitle">{{ target.subtitle }}</div>
               </div>
             </div>
             <div v-else class="target-card target-card-empty">
@@ -347,13 +347,13 @@ defineExpose({
               </div>
               <div class="target-card-texts">
                 <div class="target-card-title">请选择目标指令</div>
-                <div class="target-card-subtitle">先选插件，再选指令</div>
+                <div class="target-card-subtitle">先选分组，再选指令</div>
               </div>
             </div>
           </div>
         </div>
 
-        <!-- 目标选择区：先选插件，再选指令 -->
+        <!-- 目标选择区：先选分组，再选指令 -->
         <div class="alias-dialog-selector">
           <div class="selector-header">
             <div class="selector-title">{{ selectorTitle }}</div>
@@ -363,7 +363,7 @@ defineExpose({
               type="button"
               @click="handleBackToPlugins"
             >
-              返回插件列表
+              返回分组列表
             </button>
           </div>
 
@@ -402,7 +402,7 @@ defineExpose({
                 </div>
                 <div class="selector-item-texts">
                   <div class="selector-item-title">{{ item.cmdName }}</div>
-                  <div class="selector-item-subtitle">{{ item.featureCode }}</div>
+                  <div class="selector-item-subtitle">{{ item.subtitle }}</div>
                 </div>
               </button>
               <div v-if="filteredPluginCommands.length === 0" class="selector-empty">
@@ -423,7 +423,7 @@ defineExpose({
                     v-if="plugin.icon"
                     :src="plugin.icon"
                     class="selector-item-icon"
-                    alt="插件图标"
+                    alt="分组图标"
                     draggable="false"
                   />
                   <div v-else class="selector-item-icon icon-placeholder">
@@ -435,7 +435,7 @@ defineExpose({
                   <div class="selector-item-subtitle">{{ plugin.commands.length }} 个指令</div>
                 </div>
               </button>
-              <div v-if="filteredPlugins.length === 0" class="selector-empty">暂无匹配的插件</div>
+              <div v-if="filteredPlugins.length === 0" class="selector-empty">暂无匹配的分组</div>
             </template>
           </div>
         </div>

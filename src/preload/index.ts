@@ -6,6 +6,9 @@ export interface Command {
   icon?: string
   type?: string
   subType?: string
+  cmdType?: string
+  originalName?: string
+  persistedName?: string
 }
 
 const api = {
@@ -14,7 +17,7 @@ const api = {
   isWindows: () => ipcRenderer.invoke('is-windows'),
   launch: (options: {
     path: string
-    type?: 'direct' | 'plugin' | 'builtin'
+    type?: 'direct' | 'plugin' | 'builtin' | 'file'
     featureCode?: string
     param?: any
     name?: string
@@ -116,6 +119,8 @@ const api = {
         width?: number
         height?: number
         appPath?: string
+        className?: string
+        hwnd?: number
       } | null
     ) => void
   ) => {
@@ -141,7 +146,15 @@ const api = {
       app: string
       bundleId?: string
       pid?: number
-      timestamp: number
+      title?: string
+      x?: number
+      y?: number
+      width?: number
+      height?: number
+      appPath?: string
+      timestamp?: number
+      className?: string
+      hwnd?: number
     }) => void
   ) => {
     ipcRenderer.on('window-info-changed', (_event, windowInfo) => callback(windowInfo))
@@ -243,9 +256,11 @@ const api = {
   onIpcLaunch: (
     callback: (options: {
       path: string
-      type?: 'direct' | 'plugin'
+      type?: 'app' | 'direct' | 'plugin' | 'builtin' | 'file'
       featureCode?: string
       param?: any
+      name?: string
+      cmdType?: string
     }) => void
   ) => {
     ipcRenderer.on('ipc-launch', (_event, options) => callback(options))
@@ -445,7 +460,7 @@ declare global {
       isWindows: () => Promise<boolean>
       launch: (options: {
         path: string
-        type?: 'direct' | 'plugin' | 'builtin'
+        type?: 'direct' | 'plugin' | 'builtin' | 'file'
         featureCode?: string
         param?: any
         name?: string
@@ -544,7 +559,15 @@ declare global {
             app: string
             bundleId?: string
             pid?: number
+            title?: string
+            x?: number
+            y?: number
+            width?: number
+            height?: number
+            appPath?: string
             timestamp?: number
+            className?: string
+            hwnd?: number
           } | null
         ) => void
       ) => void
@@ -558,7 +581,15 @@ declare global {
           app: string
           bundleId?: string
           pid?: number
-          timestamp: number
+          title?: string
+          x?: number
+          y?: number
+          width?: number
+          height?: number
+          appPath?: string
+          timestamp?: number
+          className?: string
+          hwnd?: number
         }) => void
       ) => void
       onPluginsChanged: (callback: () => void) => void
@@ -574,7 +605,7 @@ declare global {
       onIpcLaunch: (
         callback: (options: {
           path: string
-          type?: 'direct' | 'plugin'
+          type?: 'app' | 'direct' | 'plugin' | 'builtin' | 'file'
           featureCode?: string
           param?: any
           name?: string
