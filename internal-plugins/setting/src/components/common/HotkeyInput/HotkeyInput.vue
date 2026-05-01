@@ -95,6 +95,21 @@ function isDoubleTapFormat(value: string): boolean {
   return parts.length === 2 && parts[0] === parts[1] && MODIFIER_NAMES.includes(parts[0])
 }
 
+function isTripleTapFormat(value: string): boolean {
+  if (!value) return false
+  const parts = value.split('+')
+  return (
+    parts.length === 3 &&
+    parts[0] === parts[1] &&
+    parts[1] === parts[2] &&
+    MODIFIER_NAMES.includes(parts[0])
+  )
+}
+
+function isCopilotKeyFormat(value: string): boolean {
+  return value === 'Copilot'
+}
+
 const { warning } = useToast()
 
 const isRecording = ref(false)
@@ -131,6 +146,12 @@ const displayHotkey = computed(() => {
     }
     return '请按下快捷键...'
   }
+  if (isCopilotKeyFormat(props.modelValue)) {
+    return 'Copilot 键 (Win+Shift+F23)'
+  }
+  if (isTripleTapFormat(props.modelValue)) {
+    return props.modelValue
+  }
   if (isDoubleTapFormat(props.modelValue)) {
     return props.modelValue
   }
@@ -163,6 +184,7 @@ function stopRecording(): void {
   isRecording.value = false
   mainKeyPressed.value = false
   lastModifierOnlyTap.value = null
+  tapCount.value = 0
   clearDoubleTapTimer()
   document.removeEventListener('keydown', handleKeyDown)
   document.removeEventListener('keyup', handleKeyUp)
@@ -225,6 +247,10 @@ function handleKeyDown(e: KeyboardEvent): void {
   recordedKeys.value = keys
 }
 
+// 三击检测状态
+const tapCount = ref(0)
+const lastTapModifier = ref<string>('')
+
 function handleKeyUp(e: KeyboardEvent): void {
   e.preventDefault()
   e.stopPropagation()
@@ -233,7 +259,6 @@ function handleKeyUp(e: KeyboardEvent): void {
 
   if (isModifierKey && !mainKeyPressed.value) {
     // 仅修饰键被按下后松开，没有按其他键
-    // 检查当前是否只有一个修饰键（排除组合修饰键如 Command+Shift）
     const modifier = getModifierName(e.code)
     if (!modifier) {
       stopRecording()
@@ -253,19 +278,41 @@ function handleKeyUp(e: KeyboardEvent): void {
 
     const now = Date.now()
 
-    // 检查是否匹配第二次 tap
+    // 三击检测逻辑
     if (
       lastModifierOnlyTap.value &&
       lastModifierOnlyTap.value.modifier === modifier &&
       now - lastModifierOnlyTap.value.time < DOUBLE_TAP_INTERVAL
     ) {
+      tapCount.value++
+      lastModifierOnlyTap.value = { modifier, time: now }
+
+      if (tapCount.value >= 2) {
+        // 三击确认
+        clearDoubleTapTimer()
+        confirmShortcut(`${modifier}+${modifier}+${modifier}`)
+        return
+      }
+
+      // 第二次 tap，等待第三次
       clearDoubleTapTimer()
-      confirmShortcut(`${modifier}+${modifier}`)
+      recordedKeys.value = ['请再按一次确认三击...']
+      doubleTapTimer.value = setTimeout(() => {
+        // 超时，确认为双击
+        lastModifierOnlyTap.value = null
+        doubleTapTimer.value = null
+        tapCount.value = 0
+        if (isRecording.value) {
+          confirmShortcut(`${modifier}+${modifier}`)
+        }
+      }, DOUBLE_TAP_INTERVAL)
       return
     }
 
     // 第一次 tap，开始等待第二次
+    tapCount.value = 0
     lastModifierOnlyTap.value = { modifier, time: now }
+    lastTapModifier.value = modifier
     recordedKeys.value = ['请再按一次非修饰键...']
 
     clearDoubleTapTimer()
@@ -273,6 +320,7 @@ function handleKeyUp(e: KeyboardEvent): void {
       // 等待超时，重置状态继续录制
       lastModifierOnlyTap.value = null
       doubleTapTimer.value = null
+      tapCount.value = 0
       if (isRecording.value) {
         recordedKeys.value = []
       }
@@ -295,6 +343,13 @@ function handleKeyUp(e: KeyboardEvent): void {
   ) {
     confirmShortcut(currentKey)
     return
+  }
+
+  // 单个按键（非有效快捷键组合）时，清空而非保留上一个预设值
+  if (mainKeyPressed.value && recordedKeys.value.length <= 1) {
+    recordedKeys.value = []
+    emit('update:modelValue', '')
+    emit('change', '')
   }
 
   stopRecording()

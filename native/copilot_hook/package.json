@@ -1,0 +1,11 @@
+{
+  "name": "copilot_hook",
+  "version": "1.0.0",
+  "description": "Native Node.js addon for intercepting Windows Copilot key (Win+Shift+F23)",
+  "main": "build/Release/copilot_hook.node",
+  "scripts": {
+    "build": "node-gyp rebuild",
+    "clean": "node-gyp clean"
+  },
+  "gypfile": true
+}
