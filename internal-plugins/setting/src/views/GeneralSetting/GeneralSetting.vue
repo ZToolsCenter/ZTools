@@ -1323,7 +1323,7 @@ async function saveSettings(): Promise<void> {
       acrylicDarkOpacity: acrylicDarkOpacity.value,
       devToolsMode: devToolsMode.value,
       disableGpuAcceleration: disableGpuAcceleration.value,
-      customInternalApiPluginNames: customInternalApiPluginNames.value,
+      customInternalApiPluginNames: [...customInternalApiPluginNames.value],
       proxyEnabled: proxyEnabled.value,
       proxyUrl: proxyUrl.value,
       pluginMarketCustom: pluginMarketCustom.value,
