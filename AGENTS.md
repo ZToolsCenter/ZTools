@@ -1,1 +1,1 @@
-Also read this project's `CLAUDE.md` for project-specific instructions.
+Also read this project's [CLAUDE.md](CLAUDE.md) for project-specific instructions.
