@@ -180,6 +180,19 @@ app.whenReady().then(async () => {
     }
   }
 
+  // 检查静默启动设置，未开启时启动后自动显示搜索窗口
+  try {
+    const settingsDoc = lmdbInstance.get('ZTOOLS/settings-general')
+    const silentStart = settingsDoc?.data?.silentStart ?? true
+    if (!silentStart) {
+      setTimeout(() => {
+        windowManager.showWindow()
+        console.log('[Main] 静默启动已关闭，启动后自动显示搜索窗口')
+      }, 500)
+    }
+  } catch {
+    console.log('[Main] 读取静默启动设置失败，按默认行为启动')
+  }
   // 处理文件关联打开：macOS pending 文件 / Windows 命令行参数
   const zpxFromArgs =
     pendingZpxFile || process.argv.find((arg) => arg.endsWith('.zpx') && !arg.startsWith('-'))
