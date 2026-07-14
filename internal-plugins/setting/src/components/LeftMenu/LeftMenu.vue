@@ -258,10 +258,7 @@ async function handleGithubLoginSuccess(data: {
     // 触发账号变更事件
     notifyAccountChanged()
 
-    // 如果是新用户，提示导入本机数据
-    if (data.isNew) {
-      await promptDefaultDataImportAfterLogin({ confirm, success, error })
-    }
+    await promptDefaultDataImportAfterLogin({ confirm, success, error })
 
     // 加载账号信息
     await loadAccount()
