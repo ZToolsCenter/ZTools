@@ -1,4 +1,5 @@
 import lmdbInstance from '../../core/lmdb/lmdbInstance'
+import { coordinateTokenRefresh } from '../../core/sync/tokenRefreshCoordinator'
 import type { HttpRequestOptions, HttpResponse } from '../../utils/httpRequest'
 import { httpRequest } from '../../utils/httpRequest.js'
 
@@ -23,6 +24,13 @@ export class PluginMarketAuthRequiredError extends Error {
   }
 }
 
+export const PluginMarketAuthMode = {
+  OPTIONAL: 'optional',
+  REQUIRED: 'required'
+} as const
+
+export type PluginMarketAuthMode = (typeof PluginMarketAuthMode)[keyof typeof PluginMarketAuthMode]
+
 export function getPluginMarketApiBase(): string {
   return DEFAULT_PLUGIN_MARKET_API_BASE
 }
@@ -44,7 +52,8 @@ export async function getPluginMarketAuthHeaders(
 
 export async function requestPluginMarket(
   path: string,
-  options: HttpRequestOptions = {}
+  options: HttpRequestOptions = {},
+  authMode: PluginMarketAuthMode = PluginMarketAuthMode.OPTIONAL
 ): Promise<HttpResponse> {
   const marketApiBase = getPluginMarketApiBase()
   const url = path.startsWith('http') ? path : `${marketApiBase}${path}`
@@ -54,17 +63,28 @@ export async function requestPluginMarket(
     return response
   }
 
-  const refreshed = await refreshPluginMarketToken(marketApiBase)
-  if (!refreshed) {
-    throw new PluginMarketAuthRequiredError()
+  let refreshed = false
+  try {
+    refreshed = await refreshPluginMarketToken(marketApiBase)
+  } catch {
+    refreshed = false
   }
 
-  const retry = await requestPluginMarketOnce(url, marketApiBase, options)
-  if (retry.status === 401) {
-    throw new PluginMarketAuthRequiredError()
+  if (refreshed) {
+    const retry = await requestPluginMarketOnce(url, marketApiBase, options)
+    if (retry.status !== 401) {
+      assertOK(retry)
+      return retry
+    }
   }
-  assertOK(retry)
-  return retry
+
+  if (authMode === PluginMarketAuthMode.OPTIONAL) {
+    const anonymousRetry = await requestPluginMarketOnce(url, marketApiBase, options, false)
+    assertOK(anonymousRetry)
+    return anonymousRetry
+  }
+
+  throw new PluginMarketAuthRequiredError()
 }
 
 export async function savePluginMarketTokens(input: {
@@ -95,13 +115,21 @@ export async function savePluginMarketTokens(input: {
 async function requestPluginMarketOnce(
   url: string,
   marketApiBase: string,
-  options: HttpRequestOptions
+  options: HttpRequestOptions,
+  includeAuth = true
 ): Promise<HttpResponse> {
-  const authHeaders = await getPluginMarketAuthHeaders(marketApiBase)
+  const authHeaders = includeAuth ? await getPluginMarketAuthHeaders(marketApiBase) : {}
+  const optionHeaders = includeAuth
+    ? options.headers || {}
+    : Object.fromEntries(
+        Object.entries(options.headers || {}).filter(
+          ([key]) => key.toLowerCase() !== 'authorization'
+        )
+      )
   return httpRequest(url, {
     ...options,
     headers: {
-      ...(options.headers || {}),
+      ...optionHeaders,
       ...authHeaders
     },
     validateStatus: (status) => (status >= 200 && status < 300) || status === 401
@@ -113,24 +141,24 @@ async function refreshPluginMarketToken(marketApiBase: string): Promise<boolean>
   if (!config?.refreshToken || config.serverUrl !== DEFAULT_SYNC_SERVER_URL) {
     return false
   }
-  const endpoint = `${new URL(marketApiBase).origin}/api/auth/refresh`
-  const response = await httpRequest(endpoint, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ refreshToken: config.refreshToken }),
-    validateStatus: (status) => status >= 200 && status < 500
+  const tokens = await coordinateTokenRefresh(config.refreshToken, async () => {
+    const endpoint = `${new URL(marketApiBase).origin}/api/auth/refresh`
+    const response = await httpRequest(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refreshToken: config.refreshToken }),
+      validateStatus: (status) => status >= 200 && status < 500
+    })
+    if (response.status !== 200) return null
+    const data = typeof response.data === 'string' ? JSON.parse(response.data) : response.data
+    if (!data?.token || !data?.refreshToken) return null
+    return { token: data.token, refreshToken: data.refreshToken }
   })
-  if (response.status !== 200) {
-    return false
-  }
-  const data = typeof response.data === 'string' ? JSON.parse(response.data) : response.data
-  if (!data?.token || !data?.refreshToken) {
-    return false
-  }
+  if (!tokens) return false
   await savePluginMarketTokens({
     serverUrl: config.serverUrl,
-    token: data.token,
-    refreshToken: data.refreshToken,
+    token: tokens.token,
+    refreshToken: tokens.refreshToken,
     username: config.username
   })
   return true

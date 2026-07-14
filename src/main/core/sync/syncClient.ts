@@ -22,6 +22,7 @@ import {
   UploadBlobTaskPayload
 } from './syncTaskStore'
 import { ACCOUNT_SYNC_PREFIXES } from '../storage/storageRouting'
+import { coordinateTokenRefresh } from './tokenRefreshCoordinator'
 
 /**
  * WebSocket 同步客户端
@@ -408,19 +409,27 @@ export class SyncClient extends EventEmitter {
     if (!force && !isJwtExpiring(this.config.token)) {
       return
     }
-    const response = await fetch(`${syncServerUrlToHttp(this.config.serverUrl)}/api/auth/refresh`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refreshToken: this.config.refreshToken })
+    const currentRefreshToken = this.config.refreshToken
+    const tokens = await coordinateTokenRefresh(currentRefreshToken, async () => {
+      const response = await fetch(
+        `${syncServerUrlToHttp(this.config!.serverUrl)}/api/auth/refresh`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ refreshToken: currentRefreshToken })
+        }
+      )
+      const data = await response.json()
+      if (!response.ok || !data?.token || !data?.refreshToken) return null
+      return { token: data.token, refreshToken: data.refreshToken }
     })
-    const data = await response.json()
-    if (!response.ok || !data?.token || !data?.refreshToken) {
-      throw new Error(data?.error || 'Refresh token failed')
+    if (!tokens) {
+      throw new Error('Refresh token failed')
     }
     const nextConfig: SyncConfig = {
       ...this.config,
-      token: data.token,
-      refreshToken: data.refreshToken
+      token: tokens.token,
+      refreshToken: tokens.refreshToken
     }
     this.config = nextConfig
     const existingDoc = await (this.db as any).promises.get('SYNC/config')

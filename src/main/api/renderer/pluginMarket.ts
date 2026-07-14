@@ -2,6 +2,7 @@ import { httpGet } from '../../utils/httpRequest.js'
 import databaseAPI from '../shared/database'
 import {
   PluginMarketAuthRequiredError,
+  PluginMarketAuthMode,
   getPluginMarketApiBase,
   requestPluginMarket
 } from './pluginMarketConfig'
@@ -294,11 +295,15 @@ export class PluginMarketAPI {
     authRequired?: boolean
   }> {
     try {
-      const response = await requestPluginMarket('/plugins/comments', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(input)
-      })
+      const response = await requestPluginMarket(
+        '/plugins/comments',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(input)
+        },
+        PluginMarketAuthMode.REQUIRED
+      )
       return { success: true, data: this.parseCommentItem(response.data) }
     } catch (error: unknown) {
       return this.commentError(error, '评论发布失败')
@@ -312,9 +317,13 @@ export class PluginMarketAPI {
     authRequired?: boolean
   }> {
     try {
-      const response = await requestPluginMarket(`/plugins/comments/${commentId}/like`, {
-        method: 'POST'
-      })
+      const response = await requestPluginMarket(
+        `/plugins/comments/${commentId}/like`,
+        {
+          method: 'POST'
+        },
+        PluginMarketAuthMode.REQUIRED
+      )
       const data = typeof response.data === 'string' ? JSON.parse(response.data) : response.data
       return {
         success: true,
@@ -332,9 +341,13 @@ export class PluginMarketAPI {
     commentId: number
   ): Promise<{ success: boolean; error?: string; authRequired?: boolean }> {
     try {
-      await requestPluginMarket(`/plugins/comments/${commentId}`, {
-        method: 'DELETE'
-      })
+      await requestPluginMarket(
+        `/plugins/comments/${commentId}`,
+        {
+          method: 'DELETE'
+        },
+        PluginMarketAuthMode.REQUIRED
+      )
       return { success: true }
     } catch (error: unknown) {
       return this.commentError(error, '删除失败')

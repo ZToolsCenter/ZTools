@@ -9,6 +9,7 @@ import lmdbInstance, { storageManager } from '../../core/lmdb/lmdbInstance'
 import pluginDeviceAPI from '../plugin/device'
 import { defaultAccountImportService } from '../../core/storage/defaultAccountImportService'
 import activityHeartbeatService from '../../core/activity/heartbeatService'
+import { coordinateTokenRefresh } from '../../core/sync/tokenRefreshCoordinator'
 import type { PluginManager } from '../../managers/pluginManager'
 
 /**
@@ -725,16 +726,21 @@ export class SyncAPI {
 
   private async refreshToken(config: SyncConfig): Promise<SyncConfig | null> {
     if (!config.refreshToken) return null
-    const response = await fetch(`${this.syncServerUrlToHttp(config.serverUrl)}/api/auth/refresh`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refreshToken: config.refreshToken })
+    const tokens = await coordinateTokenRefresh(config.refreshToken, async () => {
+      const response = await fetch(
+        `${this.syncServerUrlToHttp(config.serverUrl)}/api/auth/refresh`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ refreshToken: config.refreshToken })
+        }
+      )
+      const data = await response.json()
+      if (!response.ok || !data?.token || !data?.refreshToken) return null
+      return { token: data.token, refreshToken: data.refreshToken }
     })
-    const data = await response.json()
-    if (!response.ok || !data?.token || !data?.refreshToken) {
-      return null
-    }
-    const nextConfig = { ...config, token: data.token, refreshToken: data.refreshToken }
+    if (!tokens) return null
+    const nextConfig = { ...config, token: tokens.token, refreshToken: tokens.refreshToken }
     const existingDoc = await lmdbInstance.promises.get('SYNC/config')
     await lmdbInstance.promises.put({
       _id: 'SYNC/config',
