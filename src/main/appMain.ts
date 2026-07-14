@@ -1,6 +1,13 @@
+/**
+ * ZTools 主进程启动入口。
+ *
+ * 该入口负责按依赖顺序恢复持久状态、创建窗口并启动运行期服务；插件事务恢复失败时必须终止启动，
+ * 避免自动预加载读取到混合代次的安装单元。
+ */
+
 import './core/appData/configureAppDataRoot'
 import { platform } from '@electron-toolkit/utils'
-import { app, BrowserWindow, session, webContents } from 'electron'
+import { app, BrowserWindow, dialog, session, webContents } from 'electron'
 import log from 'electron-log'
 import path from 'path'
 import lmdbInstance from './core/lmdb/lmdbInstance'
@@ -152,7 +159,15 @@ app.whenReady().then(async () => {
 
   // 初始化 API 和插件管理器
   if (mainWindow) {
-    api.init(mainWindow, pluginManager)
+    try {
+      await api.init(mainWindow, pluginManager)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      console.error('[Main] API 初始化失败:', error)
+      dialog.showErrorBox('ZTools 启动失败', message)
+      app.exit(1)
+      return
+    }
     pluginManager.init(mainWindow)
     // 首次应用列表准备完成后再初始化应用目录监听器，避免启动时与应用扫描抢占磁盘 I/O
     appsAPI.setAfterFirstAppsReadyCallback(() => {

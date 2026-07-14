@@ -1,8 +1,16 @@
+/**
+ * 插件子窗口管理器。
+ *
+ * 子窗口继承插件会话与虚拟根路径，负责把相对页面和插件 preload 安全解析到目录或 ASAR 内部。
+ */
+
 import { BrowserWindow, BrowserWindowConstructorOptions, session } from 'electron'
 import path from 'path'
+import { pathToFileURL } from 'node:url'
 import mainPreload from '../../../resources/preload.js?asset'
 import proxyManager from '../managers/proxyManager'
 import { GLOBAL_SCROLLBAR_CSS } from './globalStyles'
+import { registerPluginPreloadErrorReporter } from './pluginPreloadErrorReporter'
 
 /**
  * 插件可用的 BrowserWindow / WebContents 方法白名单
@@ -250,6 +258,14 @@ class PluginWindowManager {
       }
     })
 
+    if (preloadPath) {
+      registerPluginPreloadErrorReporter({
+        webContents: win.webContents,
+        pluginName,
+        preloadPath
+      })
+    }
+
     // 保存窗口信息（以 win.id 为键）
     this.windowInfoMap.set(win.id, {
       window: win,
@@ -265,7 +281,7 @@ class PluginWindowManager {
     } else if (url.startsWith('file:///')) {
       win.loadURL(url)
     } else {
-      const loadUrl = `file:///${path.join(pluginPath, url)}`
+      const loadUrl = pathToFileURL(path.join(pluginPath, url)).href
       win.loadURL(loadUrl)
     }
 

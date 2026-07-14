@@ -1,3 +1,9 @@
+/**
+ * 主进程 API 初始化编排器。
+ *
+ * 这里定义各 API 的依赖顺序；包含持久状态恢复的模块必须完成初始化后，后续运行期服务才可启动。
+ */
+
 import { BrowserWindow, ipcMain, Notification } from 'electron'
 import type { PluginManager } from '../managers/pluginManager'
 
@@ -93,7 +99,7 @@ class APIManager {
   /**
    * 初始化所有API模块
    */
-  public init(mainWindow: BrowserWindow, pluginManager: PluginManager): void {
+  public async init(mainWindow: BrowserWindow, pluginManager: PluginManager): Promise<void> {
     this.pluginManager = pluginManager
 
     // 初始化共享API
@@ -107,7 +113,7 @@ class APIManager {
     aiModelsAPI.init()
     appsAPI.init(mainWindow, pluginManager)
     appsAPI.setShowWindowCallback(() => windowManager.showWindow())
-    pluginsAPI.init(mainWindow, pluginManager)
+    await pluginsAPI.init(mainWindow, pluginManager)
     pluginsAPI.setCommandsCacheInvalidator(() => appsAPI.invalidateCommandsCache(false))
     windowAPI.init(mainWindow)
     settingsAPI.init(mainWindow, pluginManager)

@@ -1,6 +1,13 @@
+/**
+ * 主进程插件管理入口。
+ *
+ * 本模块协调插件列表、禁用状态、开发项目和正式插件安装单元；正式插件的实体变更必须
+ * 经过共享事务服务，确保安装、升级、卸载与启动恢复观察到同一份状态。
+ */
+
 import type { PluginManager } from '../../managers/pluginManager'
 import { ipcMain } from 'electron'
-import { promises as fs } from 'fs'
+import { promises as fs } from 'node:fs'
 import path from 'path'
 import { pathToFileURL } from 'url'
 import { normalizeIconPath } from '../../common/iconUtils'
@@ -14,6 +21,12 @@ import { PluginDevProjectsAPI } from './pluginDevProjects'
 import { PluginInstallerAPI } from './pluginInstaller'
 import { PluginMarketAPI } from './pluginMarket'
 import { requestPluginMarket } from './pluginMarketConfig'
+import { PluginInstallUnitService } from '../../core/pluginInstallUnit/service'
+import type {
+  InstalledPluginRecord,
+  PluginRemovalStateSnapshot
+} from '../../core/pluginInstallUnit/types'
+import { getPluginsPath } from '../../core/appData/appDataPaths'
 import {
   getPluginDataPrefix,
   isDevelopmentPluginName
@@ -23,6 +36,7 @@ import {
   normalizeConfigList,
   removePluginNameFromSettingList
 } from '../../../shared/pluginSettings'
+import { PROVIDER_SETTINGS_KEY } from '@shared/providerShared'
 
 // 插件目录
 const DISABLED_PLUGINS_KEY = 'disabled-plugins'
@@ -32,6 +46,8 @@ const PLUGIN_NAME_SETTING_KEYS = [
   'auto-start-plugin',
   ENABLED_MAIN_PUSH_PLUGINS_KEY
 ]
+const PLUGIN_USAGE_STATE_KEYS = ['command-history', 'pinned-commands', ...PLUGIN_NAME_SETTING_KEYS]
+const PLUGIN_REMOVAL_STATE_KEYS = [...new Set([...PLUGIN_USAGE_STATE_KEYS, PROVIDER_SETTINGS_KEY])]
 
 export interface DeletePluginOptions {
   deleteData?: boolean
@@ -45,11 +61,21 @@ export class PluginsAPI {
   private pluginManager: PluginManager | null = null
   private disabledPluginPathSet: Set<string> | null = null
   private commandsCacheInvalidator: (() => void) | null = null
+  /** 正式插件实体、注册记录和禁用路径的唯一事务边界。 */
+  private pluginInstallUnits!: PluginInstallUnitService
   public devProjects!: PluginDevProjectsAPI
   public installer!: PluginInstallerAPI
   public market!: PluginMarketAPI
 
-  public init(mainWindow: Electron.BrowserWindow, pluginManager: PluginManager): void {
+  /**
+   * 初始化插件 API，并在任何插件 IPC 可用前完成事务恢复。
+   * @param mainWindow 主窗口
+   * @param pluginManager 插件运行期管理器
+   */
+  public async init(
+    mainWindow: Electron.BrowserWindow,
+    pluginManager: PluginManager
+  ): Promise<void> {
     this.mainWindow = mainWindow
     this.pluginManager = pluginManager
     this.devProjects = new PluginDevProjectsAPI({
@@ -67,6 +93,25 @@ export class PluginsAPI {
       getRunningPlugins: () => this.getRunningPlugins()
     })
     this.market = new PluginMarketAPI()
+    this.pluginInstallUnits = new PluginInstallUnitService({
+      pluginsDir: getPluginsPath(),
+      registry: {
+        readPlugins: () => this.readInstalledPlugins(),
+        writePlugins: (plugins) => this.writeInstalledPlugins(plugins),
+        readDisabledPluginPaths: () => this.getDisabledPlugins(),
+        writeDisabledPluginPaths: (paths) => this.writeDisabledPluginPaths(paths),
+        capturePluginRemovalState: () => this.capturePluginRemovalState(),
+        commitPluginRemovalState: (pluginName) => this.commitPluginRemovalState(pluginName),
+        restorePluginRemovalState: (snapshot) => this.restorePluginRemovalState(snapshot)
+      }
+    })
+    const recovery = await this.pluginInstallUnits.recoverPendingTransactions()
+    if (recovery.failed.length > 0) {
+      const details = recovery.failed
+        .map((failure) => `${failure.pluginName || failure.transactionId}: ${failure.error}`)
+        .join('；')
+      throw new Error(`插件事务恢复失败：${details}`)
+    }
     this.installer = new PluginInstallerAPI({
       get mainWindow() {
         return mainWindow
@@ -77,9 +122,11 @@ export class PluginsAPI {
       get devProjects() {
         return pluginsAPI.devProjects
       },
+      get pluginInstallUnits() {
+        return pluginsAPI.pluginInstallUnits
+      },
       getPlugins: () => this.getPlugins(),
       readInstalledPlugins: () => this.readInstalledPlugins(),
-      writeInstalledPlugins: (plugins) => this.writeInstalledPlugins(plugins),
       notifyPluginsChanged: () => this.notifyPluginsChanged(),
       validatePluginConfig: (config, existing) => this.validatePluginConfig(config, existing)
     })
@@ -366,6 +413,12 @@ export class PluginsAPI {
     databaseAPI.dbPut('plugins', plugins)
   }
 
+  /** 同步更新禁用路径内存索引与持久化状态。 */
+  private writeDisabledPluginPaths(paths: string[]): void {
+    this.disabledPluginPathSet = new Set(paths)
+    databaseAPI.dbPut(DISABLED_PLUGINS_KEY, paths)
+  }
+
   private notifyPluginsChanged(): void {
     this.commandsCacheInvalidator?.()
     this.mainWindow?.webContents.send('plugins-changed')
@@ -380,7 +433,7 @@ export class PluginsAPI {
   private validatePluginConfig(
     pluginConfig: any,
     existingPlugins: any[]
-  ): { valid: boolean; error?: string } {
+  ): { valid: true } | { valid: false; error: string } {
     // 检查 title 是否冲突（如果有 title 字段）
     // 排除开发版插件（name 以 __dev 结尾），因为开发版和安装版可以共存，title 相同是合理的
     if (pluginConfig.title) {
@@ -476,12 +529,12 @@ export class PluginsAPI {
    */
   public async deletePlugin(pluginPath: string, options: DeletePluginOptions = {}): Promise<any> {
     try {
-      const plugins: any = databaseAPI.dbGet('plugins')
+      const plugins: InstalledPluginRecord[] = databaseAPI.dbGet('plugins')
       if (!plugins || !Array.isArray(plugins)) {
         return { success: false, error: '插件列表不存在' }
       }
 
-      const pluginIndex = plugins.findIndex((p: any) => p.path === pluginPath)
+      const pluginIndex = plugins.findIndex((plugin) => plugin.path === pluginPath)
       if (pluginIndex === -1) {
         return { success: false, error: '插件不存在' }
       }
@@ -496,51 +549,142 @@ export class PluginsAPI {
         }
       }
 
-      this.pluginManager?.killPlugin(pluginPath)
-
-      plugins.splice(pluginIndex, 1)
-      databaseAPI.dbPut('plugins', plugins)
-
-      this.devProjects.removePluginUsageData(pluginInfo.name)
-
-      // 清理该插件的 provider 配置（启用 / 默认 / 自定义参数）
-      // 与插件数据无关，卸载即应移除，避免残留指向已卸载插件的 provider 引用。
-      try {
-        providerManager.cleanupForPlugin(pluginInfo.name)
-      } catch (error) {
-        console.error('[Plugins] 清理 provider 配置失败:', error)
-      }
-
-      if (options.deleteData !== false) {
-        await databaseAPI.clearPluginData(pluginInfo.name)
-        this.removePluginNameConfigs(PLUGIN_NAME_SETTING_KEYS, pluginInfo.name)
-      }
-
-      // 删除禁用插件标识
-      const disabledPlugins = this.getDisabledPluginSet()
-      if (disabledPlugins.delete(pluginPath)) {
-        this.disabledPluginPathSet = disabledPlugins
-        databaseAPI.dbPut(DISABLED_PLUGINS_KEY, [...disabledPlugins])
-      }
-
-      this.notifyPluginsChanged()
-
-      if (!pluginInfo.isDevelopment) {
-        try {
-          await fs.rm(pluginPath, { recursive: true, force: true })
-          console.log('[Plugins] 已删除插件目录:', pluginPath)
-        } catch (error) {
-          console.error('[Plugins] 删除插件目录失败:', error)
-        }
-      } else {
-        console.log('[Plugins] 开发中插件，保留目录:', pluginPath)
-      }
-
-      return { success: true }
+      return await this.deleteInstalledPlugin({
+        plugins,
+        pluginIndex,
+        pluginInfo,
+        deleteData: options.deleteData !== false
+      })
     } catch (error: unknown) {
       console.error('[Plugins] 删除插件失败:', error)
       return { success: false, error: error instanceof Error ? error.message : '未知错误' }
     }
+  }
+
+  /** 执行实体提交，并在成功提交后清理非实体引用与可选数据。 */
+  private async deleteInstalledPlugin(options: {
+    plugins: InstalledPluginRecord[]
+    pluginIndex: number
+    pluginInfo: InstalledPluginRecord
+    deleteData: boolean
+  }): Promise<{ success: true; warning?: string }> {
+    const warnings: string[] = []
+    if (options.pluginInfo.isDevelopment) {
+      this.removeDevelopmentPluginRecord(options)
+      this.collectCleanupWarning(warnings, this.cleanupPluginUsage(options.pluginInfo.name))
+      this.collectCleanupWarning(warnings, this.cleanupProviderUsage(options.pluginInfo.name))
+      if (options.deleteData) {
+        this.removePluginNameConfigs(PLUGIN_NAME_SETTING_KEYS, options.pluginInfo.name)
+      }
+    } else {
+      const applicationState = this.capturePluginRemovalState()
+      const mutation = await this.pluginInstallUnits.removePlugin({
+        plugin: options.pluginInfo,
+        stopPrevious: async () => {
+          await this.pluginManager?.stopPluginByName(options.pluginInfo.name)
+        },
+        commitApplicationState: () => this.commitPluginRemovalState(options.pluginInfo.name),
+        rollbackApplicationState: () => this.restorePluginRemovalState(applicationState)
+      })
+      if (mutation.warning) warnings.push(mutation.warning)
+    }
+
+    if (options.deleteData) {
+      this.collectCleanupWarning(warnings, await this.cleanupPluginData(options.pluginInfo.name))
+    }
+    this.notifyPluginsChanged()
+    return warnings.length > 0 ? { success: true, warning: warnings.join('；') } : { success: true }
+  }
+
+  /** 开发插件只移除安装记录和禁用状态，源码目录继续由开发者管理。 */
+  private removeDevelopmentPluginRecord(options: {
+    plugins: InstalledPluginRecord[]
+    pluginIndex: number
+    pluginInfo: InstalledPluginRecord
+  }): void {
+    this.pluginManager?.killPlugin(options.pluginInfo.path)
+    options.plugins.splice(options.pluginIndex, 1)
+    this.writeInstalledPlugins(options.plugins)
+    this.removeDisabledPluginPath(options.pluginInfo.path)
+    console.log('[Plugins] 开发中插件，保留目录:', options.pluginInfo.path)
+  }
+
+  /** 清理开发项目对插件身份的使用记录。 */
+  private cleanupPluginUsage(pluginName: string): string | undefined {
+    try {
+      this.devProjects.removePluginUsageData(pluginName)
+      return undefined
+    } catch (error) {
+      return `插件引用清理失败：${this.errorMessage(error)}`
+    }
+  }
+
+  /** 清理 provider 中指向已卸载插件的配置引用。 */
+  private cleanupProviderUsage(pluginName: string): string | undefined {
+    try {
+      providerManager.cleanupForPlugin(pluginName)
+      return undefined
+    } catch (error) {
+      return `Provider 配置清理失败：${this.errorMessage(error)}`
+    }
+  }
+
+  /** 捕获正式卸载会修改的主程序状态，供实体事务失败时逐键恢复。 */
+  private capturePluginRemovalState(): PluginRemovalStateSnapshot {
+    const values: Record<string, unknown> = {}
+    for (const key of PLUGIN_REMOVAL_STATE_KEYS) {
+      values[key] = structuredClone(databaseAPI.dbGet(key))
+    }
+    return { values }
+  }
+
+  /** 提交正式插件卸载涉及的引用、Provider 与设置清理。 */
+  private commitPluginRemovalState(pluginName: string): void {
+    this.devProjects.removePluginUsageData(pluginName)
+    providerManager.cleanupForPlugin(pluginName)
+    this.removePluginNameConfigs(PLUGIN_NAME_SETTING_KEYS, pluginName)
+  }
+
+  /** 恢复卸载开始前捕获的应用状态；任何写入失败都会继续阻止成功结果。 */
+  private restorePluginRemovalState(snapshot: PluginRemovalStateSnapshot): void {
+    for (const [key, value] of Object.entries(snapshot.values)) {
+      if (value === null) {
+        databaseAPI.dbRemove(key)
+      } else {
+        databaseAPI.dbPut(key, value)
+      }
+    }
+    this.mainWindow?.webContents.send('history-changed')
+    this.mainWindow?.webContents.send('pinned-changed')
+  }
+
+  /** 清理插件持久数据，并把提交后的失败转换为明确警告。 */
+  private async cleanupPluginData(pluginName: string): Promise<string | undefined> {
+    try {
+      const result = await databaseAPI.clearPluginData(pluginName)
+      return result?.success === false
+        ? `插件数据清理失败：${result.error || '未知错误'}`
+        : undefined
+    } catch (error) {
+      return `插件数据清理失败：${this.errorMessage(error)}`
+    }
+  }
+
+  /** 删除开发插件记录对应的禁用路径。 */
+  private removeDisabledPluginPath(pluginPath: string): void {
+    const disabledPlugins = this.getDisabledPluginSet()
+    if (!disabledPlugins.delete(pluginPath)) return
+    this.writeDisabledPluginPaths([...disabledPlugins])
+  }
+
+  /** 只收集真实存在的清理警告。 */
+  private collectCleanupWarning(warnings: string[], warning: string | undefined): void {
+    if (warning) warnings.push(warning)
+  }
+
+  /** 保留未知异常中的原始错误信息。 */
+  private errorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error)
   }
 
   private removePluginNameConfigs(keys: string[], pluginName: string): void {
@@ -640,10 +784,26 @@ export class PluginsAPI {
       if (!name || name.includes('/') || name.includes('\\')) {
         return { success: false, error: '插件名称不存在' }
       }
+      const installedPlugin = this.readInstalledPlugins().find((plugin) => plugin.name === name)
+      if (installedPlugin) {
+        return await this.getInstalledPluginReadme(installedPlugin)
+      }
       return await this.getRemotePluginReadme(name)
     } catch (error: unknown) {
       console.error('[Plugins] 读取插件 README 失败:', error)
       return { success: false, error: error instanceof Error ? error.message : '读取失败' }
+    }
+  }
+
+  /** 从目录或 ASAR 虚拟根路径读取已安装插件的 README。 */
+  private async getInstalledPluginReadme(
+    plugin: InstalledPluginRecord
+  ): Promise<{ success: boolean; content?: string; error?: string }> {
+    try {
+      const content = await fs.readFile(path.join(plugin.path, 'README.md'), 'utf8')
+      return { success: true, content }
+    } catch (error) {
+      return { success: false, error: this.errorMessage(error) }
     }
   }
 

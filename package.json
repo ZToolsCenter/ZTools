@@ -38,6 +38,7 @@
     "build:linux:arm64": "cross-env ZTOOLS_TARGET_PLATFORM=linux pnpm build && electron-builder --linux --arm64",
     "updater": "node scripts/updater.mjs",
     "test": "vitest run",
+    "test:asar-runtime": "node tests/fixtures/asar-runtime/runner.cjs",
     "test:windows-scanner": "electron scripts/compare-windows-scanner.cjs",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",

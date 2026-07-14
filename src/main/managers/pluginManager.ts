@@ -1,3 +1,9 @@
+/**
+ * 插件运行期与视图生命周期管理器。
+ *
+ * 该模块从插件虚拟根路径创建主视图、后台预加载和分离视图；目录与 ASAR 必须共享相同路径语义。
+ */
+
 import { BrowserWindow, session, shell, WebContents, WebContentsView } from 'electron'
 import fsSync from 'fs'
 import path from 'path'
@@ -9,6 +15,7 @@ import api from '../api'
 import { WINDOW_INITIAL_HEIGHT, WINDOW_DEFAULT_HEIGHT, WINDOW_WIDTH } from '../common/constants'
 import detachedWindowManager, { DETACHED_TITLEBAR_HEIGHT } from '../core/detachedWindowManager'
 import { GLOBAL_SCROLLBAR_CSS } from '../core/globalStyles'
+import { registerPluginPreloadErrorReporter } from '../core/pluginPreloadErrorReporter'
 import {
   CUSTOM_INTERNAL_API_PLUGIN_NAMES_KEY,
   canPluginUseInternalApi,
@@ -37,6 +44,7 @@ import {
 console.log('[Plugin] mainPreload', mainPreload)
 
 const PLUGIN_OUT_GRACE_MS = 200
+const PLUGIN_CLOSE_TIMEOUT_MS = 5000
 
 /**
  * 为插件视图注册外部链接拦截器
@@ -96,6 +104,16 @@ interface PluginViewInfo {
 interface PluginLastEnterState {
   featureCode: string
   cmdType: string
+}
+
+/** 安装事务停止插件时需要统一释放的运行资源。 */
+interface PluginRuntimeStopTargets {
+  /** 同名插件在主窗口缓存中的全部视图。 */
+  mainViews: PluginViewInfo[]
+  /** 同名插件在分离窗口中的全部视图。 */
+  detachedViews: WebContentsView[]
+  /** 需要成组关闭主视图、分离窗口和子窗口的插件路径。 */
+  pluginPaths: string[]
 }
 
 export class PluginManager {
@@ -234,10 +252,11 @@ export class PluginManager {
   /**
    * 创建插件的 WebContentsView 实例
    */
-  private createPluginWebContentsView(
-    sess: Electron.Session,
+  private createPluginWebContentsView(options: {
+    session: Electron.Session
+    pluginName: string
     preloadPath?: string
-  ): WebContentsView {
+  }): WebContentsView {
     const view = new WebContentsView({
       webPreferences: {
         backgroundThrottling: false,
@@ -247,11 +266,18 @@ export class PluginManager {
         sandbox: false,
         allowRunningInsecureContent: true,
         webviewTag: true,
-        preload: preloadPath,
-        session: sess,
+        preload: options.preloadPath,
+        session: options.session,
         defaultFontSize: 14
       }
     })
+    if (options.preloadPath) {
+      registerPluginPreloadErrorReporter({
+        webContents: view.webContents,
+        pluginName: options.pluginName,
+        preloadPath: options.preloadPath
+      })
+    }
     view.setBackgroundColor('#00000000')
     return view
   }
@@ -622,7 +648,11 @@ export class PluginManager {
         : undefined
 
       const sess = await this.setupPluginSession(effectiveName, pluginPath)
-      this.pluginView = this.createPluginWebContentsView(sess, preloadPath)
+      this.pluginView = this.createPluginWebContentsView({
+        session: sess,
+        pluginName: effectiveName,
+        preloadPath
+      })
 
       // 注册主窗口专属的事件监听
       this.registerMainWindowPluginEvents(this.pluginView, pluginPath)
@@ -957,7 +987,11 @@ export class PluginManager {
         : undefined
 
       const sess = await this.setupPluginSession(effectiveName, pluginPath)
-      const view = this.createPluginWebContentsView(sess, preloadPath)
+      const view = this.createPluginWebContentsView({
+        session: sess,
+        pluginName: effectiveName,
+        preloadPath
+      })
 
       // 注册事件监听
       this.registerMainWindowPluginEvents(view, pluginPath)
@@ -1112,6 +1146,119 @@ export class PluginManager {
     }
     console.log('[Plugin] 未找到插件:', pluginName)
     return false
+  }
+
+  /**
+   * 为安装或卸载事务完整停止同名插件，并在所有视图释放后返回。
+   * 事务提交依赖真实文件句柄已经关闭，因此不能复用只负责触发关闭的同步接口。
+   * @param pluginName 插件稳定名称
+   */
+  public async stopPluginByName(pluginName: string): Promise<boolean> {
+    const targets = this.collectRuntimeStopTargets(pluginName)
+    if (targets.pluginPaths.length === 0) {
+      console.log('[Plugin] 未找到插件:', pluginName)
+      return false
+    }
+
+    await Promise.all(
+      [...targets.mainViews.map((item) => item.view), ...targets.detachedViews].map((view) =>
+        this.assemblyCoordinator.dispatchLifecycleEvent(view, 'PluginOut', true)
+      )
+    )
+    await new Promise<void>((resolve) => setTimeout(resolve, PLUGIN_OUT_GRACE_MS))
+    this.closeRuntimeStopTargets(pluginName, targets)
+    await this.waitForRuntimeStopTargets(pluginName, targets)
+    this.assertRuntimeStopCompleted(pluginName, targets)
+    console.log('[Plugin] 插件运行实例已完整停止:', pluginName)
+    return true
+  }
+
+  /** 收集同名插件在主窗口和分离窗口中的全部运行实例。 */
+  private collectRuntimeStopTargets(pluginName: string): PluginRuntimeStopTargets {
+    const mainViews = this.pluginViews.filter((item) => item.name === pluginName)
+    const detachedWindows = detachedWindowManager
+      .getAllWindows()
+      .filter((item) => item.pluginName === pluginName)
+    return {
+      mainViews,
+      detachedViews: detachedWindows.map((item) => item.view),
+      pluginPaths: [
+        ...new Set([
+          ...mainViews.map((item) => item.path),
+          ...detachedWindows.map((item) => item.pluginPath)
+        ])
+      ]
+    }
+  }
+
+  /** 在生命周期宽限结束后释放事务目标持有的全部 Electron 资源。 */
+  private closeRuntimeStopTargets(pluginName: string, targets: PluginRuntimeStopTargets): void {
+    if (this.pluginView && targets.mainViews.some((item) => item.view === this.pluginView)) {
+      this.mainWindow?.contentView.removeChildView(this.pluginView)
+      this.pluginView = null
+      this.currentPluginPath = null
+      this.assemblyCoordinator.clearCurrentSession()
+    }
+    for (const item of targets.mainViews) {
+      const webContents = item.view.webContents
+      if (!webContents.isDestroyed()) webContents.close()
+      this.assemblyCoordinator.clearDomReady(webContents.id)
+    }
+    this.pluginViews = this.pluginViews.filter((item) => item.name !== pluginName)
+    for (const pluginPath of targets.pluginPaths) {
+      pluginWindowManager.closeByPlugin(pluginPath)
+      detachedWindowManager.closeByPlugin(pluginPath)
+      this.pluginLastEnterState.delete(pluginPath)
+    }
+  }
+
+  /** 等待 Electron 真正释放目标 WebContents，避免文件事务抢在异步关闭前切换 ASAR。 */
+  private async waitForRuntimeStopTargets(
+    pluginName: string,
+    targets: PluginRuntimeStopTargets
+  ): Promise<void> {
+    const webContents = [
+      ...targets.mainViews.map((item) => item.view),
+      ...targets.detachedViews
+    ].map((view) => view.webContents)
+    await Promise.all(
+      webContents.map((contents) => this.waitForWebContentsDestroyed(pluginName, contents))
+    )
+  }
+
+  /** 等待单个 WebContents 的销毁事件，并在超时后阻止安装单元事务继续。 */
+  private async waitForWebContentsDestroyed(
+    pluginName: string,
+    webContents: Electron.WebContents
+  ): Promise<void> {
+    if (webContents.isDestroyed()) return
+    await new Promise<void>((resolve, reject) => {
+      const handleDestroyed = (): void => {
+        clearTimeout(timeout)
+        resolve()
+      }
+      const timeout = setTimeout(() => {
+        webContents.removeListener('destroyed', handleDestroyed)
+        reject(new Error(`等待插件运行实例关闭超时：${pluginName}`))
+      }, PLUGIN_CLOSE_TIMEOUT_MS)
+      webContents.once('destroyed', handleDestroyed)
+    })
+  }
+
+  /** 资源仍存活时明确阻止文件事务继续切换 ASAR。 */
+  private assertRuntimeStopCompleted(pluginName: string, targets: PluginRuntimeStopTargets): void {
+    const remainingViews = [...targets.mainViews.map((item) => item.view), ...targets.detachedViews]
+      .map((view) => view.webContents)
+      .filter((webContents) => !webContents.isDestroyed())
+    const hasChildWindows = targets.pluginPaths.some((pluginPath) =>
+      pluginWindowManager.hasWindowsByPlugin(pluginPath)
+    )
+    const hasDetachedWindows = detachedWindowManager
+      .getAllWindows()
+      .some((item) => targets.pluginPaths.includes(item.pluginPath))
+    if (remainingViews.length > 0 || hasChildWindows || hasDetachedWindows) {
+      throw new Error(`插件运行实例未能完整停止：${pluginName}`)
+    }
   }
 
   // 终止所有插件（包括分离窗口中的插件）
@@ -1754,7 +1901,11 @@ export class PluginManager {
         : undefined
 
       const sess = await this.setupPluginSession(effectiveName, pluginPath)
-      const pluginView = this.createPluginWebContentsView(sess, preloadPath)
+      const pluginView = this.createPluginWebContentsView({
+        session: sess,
+        pluginName: effectiveName,
+        preloadPath
+      })
 
       // 监听插件进程崩溃或退出
       pluginView.webContents.on('render-process-gone', (_event, details) => {
