@@ -125,8 +125,8 @@ export function getCurrentShortcut(): string {
 }
 
 app.whenReady().then(async () => {
-  // 注册 renderer-ready IPC 事件，用于静默启动控制（需在创建窗口前注册，避免竞态）
-  ipcMain.on('renderer-ready', () => {
+  // 启动时仅处理一次：关闭静默启动则在渲染就绪后显示主窗口（需在创建窗口前注册，避免竞态）
+  ipcMain.once('renderer-ready', () => {
     try {
       const settingsDoc = lmdbInstance.get('ZTOOLS/settings-general')
       const silentStart = settingsDoc?.data?.silentStart ?? true
