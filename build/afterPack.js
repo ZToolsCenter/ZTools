@@ -32,6 +32,50 @@ async function copy(src, dest) {
   }
 }
 
+/**
+ * 为 Windows 和 macOS 完整安装包写入标准更新兼容标记。
+ * @param {import('app-builder-lib').AfterPackContext} context Electron Builder 打包上下文。
+ * @returns {Promise<void>} 安装标记写入完成后结束的 Promise。
+ * @throws {Error} 无法创建或写入安装标记时抛出错误。
+ */
+async function writeFullInstallInfo(context) {
+  if (!['darwin', 'win32'].includes(context.electronPlatformName)) return
+
+  // 标记必须位于最终 Resources 目录中，并在正式签名前完成写入。
+  const packageJson = require('../package.json')
+  const appId = 'top.z-tools'
+  let resourcesPath = ''
+  let updater = ''
+
+  if (context.electronPlatformName === 'darwin') {
+    const appName = context.packager.appInfo.productFilename
+    resourcesPath = path.join(context.appOutDir, `${appName}.app`, 'Contents', 'Resources')
+    updater = 'electron-updater-mac'
+  } else {
+    resourcesPath = path.join(context.appOutDir, 'resources')
+    updater = 'electron-updater-nsis'
+  }
+
+  const installInfo = {
+    schemaVersion: 1,
+    appId,
+    electronVersion: packageJson.devDependencies.electron,
+    updater
+  }
+  const installInfoPath = path.join(resourcesPath, 'ztools-install-info.json')
+
+  // 确保非标准框架输出也能创建标记目录。
+  await ensureDir(resourcesPath)
+  await fs.writeFile(installInfoPath, `${JSON.stringify(installInfo, null, 2)}\n`)
+  console.log(`已写入 ${context.electronPlatformName} 完整安装标记: ${installInfoPath}`)
+}
+
+/**
+ * 完成 Electron Builder afterPack 阶段的资源清理、内置插件复制和更新包生成。
+ * @param {import('app-builder-lib').AfterPackContext} context Electron Builder 打包上下文。
+ * @returns {Promise<void>} 所有 afterPack 操作完成后结束的 Promise。
+ * @throws {Error} 内置插件复制或其他必须的打包步骤失败时抛出错误。
+ */
 module.exports = async function (context) {
   console.log('开始清理国际化文件...')
 
@@ -155,39 +199,13 @@ module.exports = async function (context) {
     }
   }
 
-  // 复制升级程序
-  console.log('\n开始复制升级程序...')
-  const updaterDir = path.resolve(__dirname, '../updater')
-
+  // 写入完整安装标记，供标准更新器隔离 legacy ASAR 安装。
+  console.log('\n开始写入完整安装标记...')
   try {
-    if (context.electronPlatformName === 'darwin') {
-      const safeArch = context.arch === 3 || context.arch === 'arm64' ? 'arm64' : 'amd64'
-
-      const appName = context.packager.appInfo.productFilename
-      const appPath = path.join(context.appOutDir, `${appName}.app`)
-      const dest = path.join(appPath, 'Contents', 'MacOS', 'ztools-updater')
-      const src = path.join(updaterDir, `mac-${safeArch}`, 'ztools-updater')
-
-      if (await pathExists(src)) {
-        await copy(src, dest)
-        await fs.chmod(dest, 0o755)
-        console.log(`已复制 updater 到: ${dest}`)
-      } else {
-        console.error(`未找到 updater 文件: ${src}`)
-      }
-    } else if (context.electronPlatformName === 'win32') {
-      const src = path.join(updaterDir, 'win-amd64', 'ztools-agent.exe')
-      const dest = path.join(context.appOutDir, 'ztools-agent.exe')
-
-      if (await pathExists(src)) {
-        await copy(src, dest)
-        console.log(`已复制 agent 到: ${dest}`)
-      } else {
-        console.error(`未找到 agent 文件: ${src}`)
-      }
-    }
+    await writeFullInstallInfo(context)
   } catch (err) {
-    console.error('复制升级程序失败:', err)
+    console.error('写入完整安装标记失败:', err)
+    throw err
   }
 
   // 复制内置插件
@@ -254,7 +272,7 @@ module.exports = async function (context) {
 
   console.log('\n国际化文件清理完成!')
 
-  // 打包更新文件
+  // 保留 legacy ASAR 更新包，供尚未完整迁移的旧客户端使用。
   try {
     console.log('\n开始打包更新文件...')
     const AdmZip = require('adm-zip')

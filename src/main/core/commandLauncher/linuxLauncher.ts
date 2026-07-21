@@ -86,7 +86,7 @@ export async function launchApp(
                 WindowManager.activateWindow(wid)
                 return resolve(true)
               }
-            } catch (e) {
+            } catch {
               // 忽略权限不足或进程突发关闭导致的错误
             }
           }

@@ -1,29 +1,33 @@
 import { app } from 'electron'
-import path from 'path'
-import LmdbDatabase from './index'
+import { storageManager } from '../storage/storageManager'
 
 /**
- * 创建共享的 LMDB 数据库实例
- * 数据库文件存储在 userData/lmdb 目录下
+ * 3.0 共享数据库入口。
+ *
+ * 这里导出的是 StorageRouter：调用方继续使用 lmdbInstance，
+ * 实际读写会按 key 路由到 device/account LMDB。
  */
-const lmdbInstance = new LmdbDatabase({
-  path: path.join(app.getPath('userData'), 'lmdb'),
-  mapSize: 2 * 1024 * 1024 * 1024, // 2GB
-  maxDbs: 3 // main, meta, attachment
-})
+const initState = storageManager.init()
+const lmdbInstance = storageManager.getRouter()
 
-console.log('[LMDB] LMDB database created successfully')
+console.log('[LMDB] ZTools 3.0 storage initialized', {
+  firstRun: initState.firstRun,
+  legacyLmdbFound: initState.legacyLmdbFound,
+  device: initState.layout.deviceLmdbPath,
+  defaultAccount: initState.layout.defaultAccountLmdbPath
+})
 
 // 导出单例实例
 export default lmdbInstance
+export { storageManager }
 
 /**
  * 清理函数：应用退出时调用
  */
 export function closeLmdb(): void {
   try {
-    lmdbInstance.close()
-    console.log('[LMDB] LMDB database closed successfully')
+    storageManager.close()
+    console.log('[LMDB] ZTools storage closed successfully')
   } catch (e) {
     console.error('[LMDB] Error closing LMDB:', e)
   }

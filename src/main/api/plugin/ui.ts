@@ -63,6 +63,12 @@ export class PluginUIAPI {
 
     // 插件 ESC 按键事件（由插件 preload 通过 JS 拦截后上报）
     ipcMain.on('plugin-esc-pressed', () => {
+      const settings = databaseAPI.dbGet('settings-general') || {}
+      const escShortcutEnabled = settings?.builtinAppShortcutsEnabled?.esc !== false
+      if (!escShortcutEnabled) {
+        return
+      }
+
       if (this.pluginManager && typeof this.pluginManager.handlePluginEsc === 'function') {
         this.pluginManager.handlePluginEsc()
       }
@@ -332,7 +338,7 @@ export class PluginUIAPI {
     const settings = databaseAPI.dbGet('settings-general')
     return {
       isDark: nativeTheme.shouldUseDarkColors,
-      primaryColor: settings?.primaryColor || 'blue',
+      primaryColor: settings?.primaryColor || 'green',
       customColor: settings?.customColor,
       windowMaterial: windowManager.getWindowMaterial()
     }

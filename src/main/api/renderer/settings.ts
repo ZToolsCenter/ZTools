@@ -3,12 +3,16 @@ import fs from 'fs'
 import type { PluginManager } from '../../managers/pluginManager'
 
 // 共享API（主程序和插件都能用）
-import { WindowManager as NativeWindowManager } from '../../core/native/index.js'
-import { getCurrentShortcut, updateShortcut } from '../../index.js'
+import {
+  OptimizedShortcutManager,
+  WindowManager as NativeWindowManager
+} from '../../core/native/index.js'
+import { getCurrentShortcut, updateShortcut } from '../../appMain.js'
 
 import doubleTapManager from '../../core/doubleTapManager.js'
 import proxyManager from '../../managers/proxyManager.js'
 import windowManager from '../../managers/windowManager.js'
+import { primeScreenCaptureFrame } from '../../core/screenCapture'
 import type { GlobalShortcutPreparation } from '../index'
 import api from '../index'
 import databaseAPI from '../shared/database'
@@ -48,13 +52,126 @@ export class SettingsAPI {
     this.loadAndApplySettings()
   }
 
+  /**
+   * 停止设置模块持有的 native 快捷键监听资源。
+   */
+  public cleanup(): void {
+    if (process.platform === 'win32') {
+      OptimizedShortcutManager.stopListener()
+    }
+    this.nativeOptimizedShortcutSet.clear()
+  }
+
   // 临时快捷键录制相关
   private recordingShortcuts: string[] = []
   // 全局快捷键配置映射（存储每个快捷键的 autoCopy 等配置）
-  private globalShortcutConfigs: Map<string, { autoCopy: boolean }> = new Map()
+  private globalShortcutConfigs: Map<
+    string,
+    { autoCopy: boolean; preScreenshotOptimization: boolean }
+  > = new Map()
+  private globalShortcutTargets = new Map<string, string>()
+  private globalShortcutPreparations = new Map<string, GlobalShortcutPreparation>()
+  private nativeOptimizedShortcutSet = new Set<string>()
   private globalShortcutKeyboardStateReleasers = new Map<string, () => void>()
   // 全局快捷键触发流程执行中时，后续触发会被忽略，避免重复复制和重复启动。
   private isGlobalShortcutTriggering = false
+
+  // 启动 native 优化快捷键监听，并把命中事件回流到既有执行链路。
+  private setupOptimizedShortcutListener(): void {
+    if (process.platform !== 'win32') {
+      return
+    }
+
+    OptimizedShortcutManager.ensureListener(({ shortcut }) => {
+      console.log(`[Settings] native 优化快捷键触发: ${shortcut}`)
+      const preparation = this.globalShortcutPreparations.get(shortcut)
+      if (!preparation) {
+        console.warn(`[Settings] 未找到 native 优化快捷键预处理信息: ${shortcut}`)
+        return
+      }
+      void this.triggerGlobalShortcut(shortcut, preparation, true)
+    })
+  }
+
+  // 判断某个快捷键是否应由 native 接管监听。
+  private shouldUseNativeOptimizedShortcut(
+    shortcut: string,
+    preScreenshotOptimization: boolean
+  ): boolean {
+    return (
+      process.platform === 'win32' &&
+      preScreenshotOptimization &&
+      !this.isDoubleTapShortcut(shortcut)
+    )
+  }
+
+  // 注册单个 native 优化快捷键，并确保底层监听存在。
+  private registerNativeOptimizedShortcut(shortcut: string): void {
+    this.setupOptimizedShortcutListener()
+    const result = OptimizedShortcutManager.registerShortcut(shortcut)
+    if (!result.success) {
+      throw new Error(result.error || 'native 优化快捷键注册失败')
+    }
+    this.nativeOptimizedShortcutSet.add(shortcut)
+  }
+
+  // 注销单个 native 优化快捷键，并在为空时停止底层监听。
+  private unregisterNativeOptimizedShortcut(shortcut: string): void {
+    const result = OptimizedShortcutManager.unregisterShortcut(shortcut)
+    if (!result.success) {
+      throw new Error(result.error || 'native 优化快捷键注销失败')
+    }
+    this.nativeOptimizedShortcutSet.delete(shortcut)
+    if (this.nativeOptimizedShortcutSet.size === 0) {
+      OptimizedShortcutManager.stopListener()
+    }
+  }
+
+  // 统一清理一个全局快捷键的运行时注册状态。
+  private unregisterGlobalShortcutBackend(shortcut: string): void {
+    if (this.isDoubleTapShortcut(shortcut)) {
+      const modifier = this.getDoubleTapModifier(shortcut)
+      doubleTapManager.unregister(modifier)
+      return
+    }
+
+    if (this.nativeOptimizedShortcutSet.has(shortcut)) {
+      this.unregisterNativeOptimizedShortcut(shortcut)
+      return
+    }
+
+    globalShortcut.unregister(shortcut)
+  }
+
+  // 重新应用某个快捷键配置，必要时切换 Electron/native 后端。
+  private async rebindGlobalShortcut(
+    shortcut: string,
+    force: boolean = false
+  ): Promise<{ success: boolean; error?: string }> {
+    const config = this.globalShortcutConfigs.get(shortcut)
+    const target = this.globalShortcutTargets.get(shortcut)
+    if (!config || !target) {
+      return { success: false, error: '快捷键信息不存在' }
+    }
+
+    const previousWasNative = this.nativeOptimizedShortcutSet.has(shortcut)
+    const nextUseNative = this.shouldUseNativeOptimizedShortcut(
+      shortcut,
+      config.preScreenshotOptimization
+    )
+
+    if (!force && previousWasNative === nextUseNative) {
+      return { success: true }
+    }
+
+    this.unregisterGlobalShortcutBackend(shortcut)
+    return await this.registerGlobalShortcut(
+      shortcut,
+      target,
+      config.autoCopy,
+      config.preScreenshotOptimization
+    )
+  }
 
   private setupIPC(): void {
     // 主题
@@ -68,19 +185,33 @@ export class SettingsAPI {
 
     // 快捷键
     ipcMain.handle('update-shortcut', (_event, shortcut: string) => this.updateShortcut(shortcut))
-    ipcMain.handle('get-current-shortcut', () => this.getCurrentShortcut())
+    ipcMain.handle('get-current-shortcut', () => this.getCurrentShortcutValue())
     ipcMain.handle(
       'register-global-shortcut',
-      (_event, shortcut: string, target: string, autoCopy?: boolean) =>
-        this.registerGlobalShortcut(shortcut, target, autoCopy ?? false)
+      (
+        _event,
+        shortcut: string,
+        target: string,
+        autoCopy?: boolean,
+        preScreenshotOptimization?: boolean
+      ) =>
+        this.registerGlobalShortcut(
+          shortcut,
+          target,
+          autoCopy ?? false,
+          preScreenshotOptimization ?? false
+        )
     )
     ipcMain.handle('unregister-global-shortcut', (_event, shortcut: string) =>
       this.unregisterGlobalShortcut(shortcut)
     )
     ipcMain.handle(
       'update-global-shortcut-config',
-      (_event, shortcut: string, config: { autoCopy: boolean }) =>
-        this.updateGlobalShortcutConfig(shortcut, config)
+      (
+        _event,
+        shortcut: string,
+        config: { autoCopy: boolean; preScreenshotOptimization: boolean }
+      ) => this.updateGlobalShortcutConfig(shortcut, config)
     )
 
     // 应用快捷键
@@ -126,6 +257,11 @@ export class SettingsAPI {
           await windowManager.updateAutoBackToSearch(data.autoBackToSearch)
           console.log('[Settings] 启动时应用自动返回搜索设置:', data.autoBackToSearch)
         }
+        // 应用窗口呼出位置策略设置
+        if (data.windowPositionStrategy) {
+          await windowManager.updateWindowPositionStrategy(data.windowPositionStrategy)
+          console.log('[Settings] 启动时应用窗口呼出位置策略:', data.windowPositionStrategy)
+        }
         // 应用代理配置
         if (data.proxyEnabled !== undefined && data.proxyUrl !== undefined) {
           proxyManager.setProxyConfig({
@@ -169,7 +305,8 @@ export class SettingsAPI {
               await this.registerGlobalShortcut(
                 shortcut.shortcut,
                 shortcut.target,
-                shortcut.autoCopy ?? false
+                shortcut.autoCopy ?? false,
+                shortcut.preScreenshotOptimization ?? false
               )
             } catch (error) {
               console.error(`注册全局快捷键失败: ${shortcut.shortcut}`, error)
@@ -239,7 +376,7 @@ export class SettingsAPI {
   }
 
   // 获取当前快捷键
-  private getCurrentShortcut(): string {
+  public getCurrentShortcutValue(): string {
     return getCurrentShortcut()
   }
 
@@ -265,17 +402,33 @@ export class SettingsAPI {
   public async registerGlobalShortcut(
     shortcut: string,
     target: string,
-    autoCopy: boolean = false
+    autoCopy: boolean = false,
+    preScreenshotOptimization: boolean = false
   ): Promise<any> {
-    console.log(`[Settings] 注册全局快捷键: ${shortcut} -> ${target}, autoCopy: ${autoCopy}`)
+    console.log(
+      `[Settings] 注册全局快捷键: ${shortcut} -> ${target}, autoCopy: ${autoCopy}, preScreenshotOptimization: ${preScreenshotOptimization}`
+    )
 
     try {
       // 存储快捷键配置
-      this.globalShortcutConfigs.set(shortcut, { autoCopy })
+      this.globalShortcutConfigs.set(shortcut, { autoCopy, preScreenshotOptimization })
+      this.globalShortcutTargets.set(shortcut, target)
       console.log('[Settings] 快捷键配置已存储到 Map')
 
       this.ensureGlobalShortcutKeyboardState(shortcut)
       const preparation = await api.prepareGlobalShortcut(target)
+      this.globalShortcutPreparations.set(shortcut, preparation)
+
+      const previousWasNative = this.nativeOptimizedShortcutSet.has(shortcut)
+      const nextUseNative = this.shouldUseNativeOptimizedShortcut(
+        shortcut,
+        preScreenshotOptimization
+      )
+
+      // 重新注册前先切换掉该快捷键当前占用的监听后端，避免 native/Electron 双后端互相占用。
+      if (previousWasNative !== nextUseNative) {
+        this.unregisterGlobalShortcutBackend(shortcut)
+      }
 
       if (this.isDoubleTapShortcut(shortcut)) {
         const modifier = this.getDoubleTapModifier(shortcut)
@@ -285,6 +438,13 @@ export class SettingsAPI {
           void this.triggerGlobalShortcut(shortcut, preparation)
         })
         console.log(`成功注册双击修饰键快捷键: ${shortcut} -> ${target}`)
+        return { success: true }
+      }
+
+      if (this.shouldUseNativeOptimizedShortcut(shortcut, preScreenshotOptimization)) {
+        globalShortcut.unregister(shortcut)
+        this.registerNativeOptimizedShortcut(shortcut)
+        console.log(`成功注册 native 优化快捷键: ${shortcut} -> ${target}`)
         return { success: true }
       }
 
@@ -299,6 +459,8 @@ export class SettingsAPI {
       if (!success) {
         this.releaseGlobalShortcutKeyboardState(shortcut)
         this.globalShortcutConfigs.delete(shortcut)
+        this.globalShortcutTargets.delete(shortcut)
+        this.globalShortcutPreparations.delete(shortcut)
         return { success: false, error: '快捷键注册失败，可能已被其他应用占用' }
       }
 
@@ -307,6 +469,9 @@ export class SettingsAPI {
     } catch (error: unknown) {
       this.releaseGlobalShortcutKeyboardState(shortcut)
       this.globalShortcutConfigs.delete(shortcut)
+      this.globalShortcutTargets.delete(shortcut)
+      this.globalShortcutPreparations.delete(shortcut)
+      this.nativeOptimizedShortcutSet.delete(shortcut)
       console.error('[Settings] 注册全局快捷键失败:', error)
       return { success: false, error: error instanceof Error ? error.message : '未知错误' }
     }
@@ -315,17 +480,11 @@ export class SettingsAPI {
   // 注销全局快捷键
   public unregisterGlobalShortcut(shortcut: string): any {
     try {
+      this.unregisterGlobalShortcutBackend(shortcut)
       this.releaseGlobalShortcutKeyboardState(shortcut)
       this.globalShortcutConfigs.delete(shortcut)
-
-      if (this.isDoubleTapShortcut(shortcut)) {
-        const modifier = this.getDoubleTapModifier(shortcut)
-        doubleTapManager.unregister(modifier)
-        console.log(`成功注销双击修饰键快捷键: ${shortcut}`)
-        return { success: true }
-      }
-
-      globalShortcut.unregister(shortcut)
+      this.globalShortcutTargets.delete(shortcut)
+      this.globalShortcutPreparations.delete(shortcut)
       console.log(`成功注销全局快捷键: ${shortcut}`)
       return { success: true }
     } catch (error: unknown) {
@@ -335,16 +494,48 @@ export class SettingsAPI {
   }
 
   /**
-   * 更新全局快捷键的配置（如 autoCopy）
-   * 仅更新配置，不重新注册快捷键
+   * 更新全局快捷键的配置，并在后端需要切换时重新注册。
    */
-  public updateGlobalShortcutConfig(shortcut: string, config: { autoCopy: boolean }): any {
+  public async updateGlobalShortcutConfig(
+    shortcut: string,
+    config: { autoCopy: boolean; preScreenshotOptimization: boolean }
+  ): Promise<{ success: boolean; error?: string }> {
+    const previousConfig = this.globalShortcutConfigs.get(shortcut)
+    const previousTarget = this.globalShortcutTargets.get(shortcut)
+    const previousPreparation = this.globalShortcutPreparations.get(shortcut)
+
     try {
-      console.log(`[Settings] 更新全局快捷键配置: ${shortcut}, autoCopy: ${config.autoCopy}`)
+      console.log(
+        `[Settings] 更新全局快捷键配置: ${shortcut}, autoCopy: ${config.autoCopy}, preScreenshotOptimization: ${config.preScreenshotOptimization}`
+      )
       this.globalShortcutConfigs.set(shortcut, config)
+      const rebindResult = await this.rebindGlobalShortcut(shortcut)
+      if (!rebindResult.success) {
+        if (previousConfig) {
+          this.globalShortcutConfigs.set(shortcut, previousConfig)
+          if (previousTarget) {
+            this.globalShortcutTargets.set(shortcut, previousTarget)
+          }
+          if (previousPreparation) {
+            this.globalShortcutPreparations.set(shortcut, previousPreparation)
+          }
+          await this.rebindGlobalShortcut(shortcut, true)
+        }
+        return rebindResult
+      }
       console.log('[Settings] 配置更新成功')
       return { success: true }
     } catch (error: unknown) {
+      if (previousConfig) {
+        this.globalShortcutConfigs.set(shortcut, previousConfig)
+        if (previousTarget) {
+          this.globalShortcutTargets.set(shortcut, previousTarget)
+        }
+        if (previousPreparation) {
+          this.globalShortcutPreparations.set(shortcut, previousPreparation)
+        }
+        await this.rebindGlobalShortcut(shortcut, true)
+      }
       console.error('[Settings] 更新全局快捷键配置失败:', error)
       return { success: false, error: error instanceof Error ? error.message : '未知错误' }
     }
@@ -378,7 +569,8 @@ export class SettingsAPI {
    */
   private async triggerGlobalShortcut(
     shortcut: string,
-    preparation: GlobalShortcutPreparation
+    preparation: GlobalShortcutPreparation,
+    skipPrime: boolean = false
   ): Promise<void> {
     if (!this.shouldTriggerGlobalShortcut(preparation.target)) {
       console.log(`[Settings] 上一次全局快捷键流程未完成，忽略本次触发: ${shortcut}`)
@@ -391,10 +583,16 @@ export class SettingsAPI {
       // 读取该快捷键的 autoCopy 配置，默认 false
       const config = this.globalShortcutConfigs.get(shortcut)
       const autoCopy = config?.autoCopy ?? false
+      const preScreenshotOptimization = config?.preScreenshotOptimization ?? false
 
       console.log(`[Settings] 快捷键触发: ${shortcut}`)
       console.log(`[Settings] 指令类型需要文本: ${preparation.shouldCaptureSelectedText}`)
       console.log(`[Settings] 用户启用自动复制: ${autoCopy}`)
+      console.log(`[Settings] 用户启用预截图优化: ${preScreenshotOptimization}`)
+
+      if (preScreenshotOptimization && !skipPrime) {
+        primeScreenCaptureFrame()
+      }
 
       // 双重判断：指令类型需要文本 AND 用户启用自动复制
       const shouldCapture = preparation.shouldCaptureSelectedText && autoCopy

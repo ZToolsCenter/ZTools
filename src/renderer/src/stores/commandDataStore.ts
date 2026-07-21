@@ -16,6 +16,17 @@ import {
   type CommandAliasStore
 } from '@shared/commandShared'
 import {
+  matchesFilesInput,
+  matchesOverText,
+  matchesRegexText,
+  matchesWindowInput,
+  parseMatchPattern,
+  type FilesCmdLike,
+  type OverCmdLike,
+  type RegexCmdLike,
+  type WindowCmdLike
+} from '@shared/commandContextShared'
+import {
   ENABLED_MAIN_PUSH_PLUGINS_KEY,
   isMainPushPluginEnabled,
   normalizeConfigList
@@ -114,6 +125,54 @@ interface SearchResultScoreMeta {
   scoreMatches: MatchInfo[]
 }
 
+/**
+ * 安全生成 { pinyin, pinyinAbbr } 字段。
+ *
+ * 插件数据中指令名（cmdName / app.name 等）可能不是字符串（例如对象型 cmd 缺 type
+ * 时 cmdName 会是整个对象），直接传入 pinyin() 会返回非字符串并让后续 .replace 崩溃，
+ * 进而让整个 loadCommands 失败、搜索栏与历史全部空白。这里统一兜底：
+ * 非字符串输入返回空串；pinyin/replace 抛错时也回退为空串，绝不向上抛。
+ */
+export function toPinyinFields(name: unknown): { pinyin: string; pinyinAbbr: string } {
+  if (typeof name !== 'string' || name === '') {
+    return { pinyin: '', pinyinAbbr: '' }
+  }
+  try {
+    const full = pinyin(name, { toneType: 'none', type: 'string' })
+      .replace(/\s+/g, '')
+      .toLowerCase()
+    const abbr = pinyin(name, { pattern: 'first', toneType: 'none', type: 'string' })
+      .replace(/\s+/g, '')
+      .toLowerCase()
+    return { pinyin: full, pinyinAbbr: abbr }
+  } catch {
+    return { pinyin: '', pinyinAbbr: '' }
+  }
+}
+
+/**
+ * 匹配型指令的白名单 type。命中则按 match cmd 处理（取 cmd.label 作名字），
+ * 否则视为文本型指令（cmd 本身即为名字）。
+ */
+const MATCH_CMD_TYPES = ['regex', 'over', 'img', 'files', 'window']
+
+/**
+ * 从一条 cmd 规整出 { isMatchCmd, cmdName }。
+ *
+ * 关键防御：当 cmd 是对象但 type 不在白名单（或缺 type）时，旧逻辑会让 cmdName =
+ * 整个对象，再传给 pinyin() 会抛 "is not assignable to type string"。这里强制把
+ * cmdName 收敛为字符串：对象型取 label（取不到回退空串），字符串型直接用。
+ */
+export function normalizeCmd(cmd: unknown): { isMatchCmd: boolean; cmdName: string } {
+  if (typeof cmd === 'object' && cmd !== null) {
+    const type = (cmd as { type?: unknown }).type
+    const isMatchCmd = typeof type === 'string' && MATCH_CMD_TYPES.includes(type)
+    const label = (cmd as { label?: unknown }).label
+    return { isMatchCmd, cmdName: typeof label === 'string' ? label : '' }
+  }
+  return { isMatchCmd: false, cmdName: typeof cmd === 'string' ? cmd : '' }
+}
+
 // MainPush 功能信息
 export interface MainPushFeature {
   /** 提供该 mainPush 功能的插件路径。 */
@@ -147,8 +206,35 @@ interface HistoryItem extends Command {
   useCount: number // 使用次数
 }
 
+interface RecommendationPin {
+  path: string
+  featureCode?: string
+  name: string
+  pluginName?: string
+  type: CommandType
+}
+
 const HISTORY_DOC_ID = 'command-history'
 const PINNED_DOC_ID = 'pinned-commands'
+const RECOMMENDATION_PINS_DOC_ID = 'recommendation-pinned'
+
+/**
+ * 生成匹配推荐的稳定标识，插件路径变化时优先使用插件名和功能代码。
+ * @param command 匹配推荐指令或其持久化记录
+ * @returns 可用于去重、查找和排序的稳定标识
+ */
+export function getRecommendationPinKey(
+  command: Pick<Command, 'path' | 'featureCode' | 'name' | 'pluginName' | 'type'>
+): string {
+  if (command.type === 'plugin') {
+    return JSON.stringify([
+      'plugin',
+      command.pluginName || command.path,
+      command.featureCode || command.name
+    ])
+  }
+  return JSON.stringify([command.type, command.path, command.name])
+}
 
 export const useCommandDataStore = defineStore('commandData', () => {
   // ===== 特殊指令配置表 =====
@@ -220,6 +306,9 @@ export const useCommandDataStore = defineStore('commandData', () => {
   const searchPreference = ref<
     Record<string, { path: string; featureCode?: string; name: string }>
   >({})
+
+  // 匹配推荐置顶序列（只影响推荐区，不影响主搜索框固定列表）
+  const recommendationPins = ref<RecommendationPin[]>([])
 
   // 超级面板固定列表缓存
   const superPanelPinned = ref<any[]>([])
@@ -477,6 +566,159 @@ export const useCommandDataStore = defineStore('commandData', () => {
     }
   }
 
+  /**
+   * 从数据库加载匹配推荐的置顶序列。
+   * @returns 推荐置顶数据加载完成后结束的 Promise
+   */
+  async function loadRecommendationPins(): Promise<void> {
+    try {
+      const data = await window.ztools.dbGet(RECOMMENDATION_PINS_DOC_ID)
+      if (!Array.isArray(data)) {
+        recommendationPins.value = []
+        return
+      }
+
+      // 只接受具备最小身份字段的记录，避免损坏数据影响推荐排序。
+      recommendationPins.value = data.filter(
+        (item): item is RecommendationPin =>
+          typeof item?.path === 'string' &&
+          typeof item?.name === 'string' &&
+          typeof item?.type === 'string'
+      )
+    } catch (error) {
+      console.error('加载匹配推荐置顶数据失败:', error)
+      recommendationPins.value = []
+    }
+  }
+
+  /**
+   * 持久化当前匹配推荐置顶序列。
+   * @returns 推荐置顶数据保存完成后结束的 Promise
+   * @throws 数据库写入失败时抛出原始错误
+   */
+  async function saveRecommendationPins(): Promise<void> {
+    await window.ztools.dbPut(
+      RECOMMENDATION_PINS_DOC_ID,
+      JSON.parse(JSON.stringify(recommendationPins.value))
+    )
+  }
+
+  /**
+   * 查找推荐指令在置顶序列中的位置。
+   * @param command 推荐指令
+   * @returns 推荐置顶索引，未置顶时返回 -1
+   */
+  function getRecommendationPinIndex(command: Command): number {
+    const key = getRecommendationPinKey(command)
+    return recommendationPins.value.findIndex((item) => getRecommendationPinKey(item) === key)
+  }
+
+  /**
+   * 判断推荐指令是否已置顶。
+   * @param command 推荐指令
+   * @returns 是否已置顶
+   */
+  function isRecommendationPinned(command: Command): boolean {
+    return getRecommendationPinIndex(command) >= 0
+  }
+
+  /**
+   * 按用户设置的置顶序列排序推荐结果。
+   * @param commands 当前搜索命中的推荐结果
+   * @returns 置顶推荐排在前面的新数组
+   */
+  function sortRecommendations<T extends Command>(commands: T[]): T[] {
+    const pinnedOrder = new Map(
+      recommendationPins.value.map((item, index) => [getRecommendationPinKey(item), index])
+    )
+
+    return [...commands].sort((a, b) => {
+      const indexA = pinnedOrder.get(getRecommendationPinKey(a))
+      const indexB = pinnedOrder.get(getRecommendationPinKey(b))
+      if (indexA === undefined && indexB === undefined) return 0
+      if (indexA === undefined) return 1
+      if (indexB === undefined) return -1
+      return indexA - indexB
+    })
+  }
+
+  /**
+   * 将推荐指令加入置顶序列末尾。
+   * @param command 推荐指令
+   * @returns 保存完成后结束的 Promise
+   * @throws 数据库写入失败时抛出原始错误
+   */
+  async function pinRecommendation(command: Command): Promise<void> {
+    if (isRecommendationPinned(command)) return
+
+    const previous = recommendationPins.value
+    recommendationPins.value = [
+      ...previous,
+      {
+        path: command.path,
+        featureCode: command.featureCode,
+        name: command.name,
+        pluginName: command.pluginName,
+        type: command.type
+      }
+    ]
+
+    try {
+      await saveRecommendationPins()
+    } catch (error) {
+      // 持久化失败时恢复内存顺序，避免界面显示与数据库不一致。
+      recommendationPins.value = previous
+      throw error
+    }
+  }
+
+  /**
+   * 从置顶序列中移除推荐指令。
+   * @param command 推荐指令
+   * @returns 保存完成后结束的 Promise
+   * @throws 数据库写入失败时抛出原始错误
+   */
+  async function unpinRecommendation(command: Command): Promise<void> {
+    const pinIndex = getRecommendationPinIndex(command)
+    if (pinIndex < 0) return
+
+    const previous = recommendationPins.value
+    recommendationPins.value = previous.filter((_, index) => index !== pinIndex)
+
+    try {
+      await saveRecommendationPins()
+    } catch (error) {
+      // 持久化失败时回滚本地修改，避免下次搜索顺序产生漂移。
+      recommendationPins.value = previous
+      throw error
+    }
+  }
+
+  /**
+   * 将已置顶推荐移动到置顶序列第一位。
+   * @param command 推荐指令
+   * @returns 保存完成后结束的 Promise
+   * @throws 数据库写入失败时抛出原始错误
+   */
+  async function moveRecommendationToFront(command: Command): Promise<void> {
+    const pinIndex = getRecommendationPinIndex(command)
+    if (pinIndex <= 0) return
+
+    const previous = recommendationPins.value
+    const nextOrder = [...previous]
+    const [pin] = nextOrder.splice(pinIndex, 1)
+    nextOrder.unshift(pin)
+    recommendationPins.value = nextOrder
+
+    try {
+      await saveRecommendationPins()
+    } catch (error) {
+      // 持久化失败时回滚本地修改，确保置顶序列仍然可预测。
+      recommendationPins.value = previous
+      throw error
+    }
+  }
+
   // 保存搜索偏好（搜索词 -> 选中的指令）
   async function saveSearchPreference(
     query: string,
@@ -518,6 +760,7 @@ export const useCommandDataStore = defineStore('commandData', () => {
         loadHistoryData(),
         loadPinnedData(),
         loadSearchPreference(),
+        loadRecommendationPins(),
         loadSuperPanelPinnedData()
       ])
 
@@ -759,6 +1002,7 @@ export const useCommandDataStore = defineStore('commandData', () => {
           }
         }
 
+        const pluginNamePy = toPinyinFields(plugin.name)
         pluginItems.push({
           name: plugin.title ?? plugin.name,
           path: plugin.path,
@@ -768,16 +1012,8 @@ export const useCommandDataStore = defineStore('commandData', () => {
           pluginName: plugin.name,
           pluginTitle: plugin.title,
           pluginExplain: defaultFeatureExplain || plugin.description,
-          pinyin: pinyin(plugin.name, { toneType: 'none', type: 'string' })
-            .replace(/\s+/g, '')
-            .toLowerCase(),
-          pinyinAbbr: pinyin(plugin.name, {
-            pattern: 'first',
-            toneType: 'none',
-            type: 'string'
-          })
-            .replace(/\s+/g, '')
-            .toLowerCase()
+          pinyin: pluginNamePy.pinyin,
+          pinyinAbbr: pluginNamePy.pinyinAbbr
         })
       }
 
@@ -802,66 +1038,62 @@ export const useCommandDataStore = defineStore('commandData', () => {
         }
 
         for (const cmd of feature.cmds) {
-          const isMatchCmd =
-            typeof cmd === 'object' &&
-            ['regex', 'over', 'img', 'files', 'window'].includes(cmd.type)
-          const cmdName = isMatchCmd ? cmd.label : cmd
+          // 单 cmd 隔离：任意一条指令解析异常（例如对象型 cmd 缺 type 导致 cmdName 是对象）
+          // 不应让整个插件的其余指令、乃至全局搜索栏跟着崩溃。
+          try {
+            const { isMatchCmd, cmdName } = normalizeCmd(cmd)
+            const py = toPinyinFields(cmdName)
 
-          if (isMatchCmd) {
-            const matchCommand: Command = {
-              name: cmdName,
-              path: plugin.path,
-              icon: featureIcon,
-              type: 'plugin',
-              featureCode: feature.code,
+            if (isMatchCmd) {
+              const matchCommand: Command = {
+                name: cmdName,
+                path: plugin.path,
+                icon: featureIcon,
+                type: 'plugin',
+                featureCode: feature.code,
+                pluginName: plugin.name,
+                pluginTitle: plugin.title,
+                pluginExplain: feature.explain,
+                matchCmd: cmd,
+                cmdType: cmd.type,
+                mainPush: isMainPush,
+                pinyin: py.pinyin,
+                pinyinAbbr: py.pinyinAbbr
+              }
+
+              regexItems.push(matchCommand)
+
+              if (cmd.type === 'window') {
+                pluginItems.push(...getLaunchableAliasEntries(matchCommand, commandAliases))
+              }
+            } else {
+              const textCommand: Command = {
+                name: cmdName,
+                path: plugin.path,
+                icon: featureIcon,
+                type: 'plugin',
+                featureCode: feature.code,
+                pluginName: plugin.name,
+                pluginTitle: plugin.title,
+                pluginExplain: feature.explain,
+                cmdType: 'text',
+                mainPush: isMainPush,
+                pinyin: py.pinyin,
+                pinyinAbbr: py.pinyinAbbr
+              }
+
+              pluginItems.push(
+                textCommand,
+                ...getLaunchableAliasEntries(textCommand, commandAliases)
+              )
+            }
+          } catch (error) {
+            console.error('[CommandData] 构建插件指令失败，已跳过该指令:', {
               pluginName: plugin.name,
-              pluginTitle: plugin.title,
-              pluginExplain: feature.explain,
-              matchCmd: cmd,
-              cmdType: cmd.type,
-              mainPush: isMainPush,
-              pinyin: pinyin(cmdName, { toneType: 'none', type: 'string' })
-                .replace(/\s+/g, '')
-                .toLowerCase(),
-              pinyinAbbr: pinyin(cmdName, {
-                pattern: 'first',
-                toneType: 'none',
-                type: 'string'
-              })
-                .replace(/\s+/g, '')
-                .toLowerCase()
-            }
-
-            regexItems.push(matchCommand)
-
-            if (cmd.type === 'window') {
-              pluginItems.push(...getLaunchableAliasEntries(matchCommand, commandAliases))
-            }
-          } else {
-            const textCommand: Command = {
-              name: cmdName,
-              path: plugin.path,
-              icon: featureIcon,
-              type: 'plugin',
               featureCode: feature.code,
-              pluginName: plugin.name,
-              pluginTitle: plugin.title,
-              pluginExplain: feature.explain,
-              cmdType: 'text',
-              mainPush: isMainPush,
-              pinyin: pinyin(cmdName, { toneType: 'none', type: 'string' })
-                .replace(/\s+/g, '')
-                .toLowerCase(),
-              pinyinAbbr: pinyin(cmdName, {
-                pattern: 'first',
-                toneType: 'none',
-                type: 'string'
-              })
-                .replace(/\s+/g, '')
-                .toLowerCase()
-            }
-
-            pluginItems.push(textCommand, ...getLaunchableAliasEntries(textCommand, commandAliases))
+              cmd,
+              error
+            })
           }
         }
       }
@@ -873,32 +1105,26 @@ export const useCommandDataStore = defineStore('commandData', () => {
   function buildAppCommandItems(rawApps: any[], commandAliases: CommandAliasStore): Command[] {
     return rawApps.flatMap((app) => {
       const extendedApp = app as any
+      const basePy = toPinyinFields(app.name)
       const baseApp: Command = {
         ...app,
         type: extendedApp.type || ('direct' as const),
         subType: extendedApp.subType || ('app' as const),
         cmdType: 'text',
         originalName: app.name,
-        pinyin: pinyin(app.name, { toneType: 'none', type: 'string' })
-          .replace(/\s+/g, '')
-          .toLowerCase(),
-        pinyinAbbr: pinyin(app.name, { pattern: 'first', toneType: 'none', type: 'string' })
-          .replace(/\s+/g, '')
-          .toLowerCase()
+        pinyin: basePy.pinyin,
+        pinyinAbbr: basePy.pinyinAbbr
       }
       const result: Command[] = [baseApp]
       if (extendedApp.aliases && Array.isArray(extendedApp.aliases)) {
         for (const alias of extendedApp.aliases) {
           if (alias && alias !== extendedApp.name) {
+            const aliasPy = toPinyinFields(alias)
             result.push({
               ...baseApp,
               name: alias,
-              pinyin: pinyin(alias, { toneType: 'none', type: 'string' })
-                .replace(/\s+/g, '')
-                .toLowerCase(),
-              pinyinAbbr: pinyin(alias, { pattern: 'first', toneType: 'none', type: 'string' })
-                .replace(/\s+/g, '')
-                .toLowerCase()
+              pinyin: aliasPy.pinyin,
+              pinyinAbbr: aliasPy.pinyinAbbr
             })
           }
         }
@@ -1152,51 +1378,18 @@ export const useCommandDataStore = defineStore('commandData', () => {
     const regexMatches: SearchResult[] = []
     for (const cmd of regexCommands.value) {
       if (cmd.matchCmd) {
-        if (cmd.matchCmd.type === 'regex') {
-          // Regex 类型匹配
-          // 检查用户输入长度是否满足最小要求
-          if (query.length < cmd.matchCmd.minLength) {
-            continue
-          }
-
-          try {
-            // 提取正则表达式（去掉两边的斜杠和标志）
-            const regexStr = cmd.matchCmd.match.replace(/^\/|\/[gimuy]*$/g, '')
-            const regex = new RegExp(regexStr)
-
-            // 测试用户输入是否匹配
-            if (regex.test(query)) {
-              regexMatches.push(cmd)
-            }
-          } catch (error) {
-            console.error(`正则表达式 ${cmd.matchCmd.match} 解析失败:`, error)
-          }
-        } else if (cmd.matchCmd.type === 'over') {
-          // Over 类型匹配
-          const minLength = cmd.matchCmd.minLength ?? 1
-          const maxLength = cmd.matchCmd.maxLength ?? 10000
-
-          // 检查长度是否满足要求
-          if (query.length < minLength || query.length > maxLength) {
-            continue
-          }
-
-          // 检查是否被排除
-          if (cmd.matchCmd.exclude) {
-            try {
-              const excludeRegexStr = cmd.matchCmd.exclude.replace(/^\/|\/[gimuy]*$/g, '')
-              const excludeRegex = new RegExp(excludeRegexStr)
-
-              // 如果匹配到排除规则，跳过
-              if (excludeRegex.test(query)) {
-                continue
-              }
-            } catch (error) {
-              console.error(`排除正则表达式 ${cmd.matchCmd.exclude} 解析失败:`, error)
-            }
-          }
-
-          // 通过所有检查，添加到匹配结果
+        if (
+          cmd.matchCmd.type === 'regex' &&
+          matchesRegexText(query, cmd.matchCmd as RegexCmdLike, { preserveFlags: false })
+        ) {
+          regexMatches.push(cmd)
+        } else if (
+          cmd.matchCmd.type === 'over' &&
+          matchesOverText(query, cmd.matchCmd as OverCmdLike, {
+            useExclude: true,
+            preserveExcludeFlags: false
+          })
+        ) {
           regexMatches.push(cmd)
         }
       }
@@ -1235,40 +1428,14 @@ export const useCommandDataStore = defineStore('commandData', () => {
     const result = regexCommands.value.filter((cmd) => {
       // 支持 over 类型
       if (cmd.matchCmd?.type === 'over') {
-        const textLength = pastedText.length
-        const minLength = cmd.matchCmd.minLength ?? 1
-        const maxLength = cmd.matchCmd.maxLength ?? 10000
-
-        return textLength >= minLength && textLength <= maxLength
+        return matchesOverText(pastedText, cmd.matchCmd as OverCmdLike)
       }
 
       // 支持 regex 类型
       if (cmd.matchCmd?.type === 'regex') {
-        const textLength = pastedText.length
-        const minLength = cmd.matchCmd.minLength ?? 1
-
-        // 检查长度
-        if (textLength < minLength) {
-          return false
-        }
-
-        // 检查正则匹配
-        const regexStr = cmd.matchCmd.match
-        if (regexStr) {
-          try {
-            // 解析正则表达式字符串（格式：/pattern/flags）
-            const match = regexStr.match(/^\/(.+)\/([gimuy]*)$/)
-            if (match) {
-              const pattern = match[1]
-              const flags = match[2]
-              const regex = new RegExp(pattern, flags)
-              return regex.test(pastedText)
-            }
-          } catch (error) {
-            console.error('正则表达式解析失败:', regexStr, error)
-            return false
-          }
-        }
+        return matchesRegexText(pastedText, cmd.matchCmd as RegexCmdLike, {
+          preserveFlags: true
+        })
       }
 
       return false
@@ -1288,70 +1455,12 @@ export const useCommandDataStore = defineStore('commandData', () => {
 
     const filesCommandsList = regexCommands.value.filter((c) => c.matchCmd?.type === 'files')
 
-    const result = filesCommandsList.filter((cmd) => {
-      const filesCmd = cmd.matchCmd as FilesCmd
-
-      // 1. 检查文件数量是否满足要求
-      const fileCount = pastedFiles.length
-      const minLength = filesCmd.minLength ?? 1
-      const maxLength = filesCmd.maxLength ?? 10000
-
-      if (fileCount < minLength || fileCount > maxLength) {
-        return false
-      }
-
-      // 2. 检查每个文件是否满足条件
-      const allFilesMatch = pastedFiles.every((file) => {
-        // 2.1 检查文件类型（file 或 directory）
-        if (filesCmd.fileType) {
-          if (filesCmd.fileType === 'file' && file.isDirectory) {
-            return false
-          }
-          if (filesCmd.fileType === 'directory' && !file.isDirectory) {
-            return false
-          }
-        }
-
-        // 2.2 检查文件扩展名（只对文件有效，不检查文件夹）
-        if (filesCmd.extensions && !file.isDirectory) {
-          const ext = file.name.split('.').pop()?.toLowerCase()
-          const allowedExts = filesCmd.extensions.map((e) => e.toLowerCase())
-          if (!ext || !allowedExts.includes(ext)) {
-            return false
-          }
-        }
-
-        // 2.3 检查正则表达式匹配
-        if (filesCmd.match) {
-          try {
-            // 解析正则表达式字符串（格式：/pattern/flags）
-            const match = filesCmd.match.match(/^\/(.+)\/([gimuy]*)$/)
-            if (match) {
-              const pattern = match[1]
-              const flags = match[2]
-              const regex = new RegExp(pattern, flags)
-              const testResult = regex.test(file.name)
-              if (!testResult) {
-                return false
-              }
-            } else {
-              // 如果不是标准格式，直接作为字符串匹配
-              const testResult = file.name.includes(filesCmd.match)
-              if (!testResult) {
-                return false
-              }
-            }
-          } catch (error) {
-            console.error(`正则表达式 ${filesCmd.match} 解析失败:`, error)
-            return false
-          }
-        }
-
-        return true
+    const result = filesCommandsList.filter((cmd) =>
+      matchesFilesInput(pastedFiles, cmd.matchCmd as FilesCmdLike, {
+        preserveFlags: true,
+        allowPlainString: true
       })
-
-      return allFilesMatch
-    })
+    )
 
     // 应用特殊指令配置，过滤禁用指令
     return result.filter((cmd) => !isCommandDisabled(cmd)).map((cmd) => applySpecialConfig(cmd))
@@ -1359,14 +1468,20 @@ export const useCommandDataStore = defineStore('commandData', () => {
 
   const windowTitleRegexCache = new Map<string, RegExp | null>()
 
+  // 缓存窗口标题匹配使用的正则对象。
   function getCachedWindowTitleRegex(pattern: string): RegExp | null {
     if (windowTitleRegexCache.has(pattern)) {
       return windowTitleRegexCache.get(pattern) || null
     }
 
     try {
-      const titleRegexStr = pattern.replace(/^\/|\/[gimuy]*$/g, '')
-      const regex = new RegExp(titleRegexStr)
+      const regex = parseMatchPattern(pattern, {
+        preserveFlags: false,
+        allowPlainString: true
+      })
+      if (!regex) {
+        throw new Error('invalid regex pattern')
+      }
       windowTitleRegexCache.set(pattern, regex)
       return regex
     } catch (error) {
@@ -1376,6 +1491,7 @@ export const useCommandDataStore = defineStore('commandData', () => {
     }
   }
 
+  // 判断窗口命令是否匹配当前活动窗口。
   function matchesWindowCommand(
     command: Command,
     windowInfo?: { app?: string; title?: string; className?: string } | null
@@ -1389,30 +1505,14 @@ export const useCommandDataStore = defineStore('commandData', () => {
     }
 
     const windowCmd = command.matchCmd as WindowCmd
+    const titleRegex = windowCmd.match.title
+      ? getCachedWindowTitleRegex(windowCmd.match.title)
+      : null
 
-    // 检查 app 匹配
-    if (windowCmd.match.app && windowInfo.app) {
-      const appMatches = windowCmd.match.app.some((appPattern) => {
-        // 直接字符串匹配
-        return windowInfo.app === appPattern
-      })
-      const classNameMatches = windowCmd.match.className?.some(
-        (classNamePattern) => classNamePattern === (windowInfo.className || '')
-      )
-      if (appMatches && (!windowCmd.match.className || classNameMatches)) {
-        return true
-      }
-    }
-
-    // 检查 title 匹配（正则表达式）
-    if (windowCmd.match.title && windowInfo.title) {
-      const titleRegex = getCachedWindowTitleRegex(windowCmd.match.title)
-      if (titleRegex?.test(windowInfo.title)) {
-        return true
-      }
-    }
-
-    return false
+    return matchesWindowInput(windowInfo, windowCmd as WindowCmdLike, {
+      titleRegex,
+      preserveTitleFlags: false
+    })
   }
 
   // 搜索支持窗口的指令（根据当前激活窗口进行匹配）
@@ -1634,30 +1734,18 @@ export const useCommandDataStore = defineStore('commandData', () => {
             break
           }
         } else if (cmd.type === 'regex') {
-          if (query.length >= (cmd.minLength || 0)) {
-            try {
-              const regexStr = cmd.match.replace(/^\/|\/[gimuy]*$/g, '')
-              if (new RegExp(regexStr).test(query)) {
-                matched = true
-                matchedCmdType = 'regex'
-                break
-              }
-            } catch {
-              /* 忽略无效正则 */
-            }
+          if (matchesRegexText(query, cmd as RegexCmdLike, { preserveFlags: false })) {
+            matched = true
+            matchedCmdType = 'regex'
+            break
           }
         } else if (cmd.type === 'over') {
-          const minLen = cmd.minLength ?? 1
-          const maxLen = cmd.maxLength ?? 10000
-          if (query.length >= minLen && query.length <= maxLen) {
-            if (cmd.exclude) {
-              try {
-                const excludeStr = cmd.exclude.replace(/^\/|\/[gimuy]*$/g, '')
-                if (new RegExp(excludeStr).test(query)) continue
-              } catch {
-                /* 忽略 */
-              }
-            }
+          if (
+            matchesOverText(query, cmd as OverCmdLike, {
+              useExclude: true,
+              preserveExcludeFlags: false
+            })
+          ) {
             matched = true
             matchedCmdType = 'over'
             break
@@ -1713,6 +1801,14 @@ export const useCommandDataStore = defineStore('commandData', () => {
     getPinnedCommands,
     updatePinnedOrder,
     clearPinned,
+
+    // 匹配推荐置顶方法
+    getRecommendationPinIndex,
+    isRecommendationPinned,
+    sortRecommendations,
+    pinRecommendation,
+    unpinRecommendation,
+    moveRecommendationToFront,
 
     // 超级面板固定方法
     superPanelPinned,

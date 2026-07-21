@@ -8,11 +8,10 @@ import {
   FeatureCard,
   TagDropdown,
   CommandCard,
-  MatchCommandDetailDialog,
-  useMatchCommandDetail
+  MatchCommandDetailDialog
 } from '@/components'
 import type { TagDropdownMenuItem } from '@/components'
-import { useZtoolsSubInput } from '@/composables'
+import { usePluginCommandActions, useZtoolsSubInput } from '@/composables'
 import {
   jumpFunctionShortcutsSetting,
   type ShortcutsSettingAliasDraftTarget
@@ -89,42 +88,8 @@ const regexCommands = ref<Command[]>([])
 const plugins = ref<any[]>([])
 const selectedSource = ref<Source | null>(null)
 const activeTab = ref<'text' | 'match'>('text')
-const {
-  selectedMatchCommand,
-  selectedMatchCommandDisabled,
-  openMatchCommandDetail,
-  closeMatchCommandDetail,
-  toggleSelectedMatchCommandDisabled
-} = useMatchCommandDetail({
-  getPluginName: () => getCurrentSource()?.name || '',
-  isDisabled: (detail) =>
-    isCommandDisabled(
-      detail.pluginName || '',
-      detail.feature.code || '',
-      detail.command.label || detail.command.name || '',
-      (detail.command.type || '') as CommandCmdType
-    ),
-  toggleDisabled: (detail) =>
-    toggleCommandDisabled(
-      detail.pluginName || '',
-      detail.feature.code || '',
-      detail.command.label || detail.command.name || '',
-      (detail.command.type || '') as CommandCmdType
-    )
-})
 
-// 禁用指令列表
-const disabledCommands = ref<string[]>([])
-const DISABLED_COMMANDS_KEY = 'disable-commands'
-
-// 超级面板固定列表
-const superPanelPinned = ref<any[]>([])
-
-// 搜索窗口固定列表
-const searchPinned = ref<any[]>([])
-const SEARCH_PINNED_KEY = 'pinned-commands'
-
-// 生成指令唯一标识
+// 生成指令唯一标识（direct/app 用）
 function getCommandId(
   command: Pick<Command, 'name' | 'path' | 'type' | 'subType' | 'featureCode' | 'cmdType'> & {
     pluginName?: string
@@ -139,54 +104,6 @@ function getCommandId(
     name: command.name,
     cmdType: command.cmdType
   })
-}
-
-function getPluginCommandId(
-  pluginName: string,
-  featureCode: string,
-  cmdName: string,
-  cmdType: CommandCmdType
-): string {
-  return getCommandId({
-    type: 'plugin',
-    pluginName,
-    featureCode,
-    name: cmdName,
-    cmdType: cmdType
-  })
-}
-
-function buildPluginAliasDraftTarget(
-  pluginName: string,
-  featureCode: string,
-  cmdName: string,
-  cmdType: 'text' | 'window'
-): ShortcutsSettingAliasDraftTarget {
-  const source = getCurrentSource()
-  const pluginTitle = source?.title || pluginName
-  const sourceCommands = cmdType === 'window' ? regexCommands.value : commands.value
-  const commandIcon = sourceCommands.find(
-    (command) =>
-      command.path === source?.path &&
-      command.featureCode === featureCode &&
-      command.name === cmdName &&
-      command.cmdType === cmdType
-  )?.icon
-
-  return {
-    commandId: getPluginCommandId(pluginName, featureCode, cmdName, cmdType),
-    type: 'plugin',
-    path: source?.path,
-    groupKey: pluginName,
-    groupTitle: pluginTitle,
-    featureCode,
-    subtitle: featureCode,
-    pluginName,
-    pluginTitle,
-    cmdName,
-    cmdType,
-    icon: commandIcon || source?.logo
-  }
 }
 
 function isDirectAppCommand(cmd: Command): boolean {
@@ -211,38 +128,10 @@ function buildAppAliasDraftTarget(cmd: Command): ShortcutsSettingAliasDraftTarge
   }
 }
 
-function isCommandDisabled(
-  pluginName: string,
-  featureCode: string,
-  cmdName: string,
-  cmdType: CommandCmdType
-): boolean {
-  const id = getPluginCommandId(pluginName, featureCode, cmdName, cmdType)
-  return disabledCommands.value.includes(id)
-}
-
 function isDirectAppCommandDisabled(cmd: Command): boolean {
   const nextId = getCommandId(cmd)
   const legacyId = getLegacyDirectAppCommandId(cmd.name, cmd.cmdType || 'text')
   return disabledCommands.value.includes(nextId) || disabledCommands.value.includes(legacyId)
-}
-
-async function toggleCommandDisabled(
-  pluginName: string,
-  featureCode: string,
-  cmdName: string,
-  cmdType: CommandCmdType
-): Promise<void> {
-  const id = getPluginCommandId(pluginName, featureCode, cmdName, cmdType)
-  const index = disabledCommands.value.indexOf(id)
-
-  if (index === -1) {
-    disabledCommands.value.push(id)
-  } else {
-    disabledCommands.value.splice(index, 1)
-  }
-
-  await saveDisabledCommands()
 }
 
 async function toggleDirectAppCommandDisabled(cmd: Command): Promise<void> {
@@ -261,83 +150,10 @@ async function toggleDirectAppCommandDisabled(cmd: Command): Promise<void> {
   await saveDisabledCommands()
 }
 
-async function saveDisabledCommands(): Promise<void> {
-  try {
-    const plainArray = [...disabledCommands.value]
-    await window.ztools.internal.dbPut(DISABLED_COMMANDS_KEY, plainArray)
-    await window.ztools.internal.notifyDisabledCommandsChanged()
-  } catch (error) {
-    console.error('保存禁用指令列表失败:', error)
-  }
-}
-
-async function loadDisabledCommands(): Promise<void> {
-  try {
-    const data = await window.ztools.internal.dbGet(DISABLED_COMMANDS_KEY)
-    if (data && Array.isArray(data)) {
-      disabledCommands.value = data
-    }
-  } catch (error) {
-    console.error('加载禁用指令列表失败:', error)
-  }
-}
-
-async function loadSuperPanelPinned(): Promise<void> {
-  try {
-    superPanelPinned.value = await window.ztools.internal.getSuperPanelPinned()
-  } catch (error) {
-    console.error('加载超级面板固定列表失败:', error)
-  }
-}
-
-function isPinnedToSuperPanel(pluginName: string, featureCode: string, cmdName: string): boolean {
-  return superPanelPinned.value.some(
-    (item) =>
-      item.name === cmdName && item.featureCode === featureCode && item.pluginName === pluginName
-  )
-}
-
 function isAppPinnedToSuperPanel(cmd: Command): boolean {
   return superPanelPinned.value.some(
     (item) => item.path === cmd.path && item.name === cmd.name && item.type === 'direct'
   )
-}
-
-async function toggleSuperPanelPin(
-  pluginName: string,
-  featureCode: string,
-  cmdName: string
-): Promise<void> {
-  const isPinned = isPinnedToSuperPanel(pluginName, featureCode, cmdName)
-
-  if (isPinned) {
-    const item = superPanelPinned.value.find(
-      (i) => i.name === cmdName && i.featureCode === featureCode && i.pluginName === pluginName
-    )
-    if (item) {
-      await window.ztools.internal.unpinSuperPanelCommand(item.path, item.featureCode)
-    }
-  } else {
-    const command = commands.value.find(
-      (c) =>
-        c.path === getCurrentSource()?.path && c.featureCode === featureCode && c.name === cmdName
-    )
-
-    if (command) {
-      await window.ztools.internal.pinToSuperPanel({
-        name: command.name,
-        path: command.path || '',
-        icon: command.icon || '',
-        type: command.type,
-        featureCode: command.featureCode || '',
-        pluginName,
-        pluginExplain: command.pluginExplain || '',
-        cmdType: command.cmdType || 'text'
-      })
-    }
-  }
-
-  await loadSuperPanelPinned()
 }
 
 async function toggleAppSuperPanelPin(cmd: Command): Promise<void> {
@@ -361,48 +177,8 @@ async function toggleAppSuperPanelPin(cmd: Command): Promise<void> {
   await loadSuperPanelPinned()
 }
 
-async function loadSearchPinned(): Promise<void> {
-  try {
-    const data = await window.ztools.internal.dbGet(SEARCH_PINNED_KEY)
-    if (data && Array.isArray(data)) {
-      searchPinned.value = data
-    }
-  } catch (error) {
-    console.error('加载搜索固定列表失败:', error)
-  }
-}
-
-function isPinnedToSearch(featureCode: string): boolean {
-  return searchPinned.value.some(
-    (item) => item.path === getCurrentSource()?.path && item.featureCode === featureCode
-  )
-}
-
 function isAppPinnedToSearch(cmd: Command): boolean {
   return searchPinned.value.some((item) => item.path === cmd.path && item.name === cmd.name)
-}
-
-async function toggleSearchPin(
-  pluginName: string,
-  featureCode: string,
-  cmdName: string
-): Promise<void> {
-  const pinned = isPinnedToSearch(featureCode)
-
-  if (pinned) {
-    await window.ztools.internal.unpinApp(getCurrentSource()?.path || '', featureCode, cmdName)
-  } else {
-    const command = commands.value.find(
-      (c) =>
-        c.path === getCurrentSource()?.path && c.featureCode === featureCode && c.name === cmdName
-    )
-
-    if (command) {
-      await window.ztools.internal.pinApp(JSON.parse(JSON.stringify(command)))
-    }
-  }
-
-  await loadSearchPinned()
 }
 
 async function toggleAppSearchPin(cmd: Command): Promise<void> {
@@ -452,11 +228,20 @@ function getAppMenuItems(cmd: Command): TagDropdownMenuItem[] {
   items.push({
     key: 'toggle',
     label: disabled ? '启用指令' : '禁用指令',
-    icon: disabled ? 'check' : 'ban',
+    icon: disabled ? 'i-z-check' : 'i-z-ban',
     danger: !disabled
   })
 
   return items
+}
+
+function openAppAliasShortcut(cmd: Command): void {
+  if (!isDirectAppCommand(cmd)) return
+
+  jumpFunctionShortcutsSetting({
+    tab: 'alias',
+    draftTarget: buildAppAliasDraftTarget(cmd)
+  })
 }
 
 async function handleAppMenuSelect(key: string, cmd: Command): Promise<void> {
@@ -480,169 +265,6 @@ async function handleAppMenuSelect(key: string, cmd: Command): Promise<void> {
     await toggleAppSearchPin(cmd)
   } else if (key === 'toggle') {
     await toggleDirectAppCommandDisabled(cmd)
-  }
-}
-
-function isAliasableCmdType(cmdType?: string): cmdType is 'text' | 'window' {
-  return cmdType === 'text' || cmdType === 'window'
-}
-
-function getMenuItems(
-  isDisabled: boolean,
-  cmdType?: string,
-  pluginName?: string,
-  featureCode?: string,
-  cmdName?: string
-): TagDropdownMenuItem[] {
-  const items: TagDropdownMenuItem[] = []
-
-  const canAddAlias = isAliasableCmdType(cmdType) && pluginName && featureCode && cmdName
-
-  if (cmdType && cmdType !== 'text') {
-    items.push({
-      key: 'detail',
-      label: '查看详情',
-      icon: 'i-z-info'
-    })
-  }
-
-  if (cmdType === 'text') {
-    items.push({
-      key: 'open',
-      label: '打开指令',
-      icon: 'i-z-play'
-    })
-
-    if (pluginName && featureCode && cmdName) {
-      const pinned = isPinnedToSuperPanel(pluginName, featureCode, cmdName)
-      items.push({
-        key: 'pin-super-panel',
-        label: pinned ? '取消固定超级面板' : '固定到超级面板',
-        icon: 'i-z-pin'
-      })
-
-      const searchPinnedState = isPinnedToSearch(featureCode)
-      items.push({
-        key: 'pin-search',
-        label: searchPinnedState ? '取消固定搜索' : '固定到搜索',
-        icon: 'i-z-pin'
-      })
-
-      items.push({
-        key: 'set-global-shortcut',
-        label: '设置全局快捷键',
-        icon: 'i-z-keyboard'
-      })
-    }
-  }
-
-  if (canAddAlias) {
-    items.push({
-      key: 'custom-alias',
-      label: '自定义别名',
-      icon: 'i-z-alias'
-    })
-  }
-
-  items.push({
-    key: 'toggle',
-    label: isDisabled ? '启用指令' : '禁用指令',
-    icon: isDisabled ? 'i-z-check' : 'i-z-ban',
-    danger: !isDisabled
-  })
-
-  return items
-}
-
-function openAliasShortcut(
-  pluginName: string,
-  featureCode: string,
-  cmdName: string,
-  cmdType: 'text' | 'window'
-): void {
-  jumpFunctionShortcutsSetting({
-    tab: 'alias',
-    draftTarget: buildPluginAliasDraftTarget(pluginName, featureCode, cmdName, cmdType)
-  })
-}
-
-function openAppAliasShortcut(cmd: Command): void {
-  if (!isDirectAppCommand(cmd)) return
-
-  jumpFunctionShortcutsSetting({
-    tab: 'alias',
-    draftTarget: buildAppAliasDraftTarget(cmd)
-  })
-}
-
-async function handleMenuSelect(
-  key: string,
-  pluginName: string,
-  featureCode: string,
-  cmdName: string,
-  cmdType: CommandCmdType
-): Promise<void> {
-  if (key === 'toggle') {
-    toggleCommandDisabled(pluginName, featureCode, cmdName, cmdType)
-  } else if (key === 'open') {
-    await openCommand(pluginName, featureCode, cmdName, cmdType)
-  } else if (key === 'pin-super-panel') {
-    await toggleSuperPanelPin(pluginName, featureCode, cmdName)
-  } else if (key === 'pin-search') {
-    await toggleSearchPin(pluginName, featureCode, cmdName)
-  } else if (key === 'set-global-shortcut') {
-    const pluginTitle = getCurrentSource()?.title || pluginName
-    jumpFunctionShortcutsSetting({
-      payload: `${pluginTitle}/${cmdName}`
-    })
-  } else if (key === 'custom-alias') {
-    if (!isAliasableCmdType(cmdType)) return
-    openAliasShortcut(pluginName, featureCode, cmdName, cmdType)
-  }
-}
-
-async function handleMatchMenuSelect(key: string, feature: any, cmd: any): Promise<void> {
-  if (key === 'detail') {
-    openMatchCommandDetail(feature, cmd)
-    return
-  }
-
-  await handleMenuSelect(key, getCurrentSource()?.name || '', feature.code, cmd.name, cmd.type)
-}
-
-async function openCommand(
-  pluginName: string,
-  featureCode: string,
-  cmdName: string,
-  cmdType: string
-): Promise<void> {
-  try {
-    const command = commands.value.find(
-      (c) =>
-        c.path === getCurrentSource()?.path &&
-        c.featureCode === featureCode &&
-        c.name === cmdName &&
-        c.cmdType === cmdType
-    )
-
-    if (!command) {
-      console.error('未找到指令:', { pluginName, featureCode, cmdName, cmdType })
-      return
-    }
-
-    console.log('打开指令:', command)
-
-    await window.ztools.internal.launch({
-      path: command.path || '',
-      type: command.type,
-      featureCode: command.featureCode,
-      name: command.name,
-      param: {
-        payload: ''
-      }
-    })
-  } catch (error) {
-    console.error('打开指令失败:', error)
   }
 }
 
@@ -784,6 +406,34 @@ const activeSource = computed<Source | null>(() => {
 function getCurrentSource(): Source | null {
   return activeSource.value || selectedSource.value
 }
+
+// 插件指令操作（共享逻辑）+ 与 direct/app 共享的禁用/固定状态
+const {
+  // 共享状态（direct/app 复用同一份）
+  disabledCommands,
+  superPanelPinned,
+  searchPinned,
+  saveDisabledCommands,
+  loadSuperPanelPinned,
+  loadSearchPinned,
+  // 加载
+  loadAll,
+  loadPluginCommands,
+  // 插件指令
+  isCommandDisabled,
+  getMenuItems,
+  handleMenuSelect,
+  handleMatchMenuSelect,
+  // 匹配指令详情
+  selectedMatchCommand,
+  selectedMatchCommandDisabled,
+  closeMatchCommandDetail,
+  toggleSelectedMatchCommandDisabled
+} = usePluginCommandActions({
+  getPluginName: () => getCurrentSource()?.name,
+  getPluginPath: () => getCurrentSource()?.path,
+  getPluginTitle: () => getCurrentSource()?.title || getCurrentSource()?.name
+})
 
 // 当前选中来源的指令（系统应用/设置/本地启动）
 const systemCommands = computed(() => {
@@ -937,15 +587,18 @@ async function loadCommands(): Promise<void> {
 function selectSource(source: Source): void {
   selectedSource.value = source
   activeTab.value = 'text'
+  // 切换来源后刷新指令快照：插件来源加载其 canonical 指令（供打开/固定/别名取 icon 等运行时字段），
+  // 非插件来源（如系统应用）则清空缓存，避免残留上一个插件的数据。
+  void loadPluginCommands()
 }
 
 // 初始化
 onMounted(async () => {
   loading.value = true
   try {
-    // 并行加载禁用指令和超级面板固定列表（互不依赖）
-    await Promise.all([loadDisabledCommands(), loadSuperPanelPinned(), loadSearchPinned()])
-    // 加载指令数据（内含 plugins，无需再单独请求）
+    // 并行加载禁用指令、超级面板固定、搜索固定，以及插件指令快照
+    await loadAll()
+    // 加载指令数据（内含 plugins，用于列表展示与搜索过滤）
     await loadCommands()
     // 默认选中系统应用
     if (appCount.value > 0) {

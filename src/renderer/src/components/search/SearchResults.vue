@@ -14,7 +14,7 @@
       :pasted-text="pastedText"
       :best-search-results="bestSearchResults"
       :best-matches="bestMatches"
-      :recommendations="recommendations"
+      :recommendations="recommendationItems"
       :main-push-groups="mainPushGroups"
       :display-apps="displayApps"
       :pinned-apps="pinnedApps"
@@ -44,7 +44,7 @@
         :selected-index="listModeSelectedIndex"
         :search-query="searchQuery"
         @select="handleSelectApp"
-        @contextmenu="(app) => handleAppContextMenu(app, true, false)"
+        @contextmenu="(app) => handleAppContextMenu(app, 'search')"
       />
     </div>
   </div>
@@ -53,6 +53,7 @@
 <script setup lang="ts">
 import { storeToRefs } from 'pinia'
 import { computed, nextTick, onMounted, onUnmounted, ref, toRaw, watch } from 'vue'
+import { normalizeConfigList } from '@shared/pluginSettings'
 import {
   useMainPushResults,
   type MainPushGroup,
@@ -64,6 +65,7 @@ import { useCommandDataStore } from '../../stores/commandDataStore'
 import { useWindowStore } from '../../stores/windowStore'
 import VerticalList from '../common/VerticalList.vue'
 import AggregateView from './AggregateView.vue'
+import { buildAggregateNavigationGrid } from './navigationGrid'
 
 // MatchFile 接口（传递给插件的文件格式）
 interface MatchFile {
@@ -87,6 +89,8 @@ interface Props {
   pastedText?: string | null
 }
 
+type ContextMenuSource = 'history' | 'pinned' | 'search' | 'recommendation'
+
 const props = defineProps<Props>()
 
 const windowStore = useWindowStore()
@@ -107,6 +111,11 @@ const {
   pinCommand,
   unpinCommand,
   isPinned,
+  getRecommendationPinIndex,
+  isRecommendationPinned,
+  pinRecommendation,
+  unpinRecommendation,
+  moveRecommendationToFront,
   getPinnedCommands,
   updatePinnedOrder,
   saveSearchPreference,
@@ -117,6 +126,14 @@ const {
 // 使用搜索结果 composable
 const { bestSearchResults, bestMatches, recommendations, allListModeResults } =
   useSearchResults(props)
+
+// 为推荐项附加仅用于渲染的置顶状态，避免把 UI 字段写入固定列表数据。
+const recommendationItems = computed(() =>
+  recommendations.value.map((item) => ({
+    ...item,
+    isPinnedInSearch: isRecommendationPinned(item)
+  }))
+)
 
 // 使用 mainPush 结果 composable
 const { mainPushGroups, handleMainPushSelect } = useMainPushResults(props)
@@ -148,7 +165,7 @@ function parsePluginPayload(raw: string): PluginPayload | null {
     if (!parsed?.pluginName) return null
     return { pluginName: parsed.pluginName, path: parsed.path }
   } catch {
-    return typeof raw === 'string' && raw ? { pluginName: raw } : null
+    return null
   }
 }
 
@@ -212,124 +229,34 @@ const isSearchResultsExpanded = ref(false)
 const isBestMatchesExpanded = ref(false)
 const isRecommendationsExpanded = ref(false)
 
-// 将一维数组转换为二维数组(每行9个)
-function arrayToGrid(arr: any[], cols = 9): any[][] {
-  const grid: any[][] = []
-  for (let i = 0; i < arr.length; i += cols) {
-    grid.push(arr.slice(i, i + cols))
-  }
-  return grid
-}
-
-// 获取可见的项目（根据折叠状态）
-function getVisibleItems(items: any[], expanded: boolean, defaultVisibleRows: number): any[] {
-  const defaultVisibleCount = 9 * defaultVisibleRows
-  if (items.length <= defaultVisibleCount) {
-    return items
-  }
-  return expanded ? items : items.slice(0, defaultVisibleCount)
-}
-
 // 构建导航网格
 const navigationGrid = computed(() => {
-  const sections: any[] = []
-
   // 列表模式：使用一维数组（每个项目占一行）
   if (searchMode.value === 'list') {
     if (!hasSearchContent.value) {
       return []
     }
-    allListModeResults.value.forEach((item: any) => {
-      sections.push({ type: 'listItem', items: [item] })
-    })
-    return sections
+    return allListModeResults.value.map((item: any) => ({ type: 'listItem', items: [item] }))
   }
 
-  // 聚合模式
-  if (hasSearchContent.value) {
-    // 有搜索：最佳搜索结果 + 最佳匹配 + 匹配推荐 + 窗口匹配
-    if (bestSearchResults.value.length > 0) {
-      const visibleItems = getVisibleItems(
-        bestSearchResults.value,
-        isSearchResultsExpanded.value,
-        2
-      )
-      const searchGrid = arrayToGrid(visibleItems)
-      searchGrid.forEach((row) => {
-        sections.push({ type: 'bestSearch', items: row })
-      })
-    }
-
-    if (bestMatches.value.length > 0) {
-      const visibleItems = getVisibleItems(bestMatches.value, isBestMatchesExpanded.value, 2)
-      const matchGrid = arrayToGrid(visibleItems)
-      matchGrid.forEach((row) => {
-        sections.push({ type: 'bestMatch', items: row })
-      })
-    }
-
-    if (recommendations.value.length > 0) {
-      const visibleItems = getVisibleItems(
-        recommendations.value,
-        isRecommendationsExpanded.value,
-        2
-      )
-      const recommendGrid = arrayToGrid(visibleItems)
-      recommendGrid.forEach((row) => {
-        sections.push({ type: 'recommendation', items: row })
-      })
-    }
-
-    // 窗口匹配结果（在有搜索内容时也显示）
-    if (windowMatchedActions.value.length > 0) {
-      const windowGrid = arrayToGrid(windowMatchedActions.value)
-      windowGrid.forEach((row) => {
-        sections.push({ type: 'window', items: row })
-      })
-    }
-
-    // mainPush 结果放到最后（每个 group 的每个 item 占一行）
-    for (const group of mainPushGroups.value) {
-      const sectionType = `mainPush:${group.featureKey}`
-      for (const item of group.items) {
-        sections.push({ type: sectionType, items: [item], mainPushGroup: group })
-      }
-    }
-  } else {
-    // 无搜索：最近使用 + 固定栏 + 访达
-    if (displayApps.value.length > 0) {
-      const visibleItems = getVisibleItems(
-        displayApps.value,
-        isRecentExpanded.value,
-        windowStore.recentRows
-      )
-      const appsGrid = arrayToGrid(visibleItems)
-      appsGrid.forEach((row) => {
-        sections.push({ type: 'apps', items: row })
-      })
-    }
-
-    if (pinnedApps.value.length > 0) {
-      const visibleItems = getVisibleItems(
-        pinnedApps.value,
-        isPinnedExpanded.value,
-        windowStore.pinnedRows
-      )
-      const pinnedGrid = arrayToGrid(visibleItems)
-      pinnedGrid.forEach((row) => {
-        sections.push({ type: 'pinned', items: row })
-      })
-    }
-
-    if (windowMatchedActions.value.length > 0) {
-      const windowGrid = arrayToGrid(windowMatchedActions.value)
-      windowGrid.forEach((row) => {
-        sections.push({ type: 'window', items: row })
-      })
-    }
-  }
-
-  return sections
+  return buildAggregateNavigationGrid({
+    hasSearchContent: hasSearchContent.value,
+    bestSearchResults: bestSearchResults.value,
+    bestMatches: bestMatches.value,
+    recommendations: recommendationItems.value,
+    mainPushGroups: mainPushGroups.value,
+    windowMatchedActions: windowMatchedActions.value,
+    displayApps: displayApps.value,
+    pinnedApps: pinnedApps.value,
+    showRecentInSearch: showRecentInSearch.value,
+    recentExpanded: isRecentExpanded.value,
+    pinnedExpanded: isPinnedExpanded.value,
+    searchResultsExpanded: isSearchResultsExpanded.value,
+    bestMatchesExpanded: isBestMatchesExpanded.value,
+    recommendationsExpanded: isRecommendationsExpanded.value,
+    recentRows: windowStore.recentRows,
+    pinnedRows: windowStore.pinnedRows
+  })
 })
 
 // 使用导航 composable
@@ -481,16 +408,17 @@ watch(
   }
 )
 
-// 处理应用右键菜单
-async function handleAppContextMenu(
-  app: any,
-  fromSearch = false,
-  fromPinned = false
-): Promise<void> {
+/**
+ * 根据结果来源构建应用右键菜单。
+ * @param app 触发菜单的指令
+ * @param source 结果所在区域
+ * @returns 菜单展示完成后结束的 Promise
+ */
+async function handleAppContextMenu(app: any, source: ContextMenuSource = 'search'): Promise<void> {
   const menuItems: any[] = []
 
   // 只在历史记录中显示"从使用记录删除"
-  if (!fromSearch && !fromPinned) {
+  if (source === 'history') {
     const historyMatchName =
       app.type === 'plugin'
         ? app.pluginName || app.name
@@ -526,42 +454,87 @@ async function handleAppContextMenu(
     })
   }
 
-  // 根据是否已固定显示不同选项
-  const pinMatchName =
-    app.type === 'plugin'
-      ? app.pluginName || app.name
-      : app.type === 'direct' && app.subType === 'app'
-        ? app.persistedName || app.name
-        : app.name
-  if (isPinned(app.path, app.featureCode, pinMatchName)) {
-    menuItems.push({
-      id: `unpin-app:${JSON.stringify({
-        path: app.path,
-        featureCode: app.featureCode,
-        name: pinMatchName
-      })}`,
-      label: '从搜索框取消固定'
-    })
+  if (source === 'recommendation') {
+    // 推荐区使用独立置顶序列，与主搜索框固定列表完全隔离。
+    const recommendationIndex = getRecommendationPinIndex(app)
+    if (recommendationIndex >= 0) {
+      menuItems.push({
+        id: `unpin-recommendation:${JSON.stringify({
+          path: app.path,
+          featureCode: app.featureCode,
+          name: app.name,
+          pluginName: app.pluginName,
+          type: app.type
+        })}`,
+        label: '取消置顶'
+      })
+      menuItems.push({
+        id: `move-recommendation-to-front:${JSON.stringify({
+          path: app.path,
+          featureCode: app.featureCode,
+          name: app.name,
+          pluginName: app.pluginName,
+          type: app.type
+        })}`,
+        label: '排到最前',
+        enabled: recommendationIndex > 0
+      })
+    } else {
+      menuItems.push({
+        id: `pin-recommendation:${JSON.stringify({
+          path: app.path,
+          featureCode: app.featureCode,
+          name: app.name,
+          pluginName: app.pluginName,
+          type: app.type
+        })}`,
+        label: '置顶'
+      })
+    }
+
+    // 匹配推荐使用专属菜单，不追加超级面板、插件设置和快捷键等通用操作。
+    await window.ztools.showContextMenu(menuItems)
+    return
   } else {
-    menuItems.push({
-      id: `pin-app:${JSON.stringify({
-        name:
-          app.type === 'direct' && app.subType === 'app' ? app.persistedName || app.name : app.name,
-        path: app.path,
-        icon: app.icon,
-        pinyin: app.pinyin,
-        pinyinAbbr: app.pinyinAbbr,
-        type: app.type,
-        featureCode: app.featureCode,
-        pluginName: app.pluginName,
-        pluginExplain: app.pluginExplain,
-        subType: app.subType,
-        cmdType: app.cmdType,
-        originalName: app.originalName,
-        persistedName: app.persistedName
-      })}`,
-      label: '固定到搜索框'
-    })
+    // 其他区域继续使用原有的主搜索框固定逻辑。
+    const fixedMatchName =
+      app.type === 'plugin'
+        ? app.pluginName || app.name
+        : app.type === 'direct' && app.subType === 'app'
+          ? app.persistedName || app.name
+          : app.name
+    if (isPinned(app.path, app.featureCode, fixedMatchName)) {
+      menuItems.push({
+        id: `unpin-app:${JSON.stringify({
+          path: app.path,
+          featureCode: app.featureCode,
+          name: fixedMatchName
+        })}`,
+        label: '从搜索框取消固定'
+      })
+    } else {
+      menuItems.push({
+        id: `pin-app:${JSON.stringify({
+          name:
+            app.type === 'direct' && app.subType === 'app'
+              ? app.persistedName || app.name
+              : app.name,
+          path: app.path,
+          icon: app.icon,
+          pinyin: app.pinyin,
+          pinyinAbbr: app.pinyinAbbr,
+          type: app.type,
+          featureCode: app.featureCode,
+          pluginName: app.pluginName,
+          pluginExplain: app.pluginExplain,
+          subType: app.subType,
+          cmdType: app.cmdType,
+          originalName: app.originalName,
+          persistedName: app.persistedName
+        })}`,
+        label: '固定到搜索框'
+      })
+    }
   }
 
   // 超级面板固定/取消固定
@@ -591,18 +564,10 @@ async function handleAppContextMenu(
     let outKillPlugins: string[] = []
     let autoDetachPlugins: string[] = []
     try {
-      const killData = await window.ztools.dbGet('outKillPlugin')
-      if (killData && Array.isArray(killData)) {
-        outKillPlugins = killData
-          .map((item: any) => (typeof item === 'string' ? item : (item?.pluginName ?? '')))
-          .filter(Boolean)
-      }
-      const detachData = await window.ztools.dbGet('autoDetachPlugin')
-      if (detachData && Array.isArray(detachData)) {
-        autoDetachPlugins = detachData
-          .map((item: any) => (typeof item === 'string' ? item : (item?.pluginName ?? '')))
-          .filter(Boolean)
-      }
+      const killData = await window.ztools.dbGet('out-kill-plugin')
+      outKillPlugins = normalizeConfigList(killData)
+      const detachData = await window.ztools.dbGet('auto-detach-plugin')
+      autoDetachPlugins = normalizeConfigList(detachData)
     } catch (error) {
       console.log('读取配置失败:', error)
     }
@@ -846,7 +811,11 @@ async function handleKeydown(event: KeyboardEvent): Promise<void> {
   })
 }
 
-// 处理上下文菜单命令
+/**
+ * 执行主进程右键菜单回传的命令。
+ * @param command 菜单命令及其序列化参数
+ * @returns 命令处理完成后结束的 Promise
+ */
 async function handleContextMenuCommand(command: string): Promise<void> {
   if (command.startsWith('remove-from-history:')) {
     const jsonStr = command.replace('remove-from-history:', '')
@@ -859,6 +828,39 @@ async function handleContextMenuCommand(command: string): Promise<void> {
       })
     } catch (error) {
       console.error('从历史记录删除失败:', error)
+    }
+  } else if (command.startsWith('pin-recommendation:')) {
+    const jsonStr = command.replace('pin-recommendation:', '')
+    try {
+      await pinRecommendation(JSON.parse(jsonStr))
+      nextTick(() => {
+        emit('height-changed')
+        emit('focus-input')
+      })
+    } catch (error) {
+      console.error('置顶匹配推荐失败:', error)
+    }
+  } else if (command.startsWith('unpin-recommendation:')) {
+    const jsonStr = command.replace('unpin-recommendation:', '')
+    try {
+      await unpinRecommendation(JSON.parse(jsonStr))
+      nextTick(() => {
+        emit('height-changed')
+        emit('focus-input')
+      })
+    } catch (error) {
+      console.error('取消匹配推荐置顶失败:', error)
+    }
+  } else if (command.startsWith('move-recommendation-to-front:')) {
+    const jsonStr = command.replace('move-recommendation-to-front:', '')
+    try {
+      await moveRecommendationToFront(JSON.parse(jsonStr))
+      nextTick(() => {
+        emit('height-changed')
+        emit('focus-input')
+      })
+    } catch (error) {
+      console.error('调整匹配推荐顺序失败:', error)
     }
   } else if (command.startsWith('pin-app:')) {
     const appJson = command.replace('pin-app:', '')
@@ -906,12 +908,8 @@ async function handleContextMenuCommand(command: string): Promise<void> {
     try {
       let outKillPlugins: string[] = []
       try {
-        const data = await window.ztools.dbGet('outKillPlugin')
-        if (data && Array.isArray(data)) {
-          outKillPlugins = data
-            .map((item: any) => (typeof item === 'string' ? item : (item?.pluginName ?? '')))
-            .filter(Boolean)
-        }
+        const data = await window.ztools.dbGet('out-kill-plugin')
+        outKillPlugins = normalizeConfigList(data)
       } catch (error) {
         console.debug('未找outKillPlugin配置', error)
       }
@@ -924,7 +922,7 @@ async function handleContextMenuCommand(command: string): Promise<void> {
       outKillPlugins = outKillPlugins.includes(pluginName)
         ? outKillPlugins.filter((n) => n !== pluginName)
         : [...outKillPlugins, pluginName]
-      await window.ztools.dbPut('outKillPlugin', outKillPlugins)
+      await window.ztools.dbPut('out-kill-plugin', outKillPlugins)
       console.log('已更新 outKillPlugin 配置:', outKillPlugins)
     } catch (error: any) {
       console.error('切换自动结束配置失败:', error)
@@ -962,12 +960,8 @@ async function handleContextMenuCommand(command: string): Promise<void> {
     try {
       let autoDetachPlugins: string[] = []
       try {
-        const data = await window.ztools.dbGet('autoDetachPlugin')
-        if (data && Array.isArray(data)) {
-          autoDetachPlugins = data
-            .map((item: any) => (typeof item === 'string' ? item : (item?.pluginName ?? '')))
-            .filter(Boolean)
-        }
+        const data = await window.ztools.dbGet('auto-detach-plugin')
+        autoDetachPlugins = normalizeConfigList(data)
       } catch (error) {
         console.debug('未找到 autoDetachPlugin 配置', error)
       }
@@ -980,7 +974,7 @@ async function handleContextMenuCommand(command: string): Promise<void> {
       autoDetachPlugins = autoDetachPlugins.includes(pluginName)
         ? autoDetachPlugins.filter((n) => n !== pluginName)
         : [...autoDetachPlugins, pluginName]
-      await window.ztools.dbPut('autoDetachPlugin', autoDetachPlugins)
+      await window.ztools.dbPut('auto-detach-plugin', autoDetachPlugins)
       console.log('已更新 autoDetachPlugin 配置:', autoDetachPlugins)
     } catch (error: any) {
       console.error('切换自动分离配置失败:', error)

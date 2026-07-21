@@ -1,11 +1,7 @@
 <script setup lang="ts">
-import {
-  CommandTag,
-  FeatureCard,
-  MatchCommandDetailDialog,
-  TagDropdown,
-  useMatchCommandDetail
-} from '@/components'
+import { computed, onMounted, watch } from 'vue'
+import { CommandTag, FeatureCard, MatchCommandDetailDialog, TagDropdown } from '@/components'
+import { usePluginCommandActions } from '@/composables'
 import type { DocItem, PluginItem, TabId, TabItem } from './types'
 
 const props = defineProps<{
@@ -33,14 +29,45 @@ const emit = defineEmits<{
   (e: 'clear-all-data'): void
 }>()
 
+// 插件指令操作（打开 / 固定 / 快捷键 / 别名 / 禁用）+ 匹配指令详情弹窗。
+// 仅对已安装（有 path）的插件生效；未安装的市场插件不渲染操作菜单。
 const {
-  selectedMatchCommand,
-  openMatchCommandDetail,
+  loadAll,
+  isCommandDisabled,
+  getMenuItems,
+  handleMenuSelect,
+  handleMatchMenuSelect,
   closeMatchCommandDetail,
+  selectedMatchCommand,
+  selectedMatchCommandDisabled,
+  toggleSelectedMatchCommandDisabled,
   cmdKey,
   normalizeCommand,
   isMatchCommand
-} = useMatchCommandDetail()
+} = usePluginCommandActions({
+  getPluginName: () => props.plugin.name,
+  getPluginPath: () => props.plugin.path,
+  getPluginTitle: () => props.plugin.title || props.plugin.name
+})
+
+const pluginName = computed(() => props.plugin.name || '')
+const hasCommandActions = computed(() => Boolean(props.plugin.path))
+
+// 首次挂载 + 切换插件（组件实例被复用、onMounted 不再触发）时重新加载指令操作数据
+onMounted(() => {
+  if (hasCommandActions.value) {
+    void loadAll()
+  }
+})
+
+watch(
+  () => props.plugin.path,
+  (newPath, oldPath) => {
+    if (newPath && newPath !== oldPath) {
+      void loadAll()
+    }
+  }
+)
 
 function formatJsonData(data: any): string {
   if (!data) return ''
@@ -103,13 +130,53 @@ function formatDate(dateStr?: string): string {
         <div v-if="plugin.features && plugin.features.length > 0" class="feature-list">
           <FeatureCard v-for="feature in plugin.features" :key="feature.code" :feature="feature">
             <template v-for="cmd in feature.cmds" :key="cmdKey(cmd)">
+              <!-- 已安装：全部指令支持操作菜单 -->
               <TagDropdown
-                v-if="isMatchCommand(cmd)"
-                :menu-items="[{ key: 'detail', label: '查看详情', icon: 'i-z-info' }]"
-                @select="openMatchCommandDetail(feature, cmd)"
+                v-if="hasCommandActions && isMatchCommand(cmd)"
+                :menu-items="
+                  getMenuItems(
+                    isCommandDisabled(pluginName, feature.code, cmdKey(cmd), cmd.type || 'text'),
+                    cmd.type,
+                    pluginName,
+                    feature.code,
+                    cmdKey(cmd)
+                  )
+                "
+                @select="(key) => handleMatchMenuSelect(key, feature, cmd)"
               >
-                <CommandTag :command="normalizeCommand(cmd)" show-arrow />
+                <CommandTag
+                  :command="normalizeCommand(cmd)"
+                  :disabled="
+                    isCommandDisabled(pluginName, feature.code, cmdKey(cmd), cmd.type || 'text')
+                  "
+                  show-arrow
+                />
               </TagDropdown>
+              <TagDropdown
+                v-else-if="hasCommandActions"
+                :menu-items="
+                  getMenuItems(
+                    isCommandDisabled(pluginName, feature.code, cmdKey(cmd), cmd.type || 'text'),
+                    cmd.type || 'text',
+                    pluginName,
+                    feature.code,
+                    cmdKey(cmd)
+                  )
+                "
+                @select="
+                  (key) =>
+                    handleMenuSelect(key, pluginName, feature.code, cmdKey(cmd), cmd.type || 'text')
+                "
+              >
+                <CommandTag
+                  :command="normalizeCommand(cmd)"
+                  :disabled="
+                    isCommandDisabled(pluginName, feature.code, cmdKey(cmd), cmd.type || 'text')
+                  "
+                  show-arrow
+                />
+              </TagDropdown>
+              <!-- 未安装：纯展示 -->
               <CommandTag v-else :command="normalizeCommand(cmd)" />
             </template>
           </FeatureCard>
@@ -210,7 +277,10 @@ function formatDate(dateStr?: string): string {
     <MatchCommandDetailDialog
       :visible="!!selectedMatchCommand"
       :command="selectedMatchCommand?.command"
+      :disabled="selectedMatchCommandDisabled"
+      show-toggle-disabled
       @close="closeMatchCommandDetail"
+      @toggle-disabled="toggleSelectedMatchCommandDisabled"
     />
   </div>
 </template>

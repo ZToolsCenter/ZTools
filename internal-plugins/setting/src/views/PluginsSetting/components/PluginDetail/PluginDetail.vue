@@ -8,6 +8,7 @@ defineProps<{
   isRunning?: boolean
   isPinned?: boolean
   isDisabled?: boolean
+  showMarketButton?: boolean
 }>()
 
 defineEmits<{
@@ -18,6 +19,7 @@ defineEmits<{
   (e: 'uninstall', options: PluginUninstallOptions): void
   (e: 'kill'): void
   (e: 'open-folder'): void
+  (e: 'open-market'): void
 
   (e: 'toggle-pin'): void
   (e: 'toggle-disabled', disabled: boolean): void
@@ -33,6 +35,8 @@ defineEmits<{
     :is-disabled="isDisabled"
     :show-pin-button="true"
     :show-disable-toggle="true"
+    :show-market-button="showMarketButton"
+    :show-detail="false"
     :show-size="false"
     @back="$emit('back')"
     @open="$emit('open')"
@@ -41,6 +45,7 @@ defineEmits<{
     @uninstall="$emit('uninstall', $event)"
     @kill="$emit('kill')"
     @open-folder="$emit('open-folder')"
+    @open-market="$emit('open-market')"
     @toggle-pin="$emit('toggle-pin')"
     @toggle-disabled="$emit('toggle-disabled', $event)"
   />

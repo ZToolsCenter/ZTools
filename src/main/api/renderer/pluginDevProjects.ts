@@ -3,6 +3,7 @@ import { dialog, shell } from 'electron'
 import { promises as fs } from 'fs'
 import path from 'path'
 import { isBundledInternalPlugin } from '../../core/internalPlugins'
+import providerManager from '../../core/provider/providerManager'
 import { toDevPluginName } from '../../../shared/pluginRuntimeNamespace'
 import { packZpx } from '../../utils/zpxArchive.js'
 import databaseAPI from '../shared/database'
@@ -248,9 +249,9 @@ export class PluginDevProjectsAPI {
       'history-changed'
     )
     filterDbArray('pinned-commands', (item) => item?.pluginName !== effectiveName, 'pinned-changed')
-    filterDbArray('autoStartPlugin', (n) => n !== effectiveName)
-    filterDbArray('outKillPlugin', (n) => n !== effectiveName)
-    filterDbArray('autoDetachPlugin', (n) => n !== effectiveName)
+    filterDbArray('auto-start-plugin', (n) => n !== effectiveName)
+    filterDbArray('out-kill-plugin', (n) => n !== effectiveName)
+    filterDbArray('auto-detach-plugin', (n) => n !== effectiveName)
   }
 
   // ---- Public API ----
@@ -513,6 +514,12 @@ export class PluginDevProjectsAPI {
       const { [projectName]: _, ...remainingProjects } = registry.projects
       this.writeRegistry({ ...registry, projects: remainingProjects })
       this.removePluginUsageData(devEffectiveName)
+      // 同步清理该开发插件可能注册过的 provider 配置
+      try {
+        providerManager.cleanupForPlugin(devEffectiveName)
+      } catch (error) {
+        console.error('[DevProjects] 清理 provider 配置失败:', error)
+      }
       this.deps.notifyPluginsChanged()
       console.log('[DevProjects] 项目已移除:', projectName)
       return { success: true, pluginName: projectName }
@@ -596,6 +603,12 @@ export class PluginDevProjectsAPI {
         plugins.filter((p) => !(p?.isDevelopment && p?.name === devEffectiveName))
       )
       this.removePluginUsageData(toDevPluginName(projectName))
+      // 卸载开发模式插件时一并清理其 provider 配置
+      try {
+        providerManager.cleanupForPlugin(devEffectiveName)
+      } catch (error) {
+        console.error('[DevProjects] 清理 provider 配置失败:', error)
+      }
       this.deps.notifyPluginsChanged()
       return { success: true, pluginName: projectName }
     } catch (error: unknown) {

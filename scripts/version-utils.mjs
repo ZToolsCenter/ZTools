@@ -34,6 +34,17 @@ export function getBaseVersion() {
   }
 }
 
+export function normalizeVersion(version) {
+  return String(version || '')
+    .trim()
+    .replace(/^v/, '')
+}
+
+// CI 发布时由 workflow 注入，优先级高于 package.json。
+export function getReleaseVersion() {
+  return normalizeVersion(process.env.RELEASE_VERSION)
+}
+
 // 生成dev版本号
 export function getDevVersion() {
   const baseVersion = getBaseVersion()
@@ -48,12 +59,17 @@ export function isDevBuild() {
   return (
     process.env.NODE_ENV === 'development' ||
     process.argv.includes('--dev') ||
-    process.env.GITHUB_EVENT_NAME === 'workflow_dispatch'
+    process.env.BUILD_CHANNEL === 'dev'
   )
 }
 
 // 获取处理后的版本号
 export function getProcessedVersion() {
+  const releaseVersion = getReleaseVersion()
+  if (releaseVersion) {
+    return releaseVersion
+  }
+
   if (isDevBuild()) {
     return getDevVersion()
   } else {

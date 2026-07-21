@@ -1,6 +1,7 @@
 import databaseAPI from '../api/shared/database.js'
 import { isDevelopmentPluginName, toDevPluginName } from '../../shared/pluginRuntimeNamespace.js'
 import { isBundledInternalPlugin } from './internalPlugins.js'
+import { HOST_STORAGE_KEYS, LEGACY_CAMEL_CASE_STORAGE_KEYS } from '../../shared/storageKeys.js'
 
 const LEGACY_WEB_SEARCH_FEATURE_PREFIX = 'web-search-'
 
@@ -57,8 +58,8 @@ function migrateLegacyMacAppIcons(items: any[]): boolean {
  * 当前仅处理旧版 macOS .icns 图标 URL 到 .app 路径图标 URL 的转换
  */
 export function runStartupDataMigrations(): void {
+  migrateHostStorageKeys()
   migrateDevPluginNames()
-  migrateVariantRefLists()
   cleanupLegacyWebSearchReferences()
 
   if (process.platform !== 'darwin') return
@@ -84,6 +85,67 @@ export function runStartupDataMigrations(): void {
       console.error(`[StartupMigration] 迁移失败: ${key}`, error)
     }
   }
+}
+
+export function migrateHostStorageKeys(): void {
+  const simpleMappings = [
+    [LEGACY_CAMEL_CASE_STORAGE_KEYS.autoStartPlugin, HOST_STORAGE_KEYS.autoStartPlugin],
+    [LEGACY_CAMEL_CASE_STORAGE_KEYS.autoDetachPlugin, HOST_STORAGE_KEYS.autoDetachPlugin],
+    [LEGACY_CAMEL_CASE_STORAGE_KEYS.outKillPlugin, HOST_STORAGE_KEYS.outKillPlugin],
+    [LEGACY_CAMEL_CASE_STORAGE_KEYS.detachedWindowSizes, HOST_STORAGE_KEYS.detachedWindowSizes]
+  ] as const
+
+  for (const [legacyKey, targetKey] of simpleMappings) {
+    const legacyValue = databaseAPI.dbGet(legacyKey)
+    if (legacyValue === null || legacyValue === undefined) continue
+
+    const targetValue = databaseAPI.dbGet(targetKey)
+    databaseAPI.dbPut(targetKey, mergeStorageValues(legacyValue, targetValue))
+    databaseAPI.dbRemove(legacyKey)
+    console.log(`[StartupMigration] 已迁移存储键: ${legacyKey} -> ${targetKey}`)
+  }
+
+  const legacyDisabled = databaseAPI.dbGet(LEGACY_CAMEL_CASE_STORAGE_KEYS.disabledMainPushPlugin)
+  if (legacyDisabled !== null && legacyDisabled !== undefined) {
+    const existingEnabled = databaseAPI.dbGet(HOST_STORAGE_KEYS.enabledMainPushPlugin)
+    if (existingEnabled === null || existingEnabled === undefined) {
+      const disabledNames = normalizePluginNameList(legacyDisabled)
+      const installedPlugins = databaseAPI.dbGet(HOST_STORAGE_KEYS.plugins)
+      const enabledNames = Array.isArray(installedPlugins)
+        ? installedPlugins
+            .map((plugin: any) => (typeof plugin?.name === 'string' ? plugin.name : ''))
+            .filter((name: string) => name && !disabledNames.includes(name))
+        : []
+      databaseAPI.dbPut(HOST_STORAGE_KEYS.enabledMainPushPlugin, enabledNames)
+    }
+    databaseAPI.dbRemove(LEGACY_CAMEL_CASE_STORAGE_KEYS.disabledMainPushPlugin)
+    console.log('[StartupMigration] 已迁移 mainPush 插件启用配置')
+  }
+}
+
+function mergeStorageValues(legacyValue: any, targetValue: any): any {
+  if (targetValue === null || targetValue === undefined) return legacyValue
+  if (Array.isArray(legacyValue) && Array.isArray(targetValue)) {
+    return Array.from(new Set([...targetValue, ...legacyValue]))
+  }
+  if (
+    legacyValue &&
+    targetValue &&
+    typeof legacyValue === 'object' &&
+    typeof targetValue === 'object'
+  ) {
+    return { ...legacyValue, ...targetValue }
+  }
+  return targetValue
+}
+
+function normalizePluginNameList(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return value
+    .map((item: any) =>
+      typeof item === 'string' ? item : typeof item?.pluginName === 'string' ? item.pluginName : ''
+    )
+    .filter(Boolean)
 }
 
 /**
@@ -137,12 +199,6 @@ function migrateDevPluginNames(): void {
   }
 }
 
-/**
- * 将 autoStartPlugin / outKillPlugin / autoDetachPlugin 中旧式对象格式迁移为新式字符串格式。
- *
- * 旧格式：[{ pluginName: 'demo', source: 'development' }, {pluginName: 'foo', source: 'installed'}, ...]
- * 新格式：['demo__dev', 'foo', ...]
- */
 function isLegacyWebSearchCommand(item: any): boolean {
   return (
     item &&
@@ -235,40 +291,5 @@ export function cleanupLegacyWebSearchReferences(): void {
     console.log('[StartupMigration] 已清理旧网页快开引用: super-panel-pinned')
   } catch (error) {
     console.error('[StartupMigration] 清理旧网页快开引用失败: super-panel-pinned', error)
-  }
-}
-
-function migrateVariantRefLists(): void {
-  const configKeys = ['autoStartPlugin', 'outKillPlugin', 'autoDetachPlugin']
-
-  for (const key of configKeys) {
-    try {
-      const data: any[] = databaseAPI.dbGet(key) || []
-      if (!Array.isArray(data)) continue
-
-      let changed = false
-      const migrated: string[] = data
-        .map((item) => {
-          if (typeof item === 'string') return item
-          if (item && typeof item === 'object' && typeof item.pluginName === 'string') {
-            changed = true
-            const isDev = item.source === 'development' || item.pluginSource === 'development'
-            // 内置插件不加 __dev 后缀
-            if (isDev && !isBundledInternalPlugin(item.pluginName)) {
-              return toDevPluginName(item.pluginName)
-            }
-            return item.pluginName
-          }
-          return null
-        })
-        .filter(Boolean) as string[]
-
-      if (changed || migrated.length !== data.length) {
-        databaseAPI.dbPut(key, migrated)
-        console.log(`[StartupMigration] 已迁移插件配置列表: ${key}`)
-      }
-    } catch (error) {
-      console.error(`[StartupMigration] 迁移插件配置列表失败: ${key}`, error)
-    }
   }
 }

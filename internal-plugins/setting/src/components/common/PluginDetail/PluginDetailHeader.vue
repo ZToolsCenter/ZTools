@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed, ref, watch } from 'vue'
 import ProgressCircleButton from '@/components/common/ProgressCircleButton/ProgressCircleButton.vue'
 import type { PluginDownloadState, PluginItem } from './types'
 
@@ -8,12 +9,59 @@ const props = defineProps<{
   downloadState?: PluginDownloadState
   canUpgrade: boolean
   showSize?: boolean
+  showDownloadCount?: boolean
 }>()
 
 const emit = defineEmits<{
   (e: 'download'): void
   (e: 'upgrade'): void
 }>()
+
+// 本插件提供的 provider 能力标签（翻译 / OCR）。
+// 仅对已安装插件展示，从主进程聚合后的 provider 列表中按 pluginName 过滤。
+const providerTypes = ref<Array<'translation' | 'ocr'>>([])
+
+async function loadProviderTypes(): Promise<void> {
+  if (!props.plugin.installed || !props.plugin.name) {
+    providerTypes.value = []
+    return
+  }
+  try {
+    const res = await window.ztools.internal.providers.getAll()
+    if (res.success && Array.isArray(res.data)) {
+      const types = new Set<'translation' | 'ocr'>()
+      for (const entry of res.data) {
+        if (entry.source === 'plugin' && entry.pluginName === props.plugin.name && entry.type) {
+          types.add(entry.type)
+        }
+      }
+      providerTypes.value = Array.from(types)
+    } else {
+      providerTypes.value = []
+    }
+  } catch {
+    providerTypes.value = []
+  }
+}
+
+watch(
+  () => [props.plugin.name, props.plugin.installed],
+  () => {
+    loadProviderTypes()
+  },
+  { immediate: true }
+)
+
+const providerLabels = computed(() =>
+  providerTypes.value.map((type) => ({
+    type,
+    label: type === 'translation' ? '翻译提供商' : 'OCR 提供商'
+  }))
+)
+
+const formattedDownloadCount = computed(() =>
+  Number(props.plugin.downloadCount || 0).toLocaleString('zh-CN')
+)
 
 function formatSize(bytes?: number): string {
   if (!bytes || bytes <= 0) return ''
@@ -49,6 +97,14 @@ function openHomepage(): void {
           <div class="detail-title">
             <span class="detail-name">{{ plugin.title || plugin.name }}</span>
             <slot name="title-badge" />
+            <span
+              v-for="p in providerLabels"
+              :key="p.type"
+              class="provider-badge"
+              :title="`本插件提供 ${p.label}（可在「设置 → 提供商」中启用）`"
+            >
+              {{ p.label }}
+            </span>
           </div>
           <div class="detail-desc">{{ plugin.description || '暂无描述' }}</div>
         </div>
@@ -251,6 +307,37 @@ function openHomepage(): void {
         <div class="meta-value">{{ formatSize(plugin.size) || '-' }}</div>
       </div>
 
+      <div v-if="showDownloadCount" class="meta-divider"></div>
+
+      <div v-if="showDownloadCount" class="meta-item">
+        <div class="meta-label">下载量</div>
+        <div class="meta-icon">
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            <path
+              d="M3 3V21H21"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+            <path
+              d="M7 14L11 10L15 13L21 7"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+        </div>
+        <div class="meta-value">{{ formattedDownloadCount }}</div>
+      </div>
+
       <slot name="meta-extra" />
     </div>
   </div>
@@ -366,6 +453,17 @@ function openHomepage(): void {
   align-items: baseline;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.provider-badge {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 500;
+  color: #0891b2;
+  background: rgba(8, 145, 178, 0.12);
+  padding: 2px 8px;
+  border-radius: 4px;
+  line-height: 1.4;
 }
 
 .detail-name {

@@ -12,6 +12,26 @@ export interface DbDoc {
   [key: string]: any
 }
 
+export interface SyncMeta {
+  _rev: string
+  _winningRev?: string
+  _lastModified?: number
+  _cloudSynced?: boolean
+  _deleted?: boolean
+  _hasConflicts?: boolean
+  _conflictCount?: number
+}
+
+export interface RevisionRecord {
+  docId: string
+  rev: string
+  parentRev?: string | null
+  deleted: boolean
+  timestamp: number
+  doc: DbDoc | null
+  isLeaf?: boolean
+}
+
 /**
  * 数据库操作结果接口（完全兼容 UTools）
  */
@@ -50,4 +70,19 @@ export interface LmdbDatabase {
   putSync(key: string, value: any): void
   removeSync(key: string): boolean
   getRange(options: { start?: string; end?: string }): Iterable<{ key: string; value: any }>
+}
+
+/**
+ * 变更日志条目
+ */
+export interface ChangeEntry {
+  seq: number
+  docId: string
+  rev: string
+  parentRev?: string | null
+  deleted: boolean
+  timestamp: number
+  winnerRev?: string
+  isWinner?: boolean
+  resolution?: { retireOtherLeaves?: boolean }
 }

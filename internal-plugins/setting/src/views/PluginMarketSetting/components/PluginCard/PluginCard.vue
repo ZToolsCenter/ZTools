@@ -20,7 +20,14 @@ defineEmits<{
 <template>
   <div class="card plugin-card" :title="plugin.description" @click="$emit('click')">
     <div class="plugin-icon">
-      <AdaptiveIcon :src="plugin.logo ?? ''" class="plugin-logo-img" alt="icon" draggable="false" />
+      <AdaptiveIcon
+        :src="plugin.logo ?? ''"
+        class="plugin-logo-img"
+        alt="icon"
+        loading="lazy"
+        decoding="async"
+        draggable="false"
+      />
     </div>
     <div class="plugin-info">
       <div class="plugin-name">{{ plugin.title || plugin.name }}</div>

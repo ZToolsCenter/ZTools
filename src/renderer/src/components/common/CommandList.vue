@@ -16,7 +16,6 @@
           :ref="(el) => setItemRef(el, index)"
           class="app-item"
           :class="{ selected: index === selectedIndex }"
-          style="cursor: move"
           :title="getTitleText(app)"
           @click="$emit('select', app)"
           @contextmenu.prevent="$emit('contextmenu', app)"
@@ -39,6 +38,13 @@
               class="app-dev-badge"
               >DEV</span
             >
+            <span
+              v-if="props.showPinnedIndicator && app.isPinnedInSearch"
+              class="app-pin-badge"
+              title="已置顶"
+            >
+              <PinIcon width="12" height="12" aria-hidden="true" />
+            </span>
           </div>
           <!-- eslint-disable-next-line vue/no-v-html -->
           <span class="app-name" v-html="getHighlightedName(app)"></span>
@@ -76,6 +82,13 @@
             class="app-dev-badge"
             >DEV</span
           >
+          <span
+            v-if="props.showPinnedIndicator && app.isPinnedInSearch"
+            class="app-pin-badge"
+            title="已置顶"
+          >
+            <PinIcon width="12" height="12" aria-hidden="true" />
+          </span>
         </div>
         <!-- eslint-disable-next-line vue/no-v-html -->
         <span class="app-name" v-html="getHighlightedName(app)"></span>
@@ -93,28 +106,33 @@ import Draggable from 'vuedraggable'
 import type { Command } from '../../stores/commandDataStore'
 import { highlightMatch } from '../../utils/highlight'
 import AdaptiveIcon from '../common/AdaptiveIcon.vue'
+import PinIcon from '@renderer/assets/icons/pin.svg?component'
 
 import { isDevelopmentPluginName } from '../../../../shared/pluginRuntimeNamespace'
 
+type CommandListItem = Command & { isPinnedInSearch?: boolean }
+
 const props = withDefaults(
   defineProps<{
-    apps: Command[]
+    apps: CommandListItem[]
     selectedIndex: number
     emptyText?: string
     draggable?: boolean
     searchQuery?: string // 搜索查询（用于 acronym 高亮）
+    showPinnedIndicator?: boolean // 是否显示置顶图标
   }>(),
   {
     emptyText: '',
     draggable: false,
-    searchQuery: ''
+    searchQuery: '',
+    showPinnedIndicator: false
   }
 )
 
 const emit = defineEmits<{
-  (e: 'select', app: Command): void
-  (e: 'contextmenu', app: Command): void
-  (e: 'update:apps', apps: Command[]): void
+  (e: 'select', app: CommandListItem): void
+  (e: 'contextmenu', app: CommandListItem): void
+  (e: 'update:apps', apps: CommandListItem[]): void
 }>()
 
 // 可拖拽列表的数据绑定
@@ -314,6 +332,22 @@ defineExpose({
   font-weight: 700;
   line-height: 1;
   padding: 2px 4px;
+}
+
+.app-pin-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--bg-color);
+  border-radius: 50%;
+  background: var(--primary-color);
+  color: var(--text-on-primary);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 18%);
 }
 
 .app-name {

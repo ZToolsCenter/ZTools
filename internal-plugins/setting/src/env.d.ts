@@ -22,6 +22,7 @@ declare global {
     ztools: {
       // 获取拖放文件的路径（Electron webUtils）
       getPathForFile: (file: File) => string
+      hideMainWindow: (isRestorePreWindow?: boolean) => boolean | Promise<boolean>
 
       internal: {
         // 数据库操作（主程序专用，直接操作 ZTOOLS 命名空间）
@@ -127,6 +128,62 @@ declare global {
           data?: any
           storefront?: any
           error?: string
+        }>
+        fetchPluginMarketRecommendations: (limit?: number) => Promise<any[]>
+        fetchPluginMarketComments: (
+          pluginName: string,
+          page?: number,
+          pageSize?: number
+        ) => Promise<{
+          success: boolean
+          data?: {
+            items: Array<{
+              id: number
+              pluginName: string
+              uid: string
+              nickname: string
+              avatarUrl?: string
+              parentId?: number | null
+              parent?: {
+                id: number
+                uid: string
+                nickname: string
+                avatarUrl?: string
+                content: string
+                deleted: boolean
+                createdAt: number
+              } | null
+              content: string
+              likeCount: number
+              liked: boolean
+              createdAt: number
+              updatedAt: number
+            }>
+            page: { page: number; pageSize: number; total: number }
+          }
+          error?: string
+          authRequired?: boolean
+        }>
+        createPluginMarketComment: (input: {
+          pluginName: string
+          content: string
+          parentId?: number | null
+        }) => Promise<{
+          success: boolean
+          data?: any
+          error?: string
+          authRequired?: boolean
+        }>
+        togglePluginMarketCommentLike: (commentId: number) => Promise<{
+          success: boolean
+          data?: { liked: boolean; likeCount: number }
+          error?: string
+          authRequired?: boolean
+        }>
+        deletePluginMarketComment: (commentId: number) => Promise<{
+          success: boolean
+          error?: string
+          authRequired?: boolean
         }>
         installPluginFromMarket: (plugin: any) => Promise<{
           success: boolean
@@ -234,7 +291,8 @@ declare global {
         registerGlobalShortcut: (
           shortcut: string,
           target: string,
-          autoCopy?: boolean
+          autoCopy?: boolean,
+          preScreenshotOptimization?: boolean
         ) => Promise<{ success: boolean; error?: string }>
         unregisterGlobalShortcut: (shortcut: string) => Promise<{
           success: boolean
@@ -242,7 +300,7 @@ declare global {
         }>
         updateGlobalShortcutConfig: (
           shortcut: string,
-          config: { autoCopy: boolean }
+          config: { autoCopy: boolean; preScreenshotOptimization: boolean }
         ) => Promise<{ success: boolean; error?: string }>
         registerAppShortcut: (
           shortcut: string,
@@ -263,10 +321,17 @@ declare global {
         updateAcrylicOpacity: (lightOpacity: number, darkOpacity: number) => Promise<void>
         updatePlaceholder: (placeholder: string) => Promise<void>
         selectAvatar: () => Promise<{ success: boolean; path?: string; error?: string }>
+        selectImageFile: () => Promise<{
+          success: boolean
+          path?: string
+          url?: string
+          error?: string
+        }>
         updateAvatar: (avatar: string) => Promise<void>
         updateAutoPaste: (autoPaste: string) => Promise<void>
         updateAutoClear: (autoClear: string) => Promise<void>
         updateAutoBackToSearch: (autoBackToSearch: string) => Promise<void>
+        updateWindowPositionStrategy: (strategy: string) => Promise<void>
         updateShowRecentInSearch: (showRecentInSearch: boolean) => Promise<void>
         updateMatchRecommendation: (showMatchRecommendation: boolean) => Promise<void>
         updateLocalAppSearch: (enabled: boolean) => Promise<void>
@@ -303,9 +368,12 @@ declare global {
           hasUpdate: boolean
           latestVersion?: string
           updateInfo?: any
+          migrationRequired?: boolean
+          migrationReasons?: string[]
+          releaseUrl?: string
           error?: string
         }>
-        updaterStartUpdate: (updateInfo: any) => Promise<{
+        updaterStartUpdate: () => Promise<{
           success: boolean
           error?: string
         }>
@@ -345,6 +413,7 @@ declare global {
           add: (type: 'file' | 'folder') => Promise<{ success: boolean; error?: string }>
           addByPath: (filePath: string) => Promise<{ success: boolean; error?: string }>
           delete: (id: string) => Promise<{ success: boolean; error?: string }>
+          deleteWhenNotExist: () => Promise<{ success: boolean; error?: string }>
           open: (path: string) => Promise<{ success: boolean; error?: string }>
           updateAlias: (id: string, alias: string) => Promise<{ success: boolean; error?: string }>
         }
@@ -357,17 +426,17 @@ declare global {
           needsAdaptation: boolean
         }>
 
-        // WebDAV 同步
+        // 数据同步（WebSocket 版）
         syncGetConfig: () => Promise<{
           success: boolean
           config?: {
             enabled: boolean
             serverUrl: string
-            username: string
-            password: string
+            token: string
+            refreshToken?: string
             syncInterval: number
             lastSyncTime: number
-            syncPlugins?: boolean
+            username?: string
           }
           error?: string
         }>
@@ -376,49 +445,244 @@ declare global {
           count?: number
           error?: string
         }>
+        syncGetConflictCount: () => Promise<{
+          success: boolean
+          count?: number
+          error?: string
+        }>
+        syncListConflicts: () => Promise<{
+          success: boolean
+          items?: Array<{
+            docId: string
+            winningRev?: string
+            conflictCount: number
+            deleted: boolean
+            lastModified?: number
+          }>
+          error?: string
+        }>
+        syncGetConflictDetail: (docId: string) => Promise<{
+          success: boolean
+          detail?: {
+            docId: string
+            winningRev?: string
+            deleted: boolean
+            winner: any
+            conflicts: any[]
+          }
+          error?: string
+        }>
+        syncResolveConflict: (
+          docId: string,
+          sourceRev: string
+        ) => Promise<{
+          success: boolean
+          rev?: string
+          error?: string
+        }>
         syncStopAutoSync: () => Promise<{
           success: boolean
           error?: string
         }>
-        syncTestConnection: (config: {
+        syncTestConnection: (config: { serverUrl: string }) => Promise<{
+          success: boolean
+          error?: string
+        }>
+        syncGetCaptchaConfig: (params: { serverUrl: string }) => Promise<{
+          success: boolean
+          config?: {
+            enabled: boolean
+            prefix?: string
+            sceneId?: string
+            encryptedSceneId?: string
+            region?: string
+          }
+          error?: string
+        }>
+        syncLogin: (params: {
           serverUrl: string
           username: string
           password: string
+          captchaVerifyParam?: string
         }) => Promise<{
           success: boolean
+          token?: string
+          refreshToken?: string
+          isNew?: boolean
           error?: string
         }>
         syncSaveConfig: (config: {
           enabled: boolean
           serverUrl: string
-          username: string
-          password: string
+          token: string
+          refreshToken?: string
           syncInterval: number
-          syncPlugins?: boolean
+          username?: string
         }) => Promise<{
+          success: boolean
+          error?: string
+        }>
+        syncGetState: () => Promise<{
+          state: string
+        }>
+        syncGetStatus: () => Promise<{
+          success: boolean
+          status?: {
+            config?: {
+              enabled: boolean
+              serverUrl: string
+              token: string
+              refreshToken?: string
+              syncInterval: number
+              lastSyncTime: number
+              deviceId: string
+              username?: string
+            } | null
+            state: string
+            loggedIn: boolean
+            username: string
+            lastSyncTime: number
+            unsyncedCount: number
+            conflictCount: number
+            retryStatus?: {
+              pendingPushBatches: number
+              pendingUploads: number
+              pendingDownloads: number
+              failedPermanent: number
+              authRequired: number
+              lastError?: string
+              nextRetryAt?: number
+            } | null
+          }
+          error?: string
+        }>
+        syncGetDefaultImportStatus: () => Promise<{
+          success: boolean
+          status?: {
+            pending: boolean
+            uid: string | null
+            defaultDocCount: number
+            targetDocCount: number
+            skipped: boolean
+            imported: boolean
+          }
+          error?: string
+        }>
+        syncImportDefaultData: () => Promise<{
+          success: boolean
+          result?: {
+            importedDocs: number
+            importedAttachments: number
+          }
+          error?: string
+        }>
+        syncSkipDefaultImport: () => Promise<{
+          success: boolean
+          error?: string
+        }>
+        syncGetRetryStatus: () => Promise<{
+          success: boolean
+          status?: {
+            pendingPushBatches: number
+            pendingUploads: number
+            pendingDownloads: number
+            failedPermanent: number
+            authRequired: number
+            lastError?: string
+            nextRetryAt?: number
+          } | null
+          error?: string
+        }>
+        syncGetAccountStats: () => Promise<{
+          success: boolean
+          stats?: {
+            documentCount: number
+            attachmentCount: number
+            storageBytes: number
+            monthlyTraffic: number
+          }
+          error?: string
+        }>
+        syncGetAccountProfile: () => Promise<{
+          success: boolean
+          profile?: {
+            uid: string
+            nickname?: string
+            avatarUrl?: string
+          }
+          error?: string
+        }>
+        syncUploadAccountAvatar: (avatarPath: string) => Promise<{
+          success: boolean
+          profile?: {
+            uid: string
+            nickname?: string
+            avatarUrl?: string
+          }
+          error?: string
+        }>
+        syncUpdateNickname: (params: {
+          serverUrl: string
+          token: string
+          nickname: string
+        }) => Promise<{
+          success: boolean
+          profile?: {
+            uid: string
+            nickname?: string
+            avatarUrl?: string
+          }
+          error?: string
+        }>
+        syncGithubInitSession: (params: { serverUrl: string }) => Promise<{
+          success: boolean
+          sessionId?: string
+          expiresIn?: number
+          error?: string
+        }>
+        syncGithubOpenBrowser: (params: { serverUrl: string; sessionId: string }) => Promise<{
+          success: boolean
+          error?: string
+        }>
+        syncGithubPollStatus: (params: { serverUrl: string; sessionId: string }) => Promise<{
+          success: boolean
+          status?: 'pending' | 'success'
+          token?: string
+          refreshToken?: string
+          username?: string
+          isNew?: boolean
+          error?: string
+        }>
+        syncRetryNow: () => Promise<{
           success: boolean
           error?: string
         }>
         syncPerformSync: () => Promise<{
           success: boolean
-          result?: {
-            uploaded: number
-            downloaded: number
-            errors: number
-            pluginsUploaded?: number
-            pluginsDownloaded?: number
-            pluginsDeleted?: number
-          }
           error?: string
         }>
-        syncForceDownloadFromCloud: () => Promise<{
+        syncForcePushAll: () => Promise<{
           success: boolean
-          result?: {
-            downloaded: number
-            errors: number
-          }
           error?: string
         }>
+        syncResetLocalSyncState: () => Promise<{
+          success: boolean
+          documentsMarked?: number
+          tasksCleared?: number
+          error?: string
+        }>
+        onSyncStatusChanged?: (
+          callback: (payload: {
+            state?: string
+            retryStatus?: any
+            lastSyncTime?: number
+            lastError?: string
+            refresh?: boolean
+          }) => void
+        ) => () => void
+        onSyncAccountStorageChanged?: (
+          callback: (payload: { username?: string | null }) => void
+        ) => () => void
 
         // AI 模型管理
         aiModels: {
@@ -426,6 +690,85 @@ declare global {
           add: (model: any) => Promise<{ success: boolean; error?: string }>
           update: (model: any) => Promise<{ success: boolean; error?: string }>
           delete: (id: string) => Promise<{ success: boolean; error?: string }>
+        }
+
+        // Provider（翻译 / OCR 等）管理
+        providers: {
+          getAll: (type?: 'translation' | 'ocr') => Promise<{
+            success: boolean
+            data?: Array<{
+              id: string
+              type: 'translation' | 'ocr'
+              label: string
+              description: string
+              source: 'builtin' | 'plugin'
+              pluginName?: string
+              pluginPath?: string
+              pluginLogo?: string
+            }>
+            error?: string
+          }>
+          getSettings: () => Promise<{
+            success: boolean
+            data?: {
+              enabled: Partial<Record<'translation' | 'ocr', string[]>>
+              defaultId: Partial<Record<'translation' | 'ocr', string>>
+              params: Record<string, Record<string, unknown>>
+            }
+            error?: string
+          }>
+          setEnabled: (
+            providerId: string,
+            enabled: boolean
+          ) => Promise<{
+            success: boolean
+            data?: {
+              enabled: Partial<Record<'translation' | 'ocr', string[]>>
+              defaultId: Partial<Record<'translation' | 'ocr', string>>
+              params: Record<string, Record<string, unknown>>
+            }
+            error?: string
+          }>
+          setDefault: (
+            type: 'translation' | 'ocr',
+            providerId: string
+          ) => Promise<{
+            success: boolean
+            data?: {
+              enabled: Partial<Record<'translation' | 'ocr', string[]>>
+              defaultId: Partial<Record<'translation' | 'ocr', string>>
+              params: Record<string, Record<string, unknown>>
+            }
+            error?: string
+          }>
+          getParams: (
+            providerId: string
+          ) => Promise<{ success: boolean; data?: Record<string, unknown>; error?: string }>
+          setParams: (
+            providerId: string,
+            params: Record<string, unknown>
+          ) => Promise<{ success: boolean; data?: any; error?: string }>
+          // 翻译引擎（内置 Bergamot）状态与总开关
+          getTranslationStatus: () => Promise<{
+            status: 'idle' | 'downloading' | 'initializing' | 'ready' | 'error'
+            error?: string
+          }>
+          setTranslationEnabled: (enabled: boolean) => Promise<{ success: boolean }>
+        }
+
+        // 网页快开
+        webSearch: {
+          getAll: () => Promise<{
+            success: boolean
+            data?: WebSearchEngine[]
+            error?: string
+          }>
+          add: (engine: WebSearchEngine) => Promise<{ success: boolean; error?: string }>
+          update: (engine: WebSearchEngine) => Promise<{ success: boolean; error?: string }>
+          delete: (id: string) => Promise<{ success: boolean; error?: string }>
+          fetchFavicon: (
+            url: string
+          ) => Promise<{ success: boolean; data?: string; error?: string }>
         }
 
         // 超级面板

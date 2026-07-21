@@ -98,10 +98,18 @@ class TranslationManager {
   }
 
   /**
-   * 更新翻译功能开关
+   * 更新翻译功能开关，并持久化到 settings-general.superPanelTranslateEnabled。
+   * 翻译 tab 的开关独立于此前的通用设置页写入，因此这里自行合并保存。
    */
   updateEnabled(enabled: boolean): void {
     this.enabled = enabled
+    // 合并写入，避免覆盖 settings-general 中的其他字段
+    try {
+      const data = databaseAPI.dbGet('settings-general') || {}
+      databaseAPI.dbPut('settings-general', { ...data, superPanelTranslateEnabled: enabled })
+    } catch (error) {
+      console.error('[Translation] 持久化翻译开关失败:', error)
+    }
     if (enabled) {
       this.initializeTranslator()
     } else {

@@ -1,4 +1,4 @@
-import { DbDoc, DbResult } from './types'
+import { DbDoc, DbResult, ChangeEntry } from './types'
 import { SyncApi } from './syncApi'
 
 /**
@@ -58,6 +58,19 @@ export class PromiseApi {
       setImmediate(() => {
         try {
           const result = this.syncApi.remove(docOrId)
+          resolve(result)
+        } catch (e) {
+          reject(e)
+        }
+      })
+    })
+  }
+
+  async removeAndResolve(docOrId: DbDoc | string): Promise<DbResult> {
+    return new Promise((resolve, reject) => {
+      setImmediate(() => {
+        try {
+          const result = this.syncApi.removeAndResolve(docOrId)
           resolve(result)
         } catch (e) {
           reject(e)
@@ -193,6 +206,86 @@ export class PromiseApi {
         try {
           this.syncApi.updateSyncStatus(id, cloudSynced)
           resolve()
+        } catch (e) {
+          reject(e)
+        }
+      })
+    })
+  }
+
+  async getChangesSince(sinceSeq: number): Promise<ChangeEntry[]> {
+    return new Promise((resolve, reject) => {
+      setImmediate(() => {
+        try {
+          resolve(this.syncApi.getChangesSince(sinceSeq))
+        } catch (e) {
+          reject(e)
+        }
+      })
+    })
+  }
+
+  async getLastSeq(): Promise<number> {
+    return new Promise((resolve, reject) => {
+      setImmediate(() => {
+        try {
+          resolve(this.syncApi.getLastSeq())
+        } catch (e) {
+          reject(e)
+        }
+      })
+    })
+  }
+
+  async applyRemoteDoc(doc: DbDoc): Promise<DbResult> {
+    return new Promise((resolve, reject) => {
+      setImmediate(() => {
+        try {
+          resolve(this.syncApi.applyRemoteDoc(doc))
+        } catch (e) {
+          reject(e)
+        }
+      })
+    })
+  }
+
+  async applyRemoteChange(change: {
+    docId: string
+    rev?: string
+    parentRev?: string | null
+    deleted: boolean
+    timestamp?: number
+    doc?: DbDoc | null
+    resolution?: { retireOtherLeaves?: boolean }
+  }): Promise<DbResult> {
+    return new Promise((resolve, reject) => {
+      setImmediate(() => {
+        try {
+          resolve(this.syncApi.applyRemoteChange(change))
+        } catch (e) {
+          reject(e)
+        }
+      })
+    })
+  }
+
+  async resolveConflict(docId: string, sourceRev: string): Promise<DbResult> {
+    return new Promise((resolve, reject) => {
+      setImmediate(() => {
+        try {
+          resolve(this.syncApi.resolveConflict(docId, sourceRev))
+        } catch (e) {
+          reject(e)
+        }
+      })
+    })
+  }
+
+  async applyRemoteRemove(docId: string): Promise<DbResult> {
+    return new Promise((resolve, reject) => {
+      setImmediate(() => {
+        try {
+          resolve(this.syncApi.applyRemoteRemove(docId))
         } catch (e) {
           reject(e)
         }

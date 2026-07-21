@@ -257,6 +257,31 @@ async function handleDelete(shortcut: LocalShortcut): Promise<void> {
   }
 }
 
+//删除失效项目
+async function handleInvalidItemDelete(): Promise<void> {
+  if (isDeleting.value) return
+  const confirmed = await confirm({
+    message: '确定要清除所有失效的本地启动项吗？',
+    type: 'warning'
+  })
+  if (!confirmed) return
+  isDeleting.value = true
+  try {
+    const result = await window.ztools.internal.localShortcuts.deleteWhenNotExist()
+    if (result.success) {
+      success('删除成功')
+    } else {
+      error(result.error || '删除失败')
+    }
+  } catch (err) {
+    console.error('删除失败:', err)
+    error('删除失败')
+  } finally {
+    await loadShortcuts()
+    isDeleting.value = false
+  }
+}
+
 // 获取类型标签
 function getTypeLabel(type: string): string {
   switch (type) {
@@ -321,6 +346,9 @@ onMounted(() => {
           </button>
           <button class="btn btn-primary" :disabled="isAdding" @click="handleAdd('folder')">
             {{ isAdding ? '添加中...' : '添加文件夹' }}
+          </button>
+          <button class="btn btn-primary" :disabled="isDeleting" @click="handleInvalidItemDelete()">
+            {{ isDeleting ? '删除中...' : '删除失效项' }}
           </button>
         </div>
       </div>

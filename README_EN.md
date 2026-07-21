@@ -30,6 +30,28 @@ English | [简体中文](./README.md)
 - 🛠️ **Developer Friendly** - Complete TypeScript type support, hot reload development
 - ⚙️ **Modern Tech Stack** - Electron 41 + Node 24.15 + Chrome 146
 
+## ❤️ Sponsors
+
+> [Want to appear here?](mailto:8589561@qq.com)
+
+<details open>
+<summary>Click to collapse</summary>
+
+<table>
+  <tr>
+    <td width="240" align="center">
+      <a href="https://ztest.ai/?from=ztools">
+        <img src="./.github/assets/sponsors/ztest.png" alt="Ztest" width="220">
+      </a>
+    </td>
+    <td>
+      Thanks to <a href="https://ztest.ai/?from=ztools">Ztest</a> for sponsoring this project! Ztest.ai is a model verification platform for AI API relay services that makes all test result data publicly available. Its 23 probes cover six dimensions: protocol, identity, capability, content integrity, security, and performance. By cross-validating results, it identifies model spoofing and degradation. As an independent third-party verification platform, Ztest monitors the model authenticity, response quality, and service availability of AI API relay services in real time.
+    </td>
+  </tr>
+</table>
+
+</details>
+
 ## 📸 Preview
 
 <div align="center">
@@ -102,66 +124,6 @@ pnpm build:linux:arm64 # Linux (arm64)
 2. Enter application name or command to search
 3. Use `↑` `↓` `←` `→` to navigate, `Enter` to confirm, `Esc` to exit
 
-### Plugin Market
-
-ZTools provides a built-in plugin market for easy browsing and installation:
-
-**Key Features**:
-
-- 📦 **Online Installation** - One-click download and install plugins
-- 🔄 **Plugin Updates** - Detect plugin updates and upgrade to the latest version with one click
-- 🔍 **Plugin Details** - View plugin description, version, author, and other details
-- ✅ **Installed Management** - Installed plugins can be opened or upgraded directly
-
-**How to Use**:
-
-1. Open ZTools settings (click avatar)
-2. Switch to "Plugin Market" tab
-3. Browse and install plugins of interest
-4. Installed plugins will show "Open" or "Upgrade" button
-
-**Technical Implementation**:
-
-- Plugins hosted on GitHub Releases ([ZTools-plugins](https://github.com/ZToolsCenter/ZTools-plugins/releases))
-- Plugin list: Fetched from `plugins.json` file for plugin information and download links
-- Plugin package format: ZIP archive containing `plugin.json` and plugin files
-- Version comparison: Automatically compare local and market versions (semantic versioning)
-- Upgrade strategy: Uninstall old version first, then install new version
-
-### In-App Updates
-
-ZTools supports one-click in-app updates without manual download:
-
-**Update Process**:
-
-1. App automatically checks for updates (on startup or manual check)
-2. Shows update prompt when new version is available
-3. Click update button to start downloading the update package
-4. Automatically installs and restarts the app after download completes
-
-**Technical Implementation**:
-
-- Update source: GitHub Releases ([ZTools](https://github.com/ZToolsCenter/ZTools/releases))
-- Update info file: `latest.yml` (contains version number, changelog, etc.)
-- Update package format: ZIP archive with naming format `update-{platform}-{arch}-{version}.zip`
-  - Example: `update-darwin-arm64-1.2.8.zip` (macOS Apple Silicon)
-  - Example: `update-win32-x64-1.2.8.zip` (Windows x64)
-- Updater program: Independent `ztools-updater` executable
-  - macOS: `ztools-updater` (located in Contents/MacOS/)
-  - Windows: `ztools-agent.exe` (located in app root directory)
-- Update flow:
-  1. Download `latest.yml` from GitHub Releases to get latest version info
-  2. Download update package for the corresponding platform
-  3. Extract and launch independent updater program
-  4. App exits
-  5. Updater replaces `app.asar` file
-  6. Automatically restarts app
-
-**Platform Support**:
-
-- ✅ macOS (Apple Silicon)
-- ✅ Windows (x64)
-
 ## 🧩 Plugin Development
 
 ZTools is a powerful and extensible plugin platform that enhances your productivity with custom plugins. With simple configuration, rich APIs, and cross-platform support, you can easily develop powerful plugins.
@@ -174,78 +136,6 @@ ZTools is a powerful and extensible plugin platform that enhances your productiv
 - 🌍 **Cross-Platform** - Build once, run on Windows, macOS, and Linux with a consistent experience across all devices
 
 > 📖 **Full Documentation**: Visit [ZTools Developer Documentation](https://ztoolscenter.github.io/ZTools-doc/) for more details
-
-ZTools provides a complete plugin system supporting two types:
-
-### UI Plugins
-
-```json
-// plugin.json
-{
-  "name": "my-plugin",
-  "version": "1.0.0",
-  "description": "My Plugin",
-  "main": "index.html",
-  "logo": "logo.png",
-  "features": [
-    {
-      "code": "search",
-      "explain": "Search feature",
-      "cmds": ["search"]
-    }
-  ]
-}
-```
-
-### Headless Plugins
-
-Headless plugins are ideal for background tasks, data processing, and other scenarios that don't require a UI.
-
-```json
-// plugin.json (note: no main field)
-{
-  "name": "my-headless-plugin",
-  "version": "1.0.0",
-  "description": "Background processing plugin",
-  "logo": "logo.png",
-  "features": [
-    {
-      "code": "process",
-      "explain": "Background processing",
-      "cmds": ["process"]
-    }
-  ]
-}
-```
-
-```javascript
-// preload.js
-window.exports = {
-  process: {
-    mode: 'none', // Headless plugin identifier
-    args: {
-      enter: async (action) => {
-        // Processing logic
-        window.ztools.showNotification('Execution completed')
-        return { success: true }
-      }
-    }
-  }
-}
-```
-
-### Plugin API
-
-ZTools provides rich APIs:
-
-- **Database API** - Persistent data storage
-- **Clipboard API** - Access and monitor clipboard
-- **UI API** - Control windows and interface
-- **Dialog API** - Show dialogs and file pickers
-- **Shell API** - Execute command line commands
-- **Window Management API** - Create independent windows
-
-For detailed documentation, see [CLAUDE.md](./CLAUDE.md)
 
 ## 🛠️ Tech Stack
 
@@ -361,14 +251,6 @@ When submitting an issue, please include:
 ## 📄 License
 
 This project is licensed under the [MIT License](./LICENSE).
-
-## 💖 Sponsor
-
-If ZTools has been helpful to you, consider sponsoring the project on Afdian to support continued development:
-
-<a href="https://afdian.com/a/ZTools">
-  <img src="https://img.shields.io/badge/Afdian-Sponsor-946ce6?style=for-the-badge" alt="Afdian">
-</a>
 
 ## 💝 Acknowledgments
 

@@ -69,12 +69,12 @@ const homeRoutes: MenuRouterItemType[] = [
     }
   },
   {
-    path: '/aiModels',
-    name: 'AiModels',
-    component: () => import('@/views/AiModelsSetting/AiModelsSetting.vue'),
+    path: '/providers',
+    name: 'Providers',
+    component: () => import('@/views/ProvidersSetting/ProvidersSetting.vue'),
     meta: {
       menu: {
-        label: 'AI 模型',
+        label: '提供商',
         icon: 'i-z-brain'
       }
     }
@@ -129,7 +129,7 @@ const homeRoutes: MenuRouterItemType[] = [
     component: () => import('@/views/SyncSetting/SyncSetting.vue'),
     meta: {
       menu: {
-        label: 'WebDAV 同步',
+        label: '数据同步',
         icon: 'i-z-cloud'
       }
     }
@@ -166,6 +166,11 @@ const homeRoutes: MenuRouterItemType[] = [
         icon: 'i-z-info'
       }
     }
+  },
+  {
+    path: '/account',
+    name: 'Account',
+    component: () => import('@/views/AccountSetting/AccountSetting.vue')
   },
   {
     path: '/pluginInstaller',

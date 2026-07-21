@@ -3,6 +3,70 @@ import type { HistoryState } from 'vue-router'
 
 export type ShortcutsSettingTab = 'global' | 'app' | 'alias'
 
+export type ShortcutsSettingCommandCmdType = 'text' | 'regex' | 'over' | 'img' | 'files' | 'window'
+
+/**
+ * 统一归一化快捷键目标字符串，兼容旧的“标题 / 指令”格式。
+ */
+export function normalizeShortcutTargetValue(value: string): string {
+  const parts = value
+    .split('/')
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0)
+
+  if (parts.length === 2) {
+    return `${parts[0]}/${parts[1]}`
+  }
+
+  return value.trim()
+}
+
+/**
+ * 生成快捷键场景使用的 canonical target 字符串。
+ */
+export function buildShortcutTargetValue(target: {
+  type: 'plugin' | 'direct'
+  pluginName: string
+  pluginTitle?: string
+  cmdName: string
+}): string {
+  if (target.type === 'plugin') {
+    return normalizeShortcutTargetValue(`${target.pluginName}/${target.cmdName}`)
+  }
+
+  return normalizeShortcutTargetValue(target.cmdName)
+}
+
+/**
+ * 生成快捷键目标的兼容匹配候选值，便于识别旧存量配置。
+ */
+export function buildShortcutTargetCandidates(target: {
+  type: 'plugin' | 'direct'
+  pluginName: string
+  pluginTitle: string
+  groupTitle: string
+  cmdName: string
+}): string[] {
+  const candidates = new Set<string>()
+
+  candidates.add(buildShortcutTargetValue(target))
+
+  if (target.type === 'plugin') {
+    candidates.add(normalizeShortcutTargetValue(`${target.pluginTitle}/${target.cmdName}`))
+    candidates.add(normalizeShortcutTargetValue(`${target.groupTitle}/${target.cmdName}`))
+  }
+
+  return Array.from(candidates)
+}
+
+export interface ShortcutsSettingCommandTargetOptionBase extends ShortcutsSettingAliasDraftTarget {
+  label: string
+}
+
+export interface ShortcutsSettingShortcutTargetOption extends ShortcutsSettingCommandTargetOptionBase {
+  value: string
+}
+
 /**
  * 从“所有指令”页跳转到 alias 设置页时携带的草稿目标
  * 这里只保留构造 alias 所需的最小字段，避免把完整 command 塞进路由状态
@@ -19,7 +83,7 @@ export interface ShortcutsSettingAliasDraftTarget extends HistoryState {
   pluginName: string
   pluginTitle: string
   cmdName: string
-  cmdType: 'text' | 'window'
+  cmdType: ShortcutsSettingCommandCmdType
   icon?: string
 }
 

@@ -26,8 +26,8 @@ body::-webkit-scrollbar {
   --divider-color: rgba(0, 0, 0, 0.1);
   --control-bg: rgba(0, 0, 0, 0.035);
   --hover-bg: #f9fafb;
-  --active-bg: #f0f9ff;
-  --primary-color: #0284c7;
+  --active-bg: #ecfdf5;
+  --primary-color: #059669;
   --primary-gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   --text-on-primary: #ffffff;
   --highlight-color: #ea580c;
@@ -72,7 +72,6 @@ body::-webkit-scrollbar {
 }
 
 /* 主题色定义 - 亮色模式 */
-:root,
 .theme-blue {
   --primary-color: #0284c7;
 }
@@ -81,6 +80,7 @@ body::-webkit-scrollbar {
   --primary-color: #7c3aed;
 }
 
+:root,
 .theme-green {
   --primary-color: #059669;
 }
@@ -151,7 +151,6 @@ body::-webkit-scrollbar {
 
   /* 主题色定义 - 暗色模式 */
   /* 主题色定义 - 暗色模式 */
-  :root,
   .theme-blue {
     --primary-color: #38bdf8;
   }
@@ -160,6 +159,7 @@ body::-webkit-scrollbar {
     --primary-color: #a78bfa;
   }
 
+  :root,
   .theme-green {
     --primary-color: #34d399;
   }

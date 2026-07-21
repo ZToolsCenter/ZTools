@@ -1,5 +1,4 @@
 import { app, BrowserWindow, ipcMain, Menu, WebContentsView } from 'electron'
-import path from 'path'
 import { fileURLToPath, pathToFileURL } from 'url'
 import { v4 as uuidv4 } from 'uuid'
 import databaseAPI from '../api/shared/database'
@@ -11,9 +10,7 @@ import { WINDOW_WIDTH } from '../common/constants'
 import { registerExternalLinkInterceptor } from '../managers/pluginManager'
 import pluginWindowManager from './pluginWindowManager'
 import { getDetachedWindowSizeKey } from '../../shared/pluginRuntimeNamespace'
-
-const __filename = fileURLToPath(import.meta.url)
-const __dirname = path.dirname(__filename)
+import { getPreloadPath, getRendererPath } from '../utils/appBundlePath'
 
 export const DETACHED_TITLEBAR_HEIGHT = 52
 const MIN_WINDOW_WIDTH = 400
@@ -76,7 +73,7 @@ class DetachedWindowManager {
         return
       }
 
-      const existing = databaseAPI.dbGet('detachedWindowSizes') || {}
+      const existing = databaseAPI.dbGet('detached-window-sizes') || {}
       const next = {
         ...(typeof existing === 'object' && existing !== null ? existing : {}),
         [sizeKey]: {
@@ -85,7 +82,7 @@ class DetachedWindowManager {
         }
       }
 
-      databaseAPI.dbPut('detachedWindowSizes', next)
+      databaseAPI.dbPut('detached-window-sizes', next)
       this.lastSavedSizeByPlugin.set(sizeKey, {
         width: normalizedWidth,
         height: normalizedHeight
@@ -156,7 +153,7 @@ class DetachedWindowManager {
         minHeight: 52,
         hasShadow: true, // 启用窗口阴影（可调整为 false 来移除阴影）
         webPreferences: {
-          preload: path.join(__dirname, '../preload/index.js'),
+          preload: getPreloadPath(),
           backgroundThrottling: false, // 窗口最小化时是否继续动画和定时器
           contextIsolation: true, // 启用上下文隔离
           nodeIntegration: false, // 渲染进程禁止直接使用 Node
@@ -200,7 +197,7 @@ class DetachedWindowManager {
       const titlebarUrl =
         process.env.NODE_ENV === 'development'
           ? 'http://localhost:5174/detached-titlebar.html'
-          : pathToFileURL(path.join(__dirname, '../../out/renderer/detached-titlebar.html')).href
+          : pathToFileURL(getRendererPath('detached-titlebar.html')).href
 
       win.loadURL(titlebarUrl)
 

@@ -4,6 +4,7 @@ const mockDbGet = vi.hoisted(() => vi.fn())
 const mockDbPut = vi.hoisted(() => vi.fn())
 const mockClearPluginData = vi.hoisted(() => vi.fn())
 const mockFsRm = vi.hoisted(() => vi.fn())
+const mockCleanupForPlugin = vi.hoisted(() => vi.fn())
 
 vi.mock('electron', () => ({
   dialog: {
@@ -76,6 +77,12 @@ vi.mock('../../src/main/api/renderer/pluginMarket', () => ({
   PluginMarketAPI: class {}
 }))
 
+vi.mock('../../src/main/core/provider/providerManager', () => ({
+  default: {
+    cleanupForPlugin: mockCleanupForPlugin
+  }
+}))
+
 import {
   DEV_PROJECT_REGISTRY_DB_KEY,
   type DevProjectRegistry
@@ -96,7 +103,6 @@ describe('plugin removal cleanup', () => {
     mockClearPluginData.mockResolvedValue({ success: true })
     mockFsRm.mockResolvedValue(undefined)
   })
-
   it('removes all matching development entries when deleting a dev project', async () => {
     const registry: DevProjectRegistry = {
       version: 3,
@@ -251,13 +257,13 @@ describe('plugin removal cleanup', () => {
       if (key === 'plugins') {
         return [{ name: 'demo', path: 'D:\\plugins\\demo', isDevelopment: false }]
       }
-      if (key === 'outKillPlugin') {
+      if (key === 'out-kill-plugin') {
         return ['demo', 'other']
       }
-      if (key === 'autoDetachPlugin') {
+      if (key === 'auto-detach-plugin') {
         return ['demo']
       }
-      if (key === 'autoStartPlugin') {
+      if (key === 'auto-start-plugin') {
         return [{ pluginName: 'demo' }, { pluginName: 'other' }]
       }
       if (key === ENABLED_MAIN_PUSH_PLUGINS_KEY) {
@@ -278,9 +284,9 @@ describe('plugin removal cleanup', () => {
     const result = await api.deletePlugin('D:\\plugins\\demo', { deleteData: true })
 
     expect(result).toEqual({ success: true })
-    expect(mockDbPut).toHaveBeenCalledWith('outKillPlugin', ['other'])
-    expect(mockDbPut).toHaveBeenCalledWith('autoDetachPlugin', [])
-    expect(mockDbPut).toHaveBeenCalledWith('autoStartPlugin', ['other'])
+    expect(mockDbPut).toHaveBeenCalledWith('out-kill-plugin', ['other'])
+    expect(mockDbPut).toHaveBeenCalledWith('auto-detach-plugin', [])
+    expect(mockDbPut).toHaveBeenCalledWith('auto-start-plugin', ['other'])
     expect(mockDbPut).toHaveBeenCalledWith(ENABLED_MAIN_PUSH_PLUGINS_KEY, ['other'])
   })
 
@@ -301,5 +307,46 @@ describe('plugin removal cleanup', () => {
     expect(result).toEqual({ success: true })
     expect(mockDbPut).toHaveBeenCalledWith(ENABLED_MAIN_PUSH_PLUGINS_KEY, ['other', 'demo'])
     expect(send).toHaveBeenCalledWith('plugins-changed')
+  })
+
+  it('persists disabled plugins by stable plugin name', async () => {
+    mockDbGet.mockImplementation((key: string) => {
+      if (key === 'plugins') return [{ name: 'demo', path: '/plugins/demo-1.0.0.asar' }]
+      return []
+    })
+    const api = new PluginsAPI()
+    ;(api as any).mainWindow = { webContents: { send: vi.fn() } }
+    ;(api as any).pluginManager = { killPlugin: vi.fn() }
+    ;(api as any).disabledPluginPathSet = new Set<string>()
+
+    const result = await api.setPluginDisabled('/plugins/demo-1.0.0.asar', true)
+
+    expect(result).toEqual({ success: true })
+    expect(mockDbPut).toHaveBeenCalledWith('disabled-plugins', ['demo'])
+    expect(api.getDisabledPlugins()).toEqual(['/plugins/demo-1.0.0.asar'])
+  })
+
+  it('cleans provider settings for the uninstalled plugin', async () => {
+    mockDbGet.mockImplementation((key: string) => {
+      if (key === 'plugins') {
+        return [{ name: 'demo', path: 'D:\\plugins\\demo', isDevelopment: false }]
+      }
+      return []
+    })
+
+    const api = new PluginsAPI()
+    const killPlugin = vi.fn(() => false)
+    const removePluginUsageData = vi.fn()
+
+    ;(api as any).pluginManager = { killPlugin }
+    ;(api as any).devProjects = { removePluginUsageData }
+    ;(api as any).mainWindow = { webContents: { send: vi.fn() } }
+    ;(api as any).disabledPluginPathSet = new Set<string>()
+
+    const result = await api.deletePlugin('D:\\plugins\\demo')
+
+    expect(result).toEqual({ success: true })
+    // 卸载时应清理该插件在 provider 配置中的启用/默认/参数
+    expect(mockCleanupForPlugin).toHaveBeenCalledWith('demo')
   })
 })

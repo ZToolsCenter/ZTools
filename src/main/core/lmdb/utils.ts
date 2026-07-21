@@ -25,6 +25,25 @@ export function generateNewRev(existingRev?: string): string {
 }
 
 /**
+ * 比较两个版本号，与 CouchDB _rev 算法兼容
+ * 格式: "N-hash"，先比较序列号（数字大的赢），同序则按 hash 字典序升序（更大的赢）
+ * @returns 正数 = rev1 赢, 负数 = rev2 赢, 0 = 相同
+ */
+export function compareRevs(rev1: string | undefined, rev2: string | undefined): number {
+  if (!rev1 && !rev2) return 0
+  if (!rev1) return -1
+  if (!rev2) return 1
+  const [seq1Str, hash1 = ''] = rev1.split('-')
+  const [seq2Str, hash2 = ''] = rev2.split('-')
+  const s1 = parseInt(seq1Str, 10) || 0
+  const s2 = parseInt(seq2Str, 10) || 0
+  if (s1 !== s2) return s1 - s2
+  if (hash1 < hash2) return -1
+  if (hash1 > hash2) return 1
+  return 0
+}
+
+/**
  * 创建错误结果对象
  * @param name 错误名称
  * @param message 错误消息

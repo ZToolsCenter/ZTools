@@ -8,7 +8,8 @@ export interface Plugin {
   iconColor?: string
   logo?: string
   version: string
-  downloadUrl: string
+  downloadUrl?: string
+  downloadCount?: number
   installed: boolean
   path?: string
   localVersion?: string

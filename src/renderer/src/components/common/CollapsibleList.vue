@@ -18,6 +18,7 @@
         :empty-text="emptyText"
         :draggable="draggable"
         :search-query="searchQuery"
+        :show-pinned-indicator="showPinnedIndicator"
         @select="$emit('select', $event)"
         @contextmenu="$emit('contextmenu', $event)"
         @update:apps="handleAppsUpdate"
@@ -41,6 +42,7 @@ interface Props {
   itemsPerRow?: number // 每行显示数量
   defaultVisibleRows?: number // 默认显示的行数（折叠时）
   searchQuery?: string // 搜索查询（用于 acronym 高亮）
+  showPinnedIndicator?: boolean // 是否显示推荐项的置顶图标
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -50,7 +52,8 @@ const props = withDefaults(defineProps<Props>(), {
   expanded: false,
   itemsPerRow: 9,
   defaultVisibleRows: 1, // 默认显示1行
-  searchQuery: ''
+  searchQuery: '',
+  showPinnedIndicator: false
 })
 
 const emit = defineEmits<{

@@ -510,7 +510,7 @@ const pendingTranslation = ref<{ text: string; sourceText?: string } | null>(nul
 const avatar = ref(defaultAvatar)
 const acrylicLightOpacity = ref(78)
 const acrylicDarkOpacity = ref(50)
-const primaryColor = ref('blue')
+const primaryColor = ref('green')
 const customColor = ref('#db2777')
 // 窗口匹配相关状态
 const showWindowMatch = ref(false)
@@ -552,6 +552,12 @@ function syncTranslationForClipboardContent(content: ClipboardContent | null): v
   translationText.value = ''
 }
 
+/**
+ * 获取指定主题色在当前明暗模式下对应的颜色值。
+ * @param colorName 主题色名称
+ * @param isDark 当前是否为暗色模式
+ * @returns 可用于 CSS 的十六进制颜色值
+ */
 function getThemeColor(colorName: string, isDark: boolean): string {
   const colors: Record<string, { light: string; dark: string }> = {
     blue: { light: '#0284c7', dark: '#38bdf8' },
@@ -565,7 +571,8 @@ function getThemeColor(colorName: string, isDark: boolean): string {
   if (color) {
     return isDark ? color.dark : color.light
   }
-  return isDark ? '#38bdf8' : '#0284c7'
+  // 非法或未知名称统一回退到产品默认的绿色。
+  return isDark ? '#34d399' : '#059669'
 }
 
 function applyPrimaryColor(): void {
@@ -2065,7 +2072,7 @@ onUnmounted(() => {
   width: 100%;
   height: 100%;
   border-radius: 2px;
-  background: var(--primary-color, #0284c7);
+  background: var(--primary-color, #059669);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2144,7 +2151,7 @@ onUnmounted(() => {
   font-weight: 600;
   color: var(--text-color);
   background: var(--control-bg, rgba(0, 0, 0, 0.05));
-  border: 1px solid var(--primary-color, #0284c7);
+  border: 1px solid var(--primary-color, #059669);
   border-radius: 4px;
   padding: 2px 6px;
   outline: none;

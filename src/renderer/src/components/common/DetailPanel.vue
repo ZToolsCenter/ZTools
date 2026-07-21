@@ -3,7 +3,7 @@
   <div class="detail-panel">
     <div class="detail-topbar">
       <button class="icon-btn back-btn" aria-label="返回" title="返回" @click="emit('back')">
-        <Icon name="back" size="18" />
+        <BackIcon width="18" height="18" aria-hidden="true" />
       </button>
       <div class="topbar-title">{{ title }}</div>
     </div>
@@ -15,7 +15,7 @@
 </template>
 
 <script setup lang="ts">
-import Icon from './Icon.vue'
+import BackIcon from '@renderer/assets/icons/arrow-back.svg?component'
 
 defineProps<{
   title: string

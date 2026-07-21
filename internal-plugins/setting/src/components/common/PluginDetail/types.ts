@@ -19,6 +19,7 @@ export interface PluginItem {
   localVersion?: string
   path?: string
   size?: number
+  downloadCount?: number
   author?: string
   homepage?: string
 }

@@ -152,6 +152,7 @@ const VALID_BINDING_STATUSES = new Set<DevProjectBindingStatus>([
 
 /** 标准化路径为绝对路径 */
 function resolvePath(p: string): string {
+  if (/^[a-zA-Z]:[\\/]/.test(p)) return p
   return path.resolve(p)
 }
 

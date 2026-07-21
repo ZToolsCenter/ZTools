@@ -2,11 +2,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockDbGet = vi.hoisted(() => vi.fn())
 const mockDbPut = vi.hoisted(() => vi.fn())
+const mockDbRemove = vi.hoisted(() => vi.fn())
 
 vi.mock('../../src/main/api/shared/database.js', () => ({
   default: {
     dbGet: mockDbGet,
-    dbPut: mockDbPut
+    dbPut: mockDbPut,
+    dbRemove: mockDbRemove
   }
 }))
 
@@ -19,7 +21,10 @@ vi.mock('../../src/main/core/internalPlugins.js', () => ({
   isBundledInternalPlugin: vi.fn(() => false)
 }))
 
-import { cleanupLegacyWebSearchReferences } from '../../src/main/core/startupDataMigrations'
+import {
+  cleanupLegacyWebSearchReferences,
+  migrateHostStorageKeys
+} from '../../src/main/core/startupDataMigrations'
 
 describe('startupDataMigrations', () => {
   beforeEach(() => {
@@ -97,5 +102,38 @@ describe('startupDataMigrations', () => {
     expect(mockDbPut).toHaveBeenCalledWith('super-panel-pinned', [
       { path: '/system', type: 'plugin', featureCode: 'clear' }
     ])
+  })
+
+  it('renames camel-case host keys and preserves canonical values', () => {
+    const stores: Record<string, any> = {
+      autoStartPlugin: ['legacy', 'shared'],
+      'auto-start-plugin': ['current', 'shared'],
+      detachedWindowSizes: { legacy: { width: 400 } },
+      'detached-window-sizes': { current: { width: 500 } }
+    }
+    mockDbGet.mockImplementation((key: string) => stores[key] ?? null)
+
+    migrateHostStorageKeys()
+
+    expect(mockDbPut).toHaveBeenCalledWith('auto-start-plugin', ['current', 'shared', 'legacy'])
+    expect(mockDbPut).toHaveBeenCalledWith('detached-window-sizes', {
+      legacy: { width: 400 },
+      current: { width: 500 }
+    })
+    expect(mockDbRemove).toHaveBeenCalledWith('autoStartPlugin')
+    expect(mockDbRemove).toHaveBeenCalledWith('detachedWindowSizes')
+  })
+
+  it('converts the legacy mainPush denylist into the 3.0 allowlist', () => {
+    const stores: Record<string, any> = {
+      disabledMainPushPlugin: ['blocked'],
+      plugins: [{ name: 'enabled' }, { name: 'blocked' }]
+    }
+    mockDbGet.mockImplementation((key: string) => stores[key] ?? null)
+
+    migrateHostStorageKeys()
+
+    expect(mockDbPut).toHaveBeenCalledWith('enabled-main-push-plugin', ['enabled'])
+    expect(mockDbRemove).toHaveBeenCalledWith('disabledMainPushPlugin')
   })
 })

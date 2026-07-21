@@ -1,21 +1,29 @@
-import yaml from 'yaml'
-import { shuffleArray } from '../../utils/common.js'
 import { httpGet } from '../../utils/httpRequest.js'
 import databaseAPI from '../shared/database'
+import {
+  PluginMarketAuthRequiredError,
+  PluginMarketAuthMode,
+  getPluginMarketApiBase,
+  requestPluginMarket
+} from './pluginMarketConfig'
 
 // ━━━ Types ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-/** 插件市场中单个插件的描述信息（来自远程 plugins.json） */
+/** 插件市场中单个插件的描述信息（来自 ZTools 线上市场 API） */
 export type PluginMarketPlugin = {
   name: string
   version: string
   title?: string
   description?: string
   logo?: string
-  /** 支持的平台列表，如 ['darwin', 'win32']；空表示全平台 */
-  platform?: string[]
-  /** 插件包的下载 URL */
-  downloadUrl?: string
+  author?: string
+  homepage?: string
+  size?: number
+  downloadCount?: number
+  updatedAt?: number
+  publishedAt?: number
+  categoryId?: number | null
+  categoryTitle?: string
   [key: string]: unknown
 }
 
@@ -25,37 +33,6 @@ type PluginMarketBannerItem = {
   image: string
   /** 点击跳转链接 */
   url?: string
-}
-
-/** 插件分类配置（来自远程 categories.json） */
-type PluginMarketCategoryConfig = {
-  /** 分类唯一标识 */
-  key?: string
-  /** 分类显示标题 */
-  title?: string
-  description?: string
-  icon?: string
-  /** 该分类下的插件名称列表 */
-  list?: string[]
-}
-
-/** 首页布局区域配置（来自远程 layout.yaml） */
-type PluginMarketLayoutSectionConfig = {
-  /** 区域类型：banner / navigation / fixed / random */
-  type?: string
-  title?: string
-  /** random 类型的插件数量 */
-  count?: number
-  /** banner 的高度（px） */
-  height?: number
-  /** navigation 是否显示分类描述 */
-  showDescription?: boolean
-  /** banner 子项 */
-  children?: PluginMarketBannerItem[]
-  /** navigation 引用的分类 key 列表 */
-  categories?: string[]
-  /** fixed 类型的插件名称列表 */
-  plugins?: string[]
 }
 
 /** 分类详情页的布局区域配置 */
@@ -116,6 +93,61 @@ type PluginMarketStorefront = {
   categoryLayouts: Record<string, PluginMarketCategoryLayoutSection[]>
 }
 
+type MarketBannerResponse = {
+  title?: string
+  imageUrl?: string
+  linkUrl?: string
+}
+
+type MarketCategoryResponse = {
+  id?: number
+  title?: string
+  description?: string
+  logo?: string
+  plugins?: PluginMarketPlugin[]
+}
+
+type MarketPluginsResponse = {
+  banners?: MarketBannerResponse[]
+  categories?: MarketCategoryResponse[]
+  latest?: PluginMarketPlugin[]
+}
+
+type PluginMarketCommentItem = {
+  id: number
+  pluginName: string
+  uid: string
+  nickname: string
+  avatarUrl?: string
+  parentId?: number | null
+  parent?: PluginMarketCommentParent | null
+  content: string
+  likeCount: number
+  liked: boolean
+  deleted?: boolean
+  createdAt: number
+  updatedAt: number
+}
+
+type PluginMarketCommentParent = {
+  id: number
+  uid: string
+  nickname: string
+  avatarUrl?: string
+  content: string
+  deleted: boolean
+  createdAt: number
+}
+
+type PluginMarketCommentPage = {
+  items: PluginMarketCommentItem[]
+  page: {
+    page: number
+    pageSize: number
+    total: number
+  }
+}
+
 /** fetchPluginMarket 的返回结果 */
 export type PluginMarketResult = {
   success: boolean
@@ -132,21 +164,20 @@ export type PluginMarketResult = {
 const PLUGIN_MARKET_STOREFRONT_CACHE_KEY = 'plugin-market-storefront'
 /** storefront 指纹在 LMDB 中的缓存键，用于判断缓存是否失效 */
 const PLUGIN_MARKET_STOREFRONT_FINGERPRINT_CACHE_KEY = 'plugin-market-storefront-fingerprint'
+const PLUGIN_MARKET_RECOMMEND_LIMIT = 12
 
 // ━━━ PluginMarketAPI ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 /**
  * 插件市场 API。
- * 负责从远程获取插件列表、缓存管理和首页 storefront 视图数据构建。
- * 无外部依赖，仅使用 databaseAPI 和 httpGet。
+ * 负责从 ZTools 线上市场获取插件列表、缓存管理和首页 storefront 视图数据构建。
  */
 export class PluginMarketAPI {
   /**
    * 获取插件市场列表。
    * 缓存策略：
-   * 1. 先通过 latest 文件检查版本号是否有更新
-   * 2. 版本相同则直接返回本地缓存
-   * 3. 网络失败时降级使用本地缓存
+   * 1. 优先请求线上聚合 API
+   * 2. 网络失败时降级使用本地缓存
    * @returns 插件列表和可选的 storefront 视图数据
    */
   public async fetchPluginMarket(): Promise<PluginMarketResult> {
@@ -174,80 +205,33 @@ export class PluginMarketAPI {
     }
 
     try {
-      // 读取设置，检查是否有自定义插件市场 URL
-      const settings = databaseAPI.dbGet('settings-general')
-      const defaultBaseUrl = 'https://ztools.zosen.link'
-      let baseUrl = defaultBaseUrl
-
-      if (settings?.pluginMarketCustom && settings?.pluginMarketUrl) {
-        baseUrl = settings.pluginMarketUrl.replace(/\/+$/, '') // 去除末尾斜杠
-      }
-
-      const pluginsJsonUrl = `${baseUrl}/plugins.json`
-      const latestVersionUrl = `${baseUrl}/latest`
-      const layoutUrl = `${baseUrl}/layout.yaml`
-      const categoriesUrl = `${baseUrl}/categories.json`
-
-      console.log('[Plugins] 从插件市场获取列表...', baseUrl)
-
+      const marketApiBase = getPluginMarketApiBase()
       const timestamp = Date.now()
+      const platform = process.platform
 
-      let latestVersion = ''
-      try {
-        const versionResponse = await httpGet(`${latestVersionUrl}?t=${timestamp}`)
-        latestVersion = versionResponse.data.trim()
-        console.log(`发现最新插件列表版本: ${latestVersion}`)
-      } catch (error) {
-        console.warn('[Plugins] 获取版本号失败，将强制更新:', error)
-      }
+      console.log('[Plugins] 从 ZTools 插件市场获取列表...', marketApiBase)
 
-      const cachedVersion = databaseAPI.dbGet('plugin-market-version')
-      if (cachedVersion === latestVersion && latestVersion) {
-        const cachedResult = getCachedResult()
-        if (cachedResult) {
-          console.log('[Plugins] 使用本地缓存的插件市场列表')
-          return cachedResult
-        }
-      }
+      const [marketResponse, recommendations] = await Promise.all([
+        httpGet(
+          `${marketApiBase}/plugins?limit=${PLUGIN_MARKET_RECOMMEND_LIMIT}&platform=${encodeURIComponent(platform)}&t=${timestamp}`
+        ),
+        this.fetchPluginMarketRecommendations(PLUGIN_MARKET_RECOMMEND_LIMIT).catch((error) => {
+          console.warn('[Plugins] 获取推荐插件失败，将仅使用市场聚合数据:', error)
+          return []
+        })
+      ])
 
-      console.log('[Plugins] 下载新版本插件列表...')
-      const response = await httpGet(`${pluginsJsonUrl}?t=${timestamp}`)
-      const json = typeof response.data === 'string' ? JSON.parse(response.data) : response.data
-      const plugins = Array.isArray(json) ? json : []
+      const marketData = this.parseMarketPluginsResponse(marketResponse.data)
+      const plugins = this.collectPlugins(marketData)
+      const storefront = this.buildPluginMarketStorefront(marketData, recommendations)
       const pluginMarketFingerprint = this.getPluginMarketFingerprint(plugins)
 
-      let storefront: PluginMarketStorefront | undefined
-      try {
-        const [layoutResponse, categoriesResponse] = await Promise.all([
-          httpGet(`${layoutUrl}?t=${timestamp}`),
-          httpGet(`${categoriesUrl}?t=${timestamp}`)
-        ])
-
-        const layoutRaw =
-          typeof layoutResponse.data === 'string'
-            ? layoutResponse.data
-            : String(layoutResponse.data || '')
-        const categories =
-          typeof categoriesResponse.data === 'string'
-            ? JSON.parse(categoriesResponse.data)
-            : categoriesResponse.data || []
-
-        storefront = this.buildPluginMarketStorefront(plugins, layoutRaw, categories)
-      } catch (error) {
-        console.warn('[Plugins] 获取或解析 storefront 数据失败，降级为平铺列表:', error)
-      }
-
-      databaseAPI.dbPut('plugin-market-version', latestVersion)
+      databaseAPI.dbPut('plugin-market-version', String(timestamp))
       databaseAPI.dbPut('plugin-market-data', plugins)
-      if (storefront) {
-        databaseAPI.dbPut(PLUGIN_MARKET_STOREFRONT_CACHE_KEY, storefront)
-        databaseAPI.dbPut(PLUGIN_MARKET_STOREFRONT_FINGERPRINT_CACHE_KEY, pluginMarketFingerprint)
-      } else {
-        databaseAPI.dbPut(PLUGIN_MARKET_STOREFRONT_CACHE_KEY, null)
-        databaseAPI.dbPut(PLUGIN_MARKET_STOREFRONT_FINGERPRINT_CACHE_KEY, null)
-      }
+      databaseAPI.dbPut(PLUGIN_MARKET_STOREFRONT_CACHE_KEY, storefront)
+      databaseAPI.dbPut(PLUGIN_MARKET_STOREFRONT_FINGERPRINT_CACHE_KEY, pluginMarketFingerprint)
 
-      return { success: true, data: plugins, ...(storefront ? { storefront } : {}) }
+      return { success: true, data: plugins, storefront }
     } catch (error: unknown) {
       console.error('[Plugins] 获取插件市场列表失败:', error)
       try {
@@ -263,6 +247,113 @@ export class PluginMarketAPI {
     }
   }
 
+  public async fetchPluginMarketRecommendations(
+    limit = PLUGIN_MARKET_RECOMMEND_LIMIT
+  ): Promise<PluginMarketPlugin[]> {
+    const marketApiBase = getPluginMarketApiBase()
+    const timestamp = Date.now()
+    const platform = process.platform
+    const response = await httpGet(
+      `${marketApiBase}/plugins/recommendations?limit=${limit}&platform=${encodeURIComponent(platform)}&t=${timestamp}`
+    )
+    const data = typeof response.data === 'string' ? JSON.parse(response.data) : response.data
+    const items = Array.isArray(data?.items) ? data.items : []
+    return items.filter((plugin: PluginMarketPlugin) => !!plugin?.name)
+  }
+
+  public async fetchComments(
+    pluginName: string,
+    page = 1,
+    pageSize = 20
+  ): Promise<{
+    success: boolean
+    data?: PluginMarketCommentPage
+    error?: string
+    authRequired?: boolean
+  }> {
+    try {
+      const query = new URLSearchParams({
+        pluginName,
+        page: String(page),
+        pageSize: String(pageSize)
+      })
+      const response = await requestPluginMarket(`/plugins/comments?${query.toString()}`)
+      return { success: true, data: this.parseCommentPage(response.data) }
+    } catch (error: unknown) {
+      return this.commentError(error, '评论加载失败')
+    }
+  }
+
+  public async createComment(input: {
+    pluginName: string
+    content: string
+    parentId?: number | null
+  }): Promise<{
+    success: boolean
+    data?: PluginMarketCommentItem
+    error?: string
+    authRequired?: boolean
+  }> {
+    try {
+      const response = await requestPluginMarket(
+        '/plugins/comments',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(input)
+        },
+        PluginMarketAuthMode.REQUIRED
+      )
+      return { success: true, data: this.parseCommentItem(response.data) }
+    } catch (error: unknown) {
+      return this.commentError(error, '评论发布失败')
+    }
+  }
+
+  public async toggleCommentLike(commentId: number): Promise<{
+    success: boolean
+    data?: { liked: boolean; likeCount: number }
+    error?: string
+    authRequired?: boolean
+  }> {
+    try {
+      const response = await requestPluginMarket(
+        `/plugins/comments/${commentId}/like`,
+        {
+          method: 'POST'
+        },
+        PluginMarketAuthMode.REQUIRED
+      )
+      const data = typeof response.data === 'string' ? JSON.parse(response.data) : response.data
+      return {
+        success: true,
+        data: {
+          liked: Boolean(data?.liked),
+          likeCount: Number(data?.likeCount || 0)
+        }
+      }
+    } catch (error: unknown) {
+      return this.commentError(error, '操作失败')
+    }
+  }
+
+  public async deleteComment(
+    commentId: number
+  ): Promise<{ success: boolean; error?: string; authRequired?: boolean }> {
+    try {
+      await requestPluginMarket(
+        `/plugins/comments/${commentId}`,
+        {
+          method: 'DELETE'
+        },
+        PluginMarketAuthMode.REQUIRED
+      )
+      return { success: true }
+    } catch (error: unknown) {
+      return this.commentError(error, '删除失败')
+    }
+  }
+
   /**
    * 生成插件列表的指纹字符串。
    * 用于判断缓存的 storefront 是否需要重新构建（插件名称/版本/平台变化时失效）。
@@ -271,192 +362,178 @@ export class PluginMarketAPI {
    */
   private getPluginMarketFingerprint(plugins: PluginMarketPlugin[]): string {
     return plugins
-      .map(
-        (plugin) =>
-          `${plugin?.name || ''}:${plugin?.version || ''}:${JSON.stringify(plugin?.platform || [])}`
-      )
+      .map((plugin) => `${plugin?.name || ''}:${plugin?.version || ''}`)
       .sort()
       .join('|')
   }
 
+  private parseMarketPluginsResponse(value: unknown): MarketPluginsResponse {
+    const data = typeof value === 'string' ? JSON.parse(value) : value
+    return data && typeof data === 'object' ? (data as MarketPluginsResponse) : {}
+  }
+
+  private parseCommentPage(value: unknown): PluginMarketCommentPage {
+    const data = typeof value === 'string' ? JSON.parse(value) : value
+    const page = (data as PluginMarketCommentPage)?.page || { page: 1, pageSize: 20, total: 0 }
+    const items = Array.isArray((data as PluginMarketCommentPage)?.items)
+      ? (data as PluginMarketCommentPage).items.map((item) => this.parseCommentItem(item))
+      : []
+    return { items, page }
+  }
+
+  private parseCommentItem(value: unknown): PluginMarketCommentItem {
+    const item = (typeof value === 'string' ? JSON.parse(value) : value) as PluginMarketCommentItem
+    return {
+      id: Number(item?.id || 0),
+      pluginName: String(item?.pluginName || ''),
+      uid: String(item?.uid || ''),
+      nickname: String(item?.nickname || ''),
+      avatarUrl: String(item?.avatarUrl || ''),
+      parentId: item?.parentId == null ? null : Number(item.parentId),
+      parent: item?.parent ? this.parseCommentParent(item.parent) : null,
+      content: String(item?.content || ''),
+      likeCount: Number(item?.likeCount || 0),
+      liked: Boolean(item?.liked),
+      deleted: Boolean(item?.deleted),
+      createdAt: Number(item?.createdAt || 0),
+      updatedAt: Number(item?.updatedAt || 0)
+    }
+  }
+
+  private parseCommentParent(value: unknown): PluginMarketCommentParent {
+    const item = (
+      typeof value === 'string' ? JSON.parse(value) : value
+    ) as PluginMarketCommentParent
+    return {
+      id: Number(item?.id || 0),
+      uid: String(item?.uid || ''),
+      nickname: String(item?.nickname || ''),
+      avatarUrl: String(item?.avatarUrl || ''),
+      content: String(item?.content || ''),
+      deleted: Boolean(item?.deleted),
+      createdAt: Number(item?.createdAt || 0)
+    }
+  }
+
+  private commentError(
+    error: unknown,
+    fallback: string
+  ): { success: false; error: string; authRequired?: boolean } {
+    if (error instanceof PluginMarketAuthRequiredError) {
+      return { success: false, error: error.message, authRequired: true }
+    }
+    return { success: false, error: error instanceof Error ? error.message : fallback }
+  }
+
+  private collectPlugins(marketData: MarketPluginsResponse): PluginMarketPlugin[] {
+    const byName = new Map<string, PluginMarketPlugin>()
+    const pushPlugin = (plugin?: PluginMarketPlugin): void => {
+      if (!plugin?.name) return
+      byName.set(plugin.name, plugin)
+    }
+
+    for (const category of marketData.categories || []) {
+      for (const plugin of category.plugins || []) {
+        pushPlugin(plugin)
+      }
+    }
+
+    return [...byName.values()]
+  }
+
   /**
    * 构建插件市场首页的 storefront 视图数据。
-   * 将远程的 layout.yaml + categories.json + plugins.json 合并构建为渲染端可直接使用的结构。
-   * 处理逻辑：
-   * - 按当前平台过滤插件
-   * - 解析 banner / navigation / fixed / random 四种区域类型
-   * - fixed/random 区域中的插件自动去重（同一插件不会出现在多个区域）
-   * @param plugins - 全量插件列表
-   * @param layoutRaw - layout.yaml 的原始 YAML 内容
-   * @param categoriesValue - categories.json 解析后的数据
-   * @returns 构建好的 storefront 视图数据
+   * 将线上聚合 API 的 banners/categories/latest/recommendations 转换为渲染端可直接使用的首页结构。
    */
   private buildPluginMarketStorefront(
-    plugins: PluginMarketPlugin[],
-    layoutRaw: string,
-    categoriesValue: unknown
+    marketData: MarketPluginsResponse,
+    recommendations: PluginMarketPlugin[]
   ): PluginMarketStorefront {
-    const layoutParsed = yaml.parse(layoutRaw) as Record<string, unknown> | null
-    const layoutSections = Array.isArray(layoutParsed?.layout)
-      ? (layoutParsed!.layout as PluginMarketLayoutSectionConfig[])
-      : []
-    const categoriesList = Array.isArray(categoriesValue) ? categoriesValue : []
-
-    // 按当前平台过滤插件
-    const currentPlatform = process.platform
-    const filteredPlugins = plugins.filter((plugin) => {
-      if (!plugin?.platform || !Array.isArray(plugin.platform)) return true
-      return plugin.platform.includes(currentPlatform)
-    })
-
-    const pluginMap = new Map<string, PluginMarketPlugin>()
-    for (const plugin of filteredPlugins) {
-      if (plugin?.name) {
-        pluginMap.set(plugin.name, plugin)
-      }
-    }
+    const categoriesList = Array.isArray(marketData.categories) ? marketData.categories : []
+    const latest = Array.isArray(marketData.latest) ? marketData.latest : []
 
     const categories: Record<string, PluginMarketStorefrontCategory> = {}
-    for (const category of categoriesList as PluginMarketCategoryConfig[]) {
-      if (!category?.key) {
-        continue
-      }
-      const categoryPlugins = Array.isArray(category.list)
-        ? category.list
-            .map((pluginName) => pluginMap.get(pluginName))
-            .filter((plugin): plugin is PluginMarketPlugin => !!plugin)
-        : []
+    const navigationCategories: Array<{
+      key: string
+      title: string
+      description?: string
+      icon?: string
+      showDescription: boolean
+      pluginCount: number
+    }> = []
 
-      categories[category.key] = {
-        key: category.key,
-        title: category.title || category.key,
+    for (const category of categoriesList) {
+      const key = this.categoryKey(category)
+      const plugins = (category.plugins || []).filter((plugin) => !!plugin?.name)
+      if (plugins.length === 0) continue
+
+      categories[key] = {
+        key,
+        title: category.title || key,
         description: category.description,
-        icon: category.icon,
-        plugins: categoryPlugins
+        icon: category.logo,
+        plugins
       }
+      navigationCategories.push({
+        key,
+        title: category.title || key,
+        description: category.description,
+        icon: category.logo,
+        showDescription: true,
+        pluginCount: plugins.length
+      })
     }
 
-    // 解析 categoryLayouts：从 yaml 根级键提取 (default, 以及各 category key)
-    const categoryLayouts: Record<string, PluginMarketCategoryLayoutSection[]> = {}
-    if (layoutParsed) {
-      for (const [key, value] of Object.entries(layoutParsed)) {
-        if (key === 'layout') continue
-        if (Array.isArray(value)) {
-          categoryLayouts[key] = (value as PluginMarketCategoryLayoutSection[]).filter(
-            (section) => section && typeof section.type === 'string'
-          )
-        }
-      }
-    }
-
-    const usedPluginNames = new Set<string>()
     const sections: PluginMarketStorefrontSection[] = []
-    let sectionIndex = 0
-
-    const pushUniquePlugins = (pluginNames: string[]): PluginMarketPlugin[] => {
-      const result: PluginMarketPlugin[] = []
-      for (const pluginName of pluginNames) {
-        const plugin = pluginMap.get(pluginName)
-        if (!plugin || usedPluginNames.has(pluginName)) {
-          continue
-        }
-        usedPluginNames.add(pluginName)
-        result.push(plugin)
-      }
-      return result
+    const bannerItems = (marketData.banners || [])
+      .map((banner) => ({
+        image: banner.imageUrl || '',
+        url: banner.linkUrl || undefined
+      }))
+      .filter((item) => !!item.image)
+    if (bannerItems.length > 0) {
+      sections.push({ type: 'banner', key: 'banner-0', items: bannerItems, height: 160 })
     }
 
-    for (const section of layoutSections) {
-      const sectionKey = `${section.type || 'section'}-${sectionIndex++}`
-
-      if (section.type === 'banner') {
-        const items = Array.isArray(section.children)
-          ? section.children.filter(
-              (item): item is PluginMarketBannerItem =>
-                typeof item?.image === 'string' && !!item.image
-            )
-          : []
-        if (items.length > 0) {
-          sections.push({
-            type: 'banner',
-            key: sectionKey,
-            items,
-            height: section.height
-          })
-        }
-        continue
-      }
-
-      if (section.type === 'navigation') {
-        const categoryKeys = Array.isArray(section.categories) ? section.categories : []
-        const navCategories: Array<{
-          key: string
-          title: string
-          description?: string
-          icon?: string
-          showDescription: boolean
-          pluginCount: number
-        }> = []
-
-        for (const categoryKey of categoryKeys) {
-          const category = categories[categoryKey]
-          if (!category || category.plugins.length === 0) {
-            continue
-          }
-          navCategories.push({
-            key: category.key,
-            title: category.title,
-            description: category.description,
-            icon: category.icon,
-            showDescription: section.showDescription !== false,
-            pluginCount: category.plugins.length
-          })
-        }
-
-        if (navCategories.length > 0) {
-          sections.push({
-            type: 'navigation',
-            key: sectionKey,
-            title: section.title,
-            categories: navCategories
-          })
-        }
-        continue
-      }
-
-      if (section.type === 'fixed') {
-        const pluginNames = Array.isArray(section.plugins) ? section.plugins : []
-        const fixedPlugins = pushUniquePlugins(pluginNames)
-        if (fixedPlugins.length > 0) {
-          sections.push({
-            type: 'fixed',
-            key: sectionKey,
-            title: section.title,
-            plugins: fixedPlugins
-          })
-        }
-        continue
-      }
-
-      if (section.type === 'random') {
-        const count = typeof section.count === 'number' && section.count > 0 ? section.count : 0
-        const availablePlugins = filteredPlugins.filter(
-          (plugin) => plugin?.name && !usedPluginNames.has(plugin.name)
-        )
-        if (count > 0 && availablePlugins.length > 0) {
-          const randomPlugins = shuffleArray(availablePlugins).slice(0, count)
-          for (const plugin of randomPlugins) {
-            usedPluginNames.add(plugin.name)
-          }
-          sections.push({
-            type: 'random',
-            key: sectionKey,
-            title: section.title,
-            plugins: randomPlugins
-          })
-        }
-      }
+    if (navigationCategories.length > 0) {
+      sections.push({
+        type: 'navigation',
+        key: 'navigation-0',
+        title: '插件分类',
+        categories: navigationCategories
+      })
     }
-    return { sections, categories, categoryLayouts }
+
+    if (latest.length > 0) {
+      sections.push({
+        type: 'fixed',
+        key: 'latest-0',
+        title: '最新发布',
+        plugins: latest
+      })
+    }
+
+    const randomPlugins = recommendations.filter((plugin) => !!plugin?.name)
+    if (randomPlugins.length > 0) {
+      sections.push({
+        type: 'random',
+        key: 'recommendations-0',
+        title: '探索发现',
+        plugins: randomPlugins
+      })
+    }
+
+    return {
+      sections,
+      categories,
+      categoryLayouts: { default: [{ type: 'list' }] }
+    }
+  }
+
+  private categoryKey(category: MarketCategoryResponse): string {
+    if (typeof category.id === 'number' && category.id > 0) {
+      return String(category.id)
+    }
+    return String(category.title || 'category').trim() || 'category'
   }
 }

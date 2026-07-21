@@ -1,0 +1,29 @@
+{
+  "name": "provider-example",
+  "title": "Provider 示例",
+  "description": "演示如何通过 providers + registerProvider 提供翻译与 OCR 能力（仅示例，handler 为 mock 实现）",
+  "version": "1.0.0",
+  "main": "index.html",
+  "preload": "preload.js",
+  "author": "ZTools",
+  "logo": "logo.png",
+  "features": [
+    {
+      "code": "demo",
+      "explain": "Provider 示例（无实际功能，仅用于展示 providers 声明）",
+      "cmds": ["provider 示例"]
+    }
+  ],
+  "providers": {
+    "translation": {
+      "type": "translation",
+      "label": "示例翻译",
+      "description": "Mock 翻译 provider，仅用于演示接入流程"
+    },
+    "ocr": {
+      "type": "ocr",
+      "label": "示例 OCR",
+      "description": "Mock OCR provider，仅用于演示接入流程"
+    }
+  }
+}

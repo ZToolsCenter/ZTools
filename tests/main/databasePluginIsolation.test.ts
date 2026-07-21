@@ -15,6 +15,8 @@ const mockLmdb = vi.hoisted(() => ({
   allDocs: vi.fn(),
   get: vi.fn(),
   remove: vi.fn(),
+  removeAndResolve: vi.fn(),
+  removeAttachmentSilent: vi.fn(),
   getAttachmentDb: vi.fn(() => mockAttachmentDb),
   getMetaDb: vi.fn(() => mockMetaDb)
 }))
@@ -49,6 +51,7 @@ describe('database plugin isolation', () => {
     mockLmdb.allDocs.mockReturnValue([])
     mockLmdb.get.mockReturnValue(null)
     mockLmdb.remove.mockReturnValue({ ok: true })
+    mockLmdb.removeAndResolve.mockReturnValue({ ok: true })
     mockAttachmentDb.getRange.mockReturnValue([])
     mockAttachmentDb.get.mockReturnValue(null)
     mockMetaDb.getRange.mockReturnValue([])
@@ -185,10 +188,9 @@ describe('database plugin isolation', () => {
     const result = await database.clearPluginData('demo__dev')
 
     expect(mockLmdb.allDocs).toHaveBeenCalledWith('PLUGIN/demo__dev/')
-    expect(mockLmdb.remove).toHaveBeenCalledWith('PLUGIN/demo__dev/settings')
-    expect(mockMetaDb.removeSync).toHaveBeenCalledWith('PLUGIN/demo__dev/settings')
-    expect(mockAttachmentDb.removeSync).toHaveBeenCalledWith('attachment:PLUGIN/demo__dev/logo')
-    expect(mockAttachmentDb.removeSync).toHaveBeenCalledWith('attachment-ext:PLUGIN/demo__dev/logo')
+    expect(mockLmdb.removeAndResolve).toHaveBeenCalledWith('PLUGIN/demo__dev/settings')
+    expect(mockMetaDb.removeSync).not.toHaveBeenCalled()
+    expect(mockLmdb.removeAttachmentSilent).toHaveBeenCalledWith('PLUGIN/demo__dev/logo')
     expect(result).toEqual({
       success: true,
       deletedCount: 2

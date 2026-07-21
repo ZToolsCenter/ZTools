@@ -69,6 +69,7 @@ const searchResultsRef = ref<{
   resetSelection: () => void
   resetCollapseState: () => void
 } | null>(null)
+let removeAutoCheckUpdateChangedListener: (() => void) | null = null
 // 粘贴的图片数据
 const pastedImageData = ref<string | null>(null)
 // 粘贴的文件数据
@@ -473,6 +474,10 @@ async function handleKeydown(event: KeyboardEvent): Promise<void> {
 
   // Escape 键特殊处理
   if (event.key === 'Escape') {
+    if (!windowStore.builtInEscShortcutEnabled) {
+      return
+    }
+
     event.preventDefault()
 
     if (currentView.value === ViewMode.Plugin) {
@@ -518,6 +523,9 @@ onMounted(async () => {
 
   // 初始调整窗口高度
   updateWindowHeight()
+
+  // 通知主进程渲染进程已就绪（用于静默启动控制）
+  window.ztools.rendererReady()
 
   console.log('监听聚焦事件')
 
@@ -881,14 +889,19 @@ onMounted(async () => {
     await commandDataStore.reloadPluginAvailabilityData()
   })
 
-  // 监听更新下载完成事件
-  window.ztools.onUpdateDownloaded((data) => {
-    console.log('更新已下载:', data)
-    windowStore.setUpdateDownloadInfo({
-      hasDownloaded: true,
+  // 自动检查只更新主窗口提示，不直接弹出更新窗口
+  window.ztools.onUpdateAvailable((data) => {
+    console.log('发现可用更新:', data)
+    windowStore.setAvailableUpdateInfo({
+      hasUpdate: true,
       version: data.version,
       changelog: data.changelog
     })
+  })
+
+  // 设置插件切换自动检查后，立即同步主窗口提示的可见性。
+  removeAutoCheckUpdateChangedListener = window.ztools.onAutoCheckUpdateChanged((enabled) => {
+    windowStore.updateAutoCheckUpdateEnabled(enabled)
   })
 
   // 监听更新下载开始事件
@@ -901,8 +914,8 @@ onMounted(async () => {
     console.error('更新下载失败:', data)
   })
 
-  // 检查是否有已下载的更新
-  windowStore.checkDownloadedUpdate()
+  // 恢复已检测到的更新状态
+  windowStore.checkUpdateStatus()
 
   // 监听超级面板搜索请求（主进程转发，携带剪贴板内容）
   window.ztools.onSuperPanelSearch((data: { text: string; clipboardContent?: any }) => {
@@ -1054,6 +1067,9 @@ onMounted(async () => {
 
 // 清理
 onUnmounted(() => {
+  // 释放支持主动清理的 IPC 监听器，避免重复挂载后收到多次通知。
+  removeAutoCheckUpdateChangedListener?.()
+  removeAutoCheckUpdateChangedListener = null
   window.removeEventListener('keydown', handleKeydown)
 })
 </script>

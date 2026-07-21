@@ -1,0 +1,1 @@
+declare const __ZTOOLS_TARGET_ELECTRON_VERSION__: string

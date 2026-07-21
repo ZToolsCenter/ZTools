@@ -1,5 +1,6 @@
 import { exec } from 'child_process'
 import { promisify } from 'util'
+import * as terminalLauncher from './terminalLauncher'
 
 const execAsync = promisify(exec)
 
@@ -183,16 +184,7 @@ class AppleScriptHelper {
    */
   async openInTerminal(path: string): Promise<boolean> {
     try {
-      // 转义路径中的单引号
-      const escapedPath = path.replace(/'/g, "'\\''")
-      const script = `
-        tell application "Terminal"
-          activate
-          do script "cd '${escapedPath}'"
-        end tell
-      `
-      await this.execute(script)
-      return true
+      return await terminalLauncher.openInTerminal(path)
     } catch (error) {
       console.error('[AppleScript] 在终端打开路径失败:', error)
       return false

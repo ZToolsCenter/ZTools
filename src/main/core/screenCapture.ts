@@ -171,6 +171,19 @@ export const handleLinuxScreenShot = (cb: (image: string) => void): void => {
   }
 }
 
+export const primeScreenCaptureFrame = (): boolean => {
+  if (process.platform !== 'win32') {
+    return false
+  }
+
+  try {
+    return ScreenCapture.prime()
+  } catch (error) {
+    console.warn('[ScreenCapture] 预抓取屏幕失败:', error)
+    return false
+  }
+}
+
 export const screenCapture = (
   mainWindow?: BrowserWindow,
   restoreShowWindow: boolean = true

@@ -70,6 +70,8 @@ let logEntriesCallback = null
 let foundInPageCallback = null
 // 插件侧注册的 MCP 工具处理器，实际执行时由主进程回调到这里。
 const registeredTools = new Map()
+// 插件侧注册的 provider 处理器，按 type 存放，由主进程聚合后调用。
+const registeredProviders = new Map()
 
 /**
  * 创建懒注册的 IPC 事件监听器。
@@ -713,6 +715,73 @@ window.ztools = {
     return await handler(input ?? {})
   },
 
+  // 注册 provider（翻译、OCR 等）处理器。
+  // 首参 key 需与 plugin.json 的 providers 字段 key 一致；type 由声明决定。
+  // 一个插件可对同一 type 声明多条（如 baidu / google 都为 translation），只要 key 不同。
+  registerProvider: (key, handler) => {
+    const providerKey = typeof key === 'string' ? key.trim() : ''
+    if (!providerKey) {
+      throw new Error('provider key 不能为空')
+    }
+    if (typeof handler !== 'function') {
+      throw new Error(`provider "${providerKey}" 的处理器必须是函数`)
+    }
+
+    registeredProviders.set(providerKey, handler)
+    const result = electron.ipcRenderer.sendSync('plugin:provider-register', providerKey)
+    if (!result?.success) {
+      registeredProviders.delete(providerKey)
+      throw new Error(result?.error || `provider "${providerKey}" 注册失败`)
+    }
+  },
+
+  // 由主进程回调执行已注册的 provider 处理器，不对插件开发者直接暴露。
+  __invokeRegisteredProvider: async (key, input) => {
+    const providerKey = typeof key === 'string' ? key.trim() : ''
+    const handler = registeredProviders.get(providerKey)
+    if (!handler) {
+      throw new Error(`provider "${providerKey}" 未注册`)
+    }
+    return await handler(input ?? {})
+  },
+
+  // ==================== 作为消费方调用其它 provider 的能力 ====================
+  // 查询/调用入口统一经 plugin.api 分发器走主进程 providerManager，不在 preload 侧持有状态。
+  providers: {
+    // 查询某 type 下全部渠道，每个渠道带 isDefault 标记。type 缺省时返回所有 type 的渠道。
+    getProviders: async (type) => {
+      return await ipcInvoke('providersGetProviders', { type })
+    },
+    // 单独查询某 type 的默认渠道（无可用时返回 null）。
+    getDefaultProvider: async (type) => {
+      return await ipcInvoke('providersGetDefault', { type })
+    },
+    // 统一调用入口：providerId 可选，缺省走该 type 的默认渠道。
+    invokeProvider: async (type, input, providerId) => {
+      return await ipcInvoke('providersInvoke', { type, input, providerId })
+    }
+  },
+
+  // 翻译便捷封装：ztools.translate(text, { from?, to?, providerId? }) → { text, detectedFrom? }
+  translate: async (text, options = {}) => {
+    const { from, to, providerId } = options || {}
+    return await ipcInvoke('providersInvoke', {
+      type: 'translation',
+      input: { text, from, to },
+      providerId
+    })
+  },
+
+  // OCR 便捷封装：ztools.ocr(image, { lang?, providerId? }) → { text, blocks?, confidence? }
+  ocr: async (image, options = {}) => {
+    const { lang, providerId } = options || {}
+    return await ipcInvoke('providersInvoke', {
+      type: 'ocr',
+      input: { image, lang },
+      providerId
+    })
+  },
+
   // AI 调用 API
   ai: (option, streamCallback) => {
     const requestId = Math.random().toString(36).substr(2, 9)
@@ -811,6 +880,8 @@ window.ztools = {
       addByPath: async (filePath) =>
         await electron.ipcRenderer.invoke('local-shortcuts:add-by-path', filePath),
       delete: async (id) => await electron.ipcRenderer.invoke('local-shortcuts:delete', id),
+      deleteWhenNotExist: async () =>
+        await electron.ipcRenderer.invoke('local-shortcuts:delete-when-not-exist'),
       open: async (path) => await electron.ipcRenderer.invoke('local-shortcuts:open', path),
       updateAlias: async (id, alias) =>
         await electron.ipcRenderer.invoke('local-shortcuts:update-alias', id, alias)
@@ -878,6 +949,21 @@ window.ztools = {
       await electron.ipcRenderer.invoke('internal:kill-plugin', pluginPath),
     fetchPluginMarket: async () =>
       await electron.ipcRenderer.invoke('internal:fetch-plugin-market'),
+    fetchPluginMarketRecommendations: async (limit) =>
+      await electron.ipcRenderer.invoke('internal:fetch-plugin-market-recommendations', limit),
+    fetchPluginMarketComments: async (pluginName, page, pageSize) =>
+      await electron.ipcRenderer.invoke(
+        'internal:fetch-plugin-market-comments',
+        pluginName,
+        page,
+        pageSize
+      ),
+    createPluginMarketComment: async (input) =>
+      await electron.ipcRenderer.invoke('internal:create-plugin-market-comment', input),
+    togglePluginMarketCommentLike: async (commentId) =>
+      await electron.ipcRenderer.invoke('internal:toggle-plugin-market-comment-like', commentId),
+    deletePluginMarketComment: async (commentId) =>
+      await electron.ipcRenderer.invoke('internal:delete-plugin-market-comment', commentId),
     installPluginFromMarket: async (plugin) =>
       await electron.ipcRenderer.invoke('internal:install-plugin-from-market', plugin),
     cancelPluginMarketDownload: async (pluginNameOrTaskId) =>
@@ -913,16 +999,24 @@ window.ztools = {
       await electron.ipcRenderer.invoke('internal:get-plugin-memory-info', pluginPath),
 
     // ==================== 全局快捷键 API ====================
-    registerGlobalShortcut: async (shortcut, target, autoCopy) =>
-      await electron.ipcRenderer.invoke('register-global-shortcut', shortcut, target, autoCopy),
+    registerGlobalShortcut: async (shortcut, target, autoCopy, preScreenshotOptimization) =>
+      await electron.ipcRenderer.invoke(
+        'internal:register-global-shortcut',
+        shortcut,
+        target,
+        autoCopy,
+        preScreenshotOptimization
+      ),
     unregisterGlobalShortcut: async (shortcut) =>
-      await electron.ipcRenderer.invoke('unregister-global-shortcut', shortcut),
+      await electron.ipcRenderer.invoke('internal:unregister-global-shortcut', shortcut),
     updateGlobalShortcutConfig: async (shortcut, config) =>
-      await electron.ipcRenderer.invoke('update-global-shortcut-config', shortcut, config),
-    startHotkeyRecording: async () => await electron.ipcRenderer.invoke('start-hotkey-recording'),
+      await electron.ipcRenderer.invoke('internal:update-global-shortcut-config', shortcut, config),
+    startHotkeyRecording: async () =>
+      await electron.ipcRenderer.invoke('internal:start-hotkey-recording'),
     updateShortcut: async (shortcut) =>
-      await electron.ipcRenderer.invoke('update-shortcut', shortcut),
-    getCurrentShortcut: async () => await electron.ipcRenderer.invoke('get-current-shortcut'),
+      await electron.ipcRenderer.invoke('internal:update-shortcut', shortcut),
+    getCurrentShortcut: async () =>
+      await electron.ipcRenderer.invoke('internal:get-current-shortcut'),
     onHotkeyRecorded: (callback) => {
       if (callback && typeof callback === 'function') {
         hotkeyRecordedCallback = callback
@@ -952,6 +1046,7 @@ window.ztools = {
     setLaunchAtLogin: async (enabled) =>
       await electron.ipcRenderer.invoke('internal:set-launch-at-login', enabled),
     getLaunchAtLogin: async () => await electron.ipcRenderer.invoke('internal:get-launch-at-login'),
+    selectImageFile: async () => await electron.ipcRenderer.invoke('internal:select-image-file'),
     setProxyConfig: async (config) =>
       await electron.ipcRenderer.invoke('internal:set-proxy-config', config),
     getAppVersion: async () => await electron.ipcRenderer.invoke('get-app-version'),
@@ -973,6 +1068,8 @@ window.ztools = {
     // 通知主渲染进程更新自动返回搜索配置
     updateAutoBackToSearch: async (autoBackToSearch) =>
       await electron.ipcRenderer.invoke('internal:update-auto-back-to-search', autoBackToSearch),
+    updateWindowPositionStrategy: async (strategy) =>
+      await electron.ipcRenderer.invoke('internal:update-window-position-strategy', strategy),
     // 通知主渲染进程更新显示最近使用配置
     updateShowRecentInSearch: async (showRecentInSearch) =>
       await electron.ipcRenderer.invoke(
@@ -1034,21 +1131,74 @@ window.ztools = {
     // ==================== 应用更新 API ====================
     updaterCheckUpdate: async () =>
       await electron.ipcRenderer.invoke('internal:updater-check-update'),
-    updaterStartUpdate: async (updateInfo) =>
-      await electron.ipcRenderer.invoke('internal:updater-start-update', updateInfo),
+    updaterStartUpdate: async () =>
+      await electron.ipcRenderer.invoke('internal:updater-start-update'),
     updaterSetAutoCheck: async (enabled) =>
       await electron.ipcRenderer.invoke('internal:updater-set-auto-check', enabled),
 
-    // ==================== WebDAV 同步 API ====================
+    // ==================== 数据同步 API ====================
     syncTestConnection: async (config) =>
       await electron.ipcRenderer.invoke('sync:test-connection', config),
+    syncGetCaptchaConfig: async (params) =>
+      await electron.ipcRenderer.invoke('sync:get-captcha-config', params),
+    syncLogin: async (params) => await electron.ipcRenderer.invoke('sync:login', params),
     syncSaveConfig: async (config) => await electron.ipcRenderer.invoke('sync:save-config', config),
     syncGetConfig: async () => await electron.ipcRenderer.invoke('sync:get-config'),
+    syncGetState: async () => await electron.ipcRenderer.invoke('sync:get-state'),
+    syncGetStatus: async () => await electron.ipcRenderer.invoke('sync:get-status'),
+    syncGetDefaultImportStatus: async () =>
+      await electron.ipcRenderer.invoke('sync:get-default-import-status'),
+    syncImportDefaultData: async () =>
+      await electron.ipcRenderer.invoke('sync:import-default-data'),
+    syncSkipDefaultImport: async () =>
+      await electron.ipcRenderer.invoke('sync:skip-default-import'),
+    syncGetRetryStatus: async () => await electron.ipcRenderer.invoke('sync:get-retry-status'),
+    syncGetAccountStats: async () => await electron.ipcRenderer.invoke('sync:get-account-stats'),
+    syncGetAccountProfile: async () =>
+      await electron.ipcRenderer.invoke('sync:get-account-profile'),
+    syncUploadAccountAvatar: async (avatarPath) =>
+      await electron.ipcRenderer.invoke('sync:upload-account-avatar', avatarPath),
+    syncRetryNow: async () => await electron.ipcRenderer.invoke('sync:retry-now'),
     syncPerformSync: async () => await electron.ipcRenderer.invoke('sync:perform-sync'),
-    syncForceDownloadFromCloud: async () =>
-      await electron.ipcRenderer.invoke('sync:force-download-from-cloud'),
     syncStopAutoSync: async () => await electron.ipcRenderer.invoke('sync:stop-auto-sync'),
     syncGetUnsyncedCount: async () => await electron.ipcRenderer.invoke('sync:get-unsynced-count'),
+    syncGetConflictCount: async () => await electron.ipcRenderer.invoke('sync:get-conflict-count'),
+    syncListConflicts: async () => await electron.ipcRenderer.invoke('sync:list-conflicts'),
+    syncGetConflictDetail: async (docId) =>
+      await electron.ipcRenderer.invoke('sync:get-conflict-detail', docId),
+    syncResolveConflict: async (docId, sourceRev) =>
+      await electron.ipcRenderer.invoke('sync:resolve-conflict', { docId, sourceRev }),
+    storageGetInitState: async () => await electron.ipcRenderer.invoke('storage:get-init-state'),
+    storageStartFresh: async () => await electron.ipcRenderer.invoke('storage:start-fresh'),
+    storageImportLegacy: async (options) =>
+      await electron.ipcRenderer.invoke('storage:import-legacy', options),
+    syncResetLocalSyncState: async () =>
+      await electron.ipcRenderer.invoke('sync:reset-local-sync-state'),
+    syncForcePushAll: async () => await electron.ipcRenderer.invoke('sync:force-push-all'),
+    // GitHub OAuth 登录（轮询方式）
+    syncGithubInitSession: async (params) =>
+      await electron.ipcRenderer.invoke('sync:github-init-session', params),
+    syncGithubOpenBrowser: async (params) =>
+      await electron.ipcRenderer.invoke('sync:github-open-browser', params),
+    syncGithubPollStatus: async (params) =>
+      await electron.ipcRenderer.invoke('sync:github-poll-status', params),
+    // 更新用户昵称
+    syncUpdateNickname: async (params) =>
+      await electron.ipcRenderer.invoke('sync:update-nickname', params),
+    onSyncStatusChanged: (callback) => {
+      const handler = (_event, payload) => {
+        if (typeof callback === 'function') callback(payload || {})
+      }
+      electron.ipcRenderer.on('sync:status-changed', handler)
+      return () => electron.ipcRenderer.removeListener('sync:status-changed', handler)
+    },
+    onSyncAccountStorageChanged: (callback) => {
+      const handler = (_event, payload) => {
+        if (typeof callback === 'function') callback(payload)
+      }
+      electron.ipcRenderer.on('sync:account-storage-changed', handler)
+      return () => electron.ipcRenderer.removeListener('sync:account-storage-changed', handler)
+    },
 
     // ==================== 其他 API ====================
     revealInFinder: async (path) =>
@@ -1099,6 +1249,37 @@ window.ztools = {
         await electron.ipcRenderer.invoke('internal:ai-models-update', model),
       delete: async (modelId) =>
         await electron.ipcRenderer.invoke('internal:ai-models-delete', modelId)
+    },
+
+    // ==================== Provider（翻译 / OCR 等）管理 API ====================
+    providers: {
+      getAll: async (type) => await electron.ipcRenderer.invoke('internal:providers-get-all', type),
+      getSettings: async () => await electron.ipcRenderer.invoke('internal:providers-get-settings'),
+      setEnabled: async (providerId, enabled) =>
+        await electron.ipcRenderer.invoke('internal:providers-set-enabled', providerId, enabled),
+      setDefault: async (type, providerId) =>
+        await electron.ipcRenderer.invoke('internal:providers-set-default', type, providerId),
+      getParams: async (providerId) =>
+        await electron.ipcRenderer.invoke('internal:providers-get-params', providerId),
+      setParams: async (providerId, params) =>
+        await electron.ipcRenderer.invoke('internal:providers-set-params', providerId, params),
+      // 翻译引擎（内置 Bergamot）状态与总开关
+      getTranslationStatus: async () =>
+        await electron.ipcRenderer.invoke('internal:providers-translation-status'),
+      setTranslationEnabled: async (enabled) =>
+        await electron.ipcRenderer.invoke('internal:providers-translation-set-enabled', enabled)
+    },
+
+    // ==================== 网页快开 API ====================
+    webSearch: {
+      getAll: async () => await electron.ipcRenderer.invoke('internal:web-search-get-all'),
+      add: async (engine) => await electron.ipcRenderer.invoke('internal:web-search-add', engine),
+      update: async (engine) =>
+        await electron.ipcRenderer.invoke('internal:web-search-update', engine),
+      delete: async (engineId) =>
+        await electron.ipcRenderer.invoke('internal:web-search-delete', engineId),
+      fetchFavicon: async (url) =>
+        await electron.ipcRenderer.invoke('internal:web-search-fetch-favicon', url)
     },
 
     // ==================== 悬浮球 API ====================

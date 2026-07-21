@@ -17,13 +17,26 @@ marked.setOptions({
 export interface UsePluginDetailOptions {
   plugin: Ref<PluginItem>
   isRunning?: Ref<boolean | undefined>
+  /** 是否显示详情/README Tab */
+  showDetail?: boolean
   /** 是否显示留言 Tab */
   showComments?: boolean
+  /** 是否显示指令列表 Tab */
+  showCommands?: boolean
+  /** 是否显示插件数据 Tab */
+  showData?: boolean
 }
 
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 export function usePluginDetail(options: UsePluginDetailOptions) {
-  const { plugin, isRunning, showComments = false } = options
+  const {
+    plugin,
+    isRunning,
+    showDetail = true,
+    showComments = false,
+    showCommands = true,
+    showData = true
+  } = options
   const { success, error, confirm, confirmWithExtra } = useToast()
 
   // 插件设置状态
@@ -63,7 +76,7 @@ export function usePluginDetail(options: UsePluginDetailOptions) {
     if (!plugin.value.name) return
 
     try {
-      const killData = await window.ztools.internal.dbGet('outKillPlugin')
+      const killData = await window.ztools.internal.dbGet('out-kill-plugin')
       if (Array.isArray(killData) && currentPluginName.value) {
         isAutoKill.value = normalizeConfigList(killData).includes(currentPluginName.value)
       }
@@ -72,7 +85,7 @@ export function usePluginDetail(options: UsePluginDetailOptions) {
     }
 
     try {
-      const detachData = await window.ztools.internal.dbGet('autoDetachPlugin')
+      const detachData = await window.ztools.internal.dbGet('auto-detach-plugin')
       if (Array.isArray(detachData) && currentPluginName.value) {
         isAutoDetach.value = normalizeConfigList(detachData).includes(currentPluginName.value)
       }
@@ -81,7 +94,7 @@ export function usePluginDetail(options: UsePluginDetailOptions) {
     }
 
     try {
-      const startData = await window.ztools.internal.dbGet('autoStartPlugin')
+      const startData = await window.ztools.internal.dbGet('auto-start-plugin')
       if (Array.isArray(startData) && currentPluginName.value) {
         isAutoStart.value = normalizeConfigList(startData).includes(currentPluginName.value)
       }
@@ -108,14 +121,14 @@ export function usePluginDetail(options: UsePluginDetailOptions) {
 
     let list: string[] = []
     try {
-      const data = await window.ztools.internal.dbGet('outKillPlugin')
+      const data = await window.ztools.internal.dbGet('out-kill-plugin')
       list = normalizeConfigList(data)
     } catch {
       // ignore
     }
 
     list = toggleInList(list, currentPluginName.value)
-    await window.ztools.internal.dbPut('outKillPlugin', list)
+    await window.ztools.internal.dbPut('out-kill-plugin', list)
     isAutoKill.value = list.includes(currentPluginName.value)
   }
 
@@ -125,14 +138,14 @@ export function usePluginDetail(options: UsePluginDetailOptions) {
 
     let list: string[] = []
     try {
-      const data = await window.ztools.internal.dbGet('autoDetachPlugin')
+      const data = await window.ztools.internal.dbGet('auto-detach-plugin')
       list = normalizeConfigList(data)
     } catch {
       // ignore
     }
 
     list = toggleInList(list, currentPluginName.value)
-    await window.ztools.internal.dbPut('autoDetachPlugin', list)
+    await window.ztools.internal.dbPut('auto-detach-plugin', list)
     isAutoDetach.value = list.includes(currentPluginName.value)
   }
 
@@ -142,14 +155,14 @@ export function usePluginDetail(options: UsePluginDetailOptions) {
 
     let list: string[] = []
     try {
-      const data = await window.ztools.internal.dbGet('autoStartPlugin')
+      const data = await window.ztools.internal.dbGet('auto-start-plugin')
       list = normalizeConfigList(data)
     } catch {
       // ignore
     }
 
     list = toggleInList(list, currentPluginName.value)
-    await window.ztools.internal.dbPut('autoStartPlugin', list)
+    await window.ztools.internal.dbPut('auto-start-plugin', list)
     isAutoStart.value = list.includes(currentPluginName.value)
   }
 
@@ -198,12 +211,17 @@ export function usePluginDetail(options: UsePluginDetailOptions) {
 
   // 可用的 Tab
   const availableTabs = computed(() => {
-    const tabs: TabItem[] = [
-      { id: 'detail', label: '详情' },
-      { id: 'commands', label: '指令列表' }
-    ]
+    const tabs: TabItem[] = []
 
-    if (plugin.value.installed) {
+    if (showDetail) {
+      tabs.push({ id: 'detail', label: '详情' })
+    }
+
+    if (showCommands) {
+      tabs.push({ id: 'commands', label: '指令列表' })
+    }
+
+    if (showData && plugin.value.installed) {
       tabs.push({ id: 'data', label: '数据' })
     }
 
@@ -216,6 +234,7 @@ export function usePluginDetail(options: UsePluginDetailOptions) {
 
   // 切换 Tab
   function switchTab(tabId: TabId): void {
+    if (!availableTabs.value.some((tab) => tab.id === tabId)) return
     activeTab.value = tabId
 
     if (tabId === 'data' && !docKeys.value.length && !dataLoading.value) {
@@ -225,28 +244,12 @@ export function usePluginDetail(options: UsePluginDetailOptions) {
 
   // 加载 README
   async function loadReadme(): Promise<void> {
+    if (!showDetail) return
     readmeLoading.value = true
     readmeError.value = ''
 
     try {
-      if (plugin.value.installed && plugin.value.path) {
-        const result = await window.ztools.internal.getPluginReadme(plugin.value.path)
-        if (result.success && result.content) {
-          readmeContent.value = result.content
-          return
-        }
-
-        if (plugin.value.name) {
-          console.log('本地 README 不存在，尝试从 GitHub 获取:', plugin.value.name)
-          const remoteResult = await window.ztools.internal.getPluginReadme(plugin.value.name)
-          if (remoteResult.success && remoteResult.content) {
-            readmeContent.value = remoteResult.content
-            return
-          }
-        }
-
-        readmeError.value = '暂无详情'
-      } else if (plugin.value.name) {
+      if (plugin.value.name) {
         const result = await window.ztools.internal.getPluginReadme(plugin.value.name)
         if (result.success && result.content) {
           readmeContent.value = result.content
@@ -482,7 +485,7 @@ export function usePluginDetail(options: UsePluginDetailOptions) {
 
   // 生命周期
   onMounted(() => {
-    if (plugin.value.name || plugin.value.path) {
+    if (showDetail && plugin.value.name) {
       loadReadme()
     }
     if (plugin.value.installed && plugin.value.name) {
@@ -502,10 +505,25 @@ export function usePluginDetail(options: UsePluginDetailOptions) {
   watch(
     () => plugin.value.name,
     () => {
+      if (showDetail && plugin.value.name) {
+        readmeContent.value = ''
+        readmeError.value = ''
+        loadReadme()
+      }
       if (plugin.value.installed && plugin.value.name) {
         loadPluginSettings()
       }
     }
+  )
+
+  watch(
+    availableTabs,
+    (tabs) => {
+      if (!tabs.some((tab) => tab.id === activeTab.value)) {
+        activeTab.value = tabs[0]?.id || 'detail'
+      }
+    },
+    { immediate: true }
   )
 
   watch(

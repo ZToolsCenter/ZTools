@@ -11,10 +11,10 @@
   --titlebar-icon-hover: #333333;
   --input-bg: rgba(0, 0, 0, 0.05);
   --input-border: rgba(0, 0, 0, 0.1);
-  --input-focus: #0284c7;
+  --input-focus: #059669;
   --input-focus-bg: rgba(0, 0, 0, 0.08);
   --hover-bg: #f9fafb;
-  --primary-color: #0284c7;
+  --primary-color: #059669;
 }
 
 /* Windows 下根据 data-material 属性应用不同材质样式 */
@@ -48,10 +48,10 @@
     --titlebar-icon-hover: #f3f4f6;
     --input-bg: rgba(0, 0, 0, 0.2);
     --input-border: rgba(0, 0, 0, 0.3);
-    --input-focus: #0284c7;
+    --input-focus: #34d399;
     --input-focus-bg: rgba(0, 0, 0, 0.3);
     --hover-bg: #374151;
-    --primary-color: #38bdf8;
+    --primary-color: #34d399;
   }
 
   /* Windows 暗色模式下根据 data-material 属性应用不同材质样式 */

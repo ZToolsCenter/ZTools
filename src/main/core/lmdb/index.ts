@@ -1,18 +1,23 @@
 import { open } from 'lmdb'
+import { EventEmitter } from 'events'
 import fs from 'fs'
-import { DbDoc, DbResult, LmdbConfig } from './types'
+import { DbDoc, DbResult, LmdbConfig, ChangeEntry, SyncMeta } from './types'
 import { SyncApi } from './syncApi'
 import { PromiseApi } from './promiseApi'
 
 /**
  * LMDB 数据库主类
  * 提供完全兼容 UTools 的数据库 API
+ * 继承 EventEmitter，在数据变更时 emit 'change' 事件
  */
-export default class LmdbDatabase {
+export default class LmdbDatabase extends EventEmitter {
   private env: any
   private mainDb: any
   private metaDb: any
   private attachmentDb: any
+  private changelogDb: any
+  private revisionDb: any
+  private syncTaskDb: any
 
   private syncApi: SyncApi
   private promiseApi: PromiseApi
@@ -24,14 +29,13 @@ export default class LmdbDatabase {
     put: (doc: DbDoc) => Promise<DbResult>
     get: (id: string) => Promise<DbDoc | null>
     remove: (docOrId: DbDoc | string) => Promise<DbResult>
+    removeAndResolve: (docOrId: DbDoc | string) => Promise<DbResult>
     bulkDocs: (docs: DbDoc[]) => Promise<DbResult[]>
     allDocs: (key?: string | string[]) => Promise<DbDoc[]>
     postAttachment: (id: string, attachment: Buffer | Uint8Array, type: string) => Promise<DbResult>
     getAttachment: (id: string) => Promise<Uint8Array | null>
     getAttachmentType: (id: string) => Promise<string | null>
-    getSyncMeta: (
-      id: string
-    ) => Promise<{ _rev: string; _lastModified?: number; _cloudSynced?: boolean } | null>
+    getSyncMeta: (id: string) => Promise<SyncMeta | null>
     updateSyncStatus: (id: string, cloudSynced: boolean) => Promise<void>
   }
 
@@ -40,6 +44,8 @@ export default class LmdbDatabase {
    * @param config LMDB 配置对象
    */
   constructor(config: LmdbConfig) {
+    super()
+
     // 确保目录存在
     if (!fs.existsSync(config.path)) {
       fs.mkdirSync(config.path, { recursive: true })
@@ -49,29 +55,52 @@ export default class LmdbDatabase {
     this.env = open({
       path: config.path,
       mapSize: config.mapSize || 2 * 1024 * 1024 * 1024, // 默认 2GB
-      maxDbs: config.maxDbs || 3,
-      compression: false, // 禁用压缩以提高性能
-      encoding: 'binary' // 使用二进制编码
+      maxDbs: config.maxDbs || 6,
+      compression: false,
+      encoding: 'binary'
     })
 
-    // 打开三个数据库
+    // 打开五个数据库
     this.mainDb = this.env.openDB({
       name: 'main',
-      encoding: 'string' // 主数据库使用字符串编码
+      encoding: 'string'
     })
 
     this.metaDb = this.env.openDB({
       name: 'meta',
-      encoding: 'string' // 元数据使用字符串编码
+      encoding: 'string'
     })
 
     this.attachmentDb = this.env.openDB({
       name: 'attachment',
-      encoding: 'binary' // 附件使用二进制编码
+      encoding: 'binary'
     })
 
-    // 初始化 API
-    this.syncApi = new SyncApi(this.env, this.mainDb, this.metaDb, this.attachmentDb)
+    this.changelogDb = this.env.openDB({
+      name: 'changelog',
+      encoding: 'string'
+    })
+
+    this.revisionDb = this.env.openDB({
+      name: 'revision',
+      encoding: 'string'
+    })
+
+    this.syncTaskDb = this.env.openDB({
+      name: 'syncTask',
+      encoding: 'string'
+    })
+
+    // 初始化 API（传入 changelogDb、revisionDb 和 emitter）
+    this.syncApi = new SyncApi(
+      this.env,
+      this.mainDb,
+      this.metaDb,
+      this.attachmentDb,
+      this.changelogDb,
+      this.revisionDb,
+      this
+    )
     this.promiseApi = new PromiseApi(this.syncApi)
 
     // 设置 promises 对象
@@ -79,6 +108,7 @@ export default class LmdbDatabase {
       put: (doc: DbDoc) => this.promiseApi.put(doc),
       get: (id: string) => this.promiseApi.get(id),
       remove: (docOrId: DbDoc | string) => this.promiseApi.remove(docOrId),
+      removeAndResolve: (docOrId: DbDoc | string) => this.promiseApi.removeAndResolve(docOrId),
       bulkDocs: (docs: DbDoc[]) => this.promiseApi.bulkDocs(docs),
       allDocs: (key?: string | string[]) => this.promiseApi.allDocs(key),
       postAttachment: (id: string, attachment: Buffer | Uint8Array, type: string) =>
@@ -120,6 +150,10 @@ export default class LmdbDatabase {
     return this.syncApi.remove(docOrId)
   }
 
+  removeAndResolve(docOrId: DbDoc | string): DbResult {
+    return this.syncApi.removeAndResolve(docOrId)
+  }
+
   /**
    * 批量创建或更新文档（同步）
    * @param docs 文档对象数组
@@ -147,6 +181,22 @@ export default class LmdbDatabase {
    */
   postAttachment(id: string, attachment: Buffer | Uint8Array, type: string): DbResult {
     return this.syncApi.postAttachment(id, attachment, type)
+  }
+
+  putAttachmentFromRemote(id: string, attachment: Buffer | Uint8Array, type: string): DbResult {
+    return this.syncApi.putAttachmentFromRemote(id, attachment, type)
+  }
+
+  getSyncMeta(id: string): SyncMeta | null {
+    return this.syncApi.getSyncMeta(id)
+  }
+
+  removeAttachment(id: string): void {
+    return this.syncApi.removeAttachment(id)
+  }
+
+  removeAttachmentSilent(id: string): void {
+    return this.syncApi.removeAttachmentSilent(id)
   }
 
   /**
@@ -186,6 +236,114 @@ export default class LmdbDatabase {
   }
 
   /**
+   * 获取 changelog 数据库实例
+   */
+  getChangelogDb(): any {
+    return this.changelogDb
+  }
+
+  getRevisionDb(): any {
+    return this.revisionDb
+  }
+
+  getSyncTaskDb(): any {
+    return this.syncTaskDb
+  }
+
+  // ==================== Changelog API ====================
+
+  /**
+   * 获取从指定序列号之后的所有变更
+   */
+  getChangesSince(sinceSeq: number): ChangeEntry[] {
+    return this.syncApi.getChangesSince(sinceSeq)
+  }
+
+  /**
+   * 获取当前最大序列号
+   */
+  getLastSeq(): number {
+    return this.syncApi.getLastSeq()
+  }
+
+  getRevisionHistory(docId: string, rev?: string | null, maxDepth?: number): string[] {
+    return this.syncApi.getRevisionHistory(docId, rev, maxDepth)
+  }
+
+  /**
+   * 应用远端文档（跳过 _rev 冲突检测）
+   */
+  applyRemoteDoc(doc: DbDoc): DbResult {
+    return this.syncApi.applyRemoteDoc(doc)
+  }
+
+  applyRemoteChange(change: {
+    docId: string
+    rev?: string
+    parentRev?: string | null
+    revisionHistory?: string[]
+    deleted: boolean
+    timestamp?: number
+    doc?: DbDoc | null
+    resolution?: { retireOtherLeaves?: boolean }
+  }): DbResult {
+    return this.syncApi.applyRemoteChange(change)
+  }
+
+  /**
+   * 批量应用远端变更（单事务，性能优化）
+   */
+  applyRemoteBatch(
+    changes: {
+      doc?: DbDoc | null
+      docId: string
+      rev?: string
+      parentRev?: string | null
+      revisionHistory?: string[]
+      deleted: boolean
+      timestamp?: number
+    }[]
+  ): number {
+    return this.syncApi.applyRemoteBatch(changes)
+  }
+
+  /**
+   * 获取文档的冲突版本列表（远端/本地各执一词时保留的失败版本）
+   */
+  getConflicts(docId: string): DbDoc[] {
+    return this.syncApi.getConflicts(docId)
+  }
+
+  resolveConflict(docId: string, sourceRev: string): DbResult {
+    return this.syncApi.resolveConflict(docId, sourceRev)
+  }
+
+  /**
+   * 清除文档的冲突记录
+   */
+  clearConflicts(docId: string): void {
+    this.syncApi.clearConflicts(docId)
+  }
+
+  listAttachments(): Array<{ docId: string; md5: string; contentType: string }> {
+    return this.syncApi.listAttachments()
+  }
+
+  /**
+   * 应用远端删除（跳过 _rev 检测）
+   */
+  applyRemoteRemove(docId: string): DbResult {
+    return this.syncApi.applyRemoteRemove(docId)
+  }
+
+  /**
+   * 清理已确认的 changelog
+   */
+  compactChangelog(upToSeq: number): void {
+    this.syncApi.compactChangelog(upToSeq)
+  }
+
+  /**
    * 关闭数据库
    */
   close(): void {
@@ -204,7 +362,8 @@ export default class LmdbDatabase {
       return {
         main: this.mainDb.getStats?.() || {},
         meta: this.metaDb.getStats?.() || {},
-        attachment: this.attachmentDb.getStats?.() || {}
+        attachment: this.attachmentDb.getStats?.() || {},
+        changelog: this.changelogDb.getStats?.() || {}
       }
     } catch (e) {
       console.error('[LMDB] Error getting stats:', e)

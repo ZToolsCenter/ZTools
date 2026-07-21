@@ -30,6 +30,28 @@ _uTools 的开源实现 | 支持 macOS 和 Windows_
 - 🛠️ **开发友好** - 完整的 TypeScript 类型支持，热重载开发
 - ⚙️ **最新技术栈** - Electron 41 + Node 24.15 + Chrome 146
 
+## ❤️ 赞助商
+
+> [想出现在这里？](mailto:8589561@qq.com)
+
+<details open>
+<summary>点击折叠</summary>
+
+<table>
+  <tr>
+    <td width="240" align="center">
+      <a href="https://ztest.ai/?from=ztools">
+        <img src="./.github/assets/sponsors/ztest.png" alt="真测 Ztest" width="220">
+      </a>
+    </td>
+    <td>
+      感谢 <a href="https://ztest.ai/?from=ztools">真测 Ztest</a> 赞助了本项目！真测 ztest.ai 是一个 AI 中转站模型检测平台，检测结果数据全公开，23 项探针覆盖协议、身份、能力、内容完整性、安全性、性能六大维度，交叉印证识别伪造与降级。作为独立第三方验证平台，实时监测 AI 中转站的模型真实性、响应质量与服务可用性。
+    </td>
+  </tr>
+</table>
+
+</details>
+
 ## 📸 预览
 
 <div align="center">
@@ -102,66 +124,6 @@ pnpm build:linux:arm64 # Linux (按 arm64 架构打包)
 2. 输入应用名称或命令进行搜索
 3. 按 `↑` `↓` `←` `→` 选择，`Enter` 确认，`Esc` 退出
 
-### 插件市场
-
-ZTools 提供内置的插件市场，可以方便地浏览和安装插件：
-
-**主要功能**：
-
-- 📦 **在线安装** - 一键下载安装插件
-- 🔄 **插件升级** - 检测插件更新，一键升级到最新版本
-- 🔍 **插件详情** - 查看插件描述、版本、作者等详细信息
-- ✅ **已装管理** - 已安装插件可直接打开或升级
-
-**使用方法**：
-
-1. 打开 ZTools 设置（点击头像）
-2. 切换到"插件市场"标签
-3. 浏览并安装感兴趣的插件
-4. 已安装插件会显示"打开"或"升级"按钮
-
-**技术实现**：
-
-- 插件托管在 GitHub Releases（[ZTools-plugins](https://github.com/ZToolsCenter/ZTools-plugins/releases)）
-- 插件列表：从 `plugins.json` 文件获取插件信息和下载链接
-- 插件包格式：ZIP 压缩包，包含 `plugin.json` 和插件文件
-- 版本比较：自动对比本地版本和市场版本（语义化版本号）
-- 升级策略：先卸载旧版本，再安装新版本
-
-### 应用内更新
-
-ZTools 支持应用内一键更新，无需手动下载安装包：
-
-**更新流程**：
-
-1. 应用自动检查更新（启动时或手动检查）
-2. 发现新版本时显示更新提示
-3. 点击更新按钮开始下载更新包
-4. 下载完成后自动安装并重启应用
-
-**技术实现**：
-
-- 更新源：GitHub Releases（[ZTools](https://github.com/ZToolsCenter/ZTools/releases)）
-- 更新信息文件：`latest.yml`（包含版本号、更新日志等）
-- 更新包格式：ZIP 压缩包，命名格式为 `update-{platform}-{arch}-{version}.zip`
-  - 示例：`update-darwin-arm64-1.2.8.zip`（macOS Apple Silicon）
-  - 示例：`update-win32-x64-1.2.8.zip`（Windows x64）
-- 更新程序：独立的 `ztools-updater` 可执行文件
-  - macOS: `ztools-updater`（位于 Contents/MacOS/）
-  - Windows: `ztools-agent.exe`（位于应用根目录）
-- 更新流程：
-  1. 从 GitHub Releases 下载 `latest.yml` 获取最新版本信息
-  2. 下载对应平台的更新包
-  3. 解压并启动独立的 updater 程序
-  4. 应用退出
-  5. updater 替换 `app.asar` 文件
-  6. 自动重启应用
-
-**平台支持**：
-
-- ✅ macOS (Apple Silicon)
-- ✅ Windows (x64)
-
 ## 🧩 插件开发
 
 ZTools 是一个强大、可扩展的插件平台，使用自定义插件提升您的生产力。通过简单的配置、丰富的 API 以及跨平台支持，您可以轻松开发出功能强大的插件。
@@ -174,78 +136,6 @@ ZTools 是一个强大、可扩展的插件平台，使用自定义插件提升�
 - 🌍 **跨平台** - 一次构建，在 Windows、macOS 和 Linux 上运行，在所有设备上获得一致的体验
 
 > 📖 **完整文档**：查看 [ZTools 开发者文档](https://ztoolscenter.github.io/ZTools-doc/) 了解更多详情
-
-ZTools 提供完整的插件系统，支持两种类型：
-
-### UI 插件
-
-```json
-// plugin.json
-{
-  "name": "my-plugin",
-  "version": "1.0.0",
-  "description": "我的插件",
-  "main": "index.html",
-  "logo": "logo.png",
-  "features": [
-    {
-      "code": "search",
-      "explain": "搜索功能",
-      "cmds": ["搜索"]
-    }
-  ]
-}
-```
-
-### 无界面插件
-
-无界面插件适合后台任务、数据处理等不需要 UI 的场景。
-
-```json
-// plugin.json（注意：没有 main 字段）
-{
-  "name": "my-headless-plugin",
-  "version": "1.0.0",
-  "description": "后台处理插件",
-  "logo": "logo.png",
-  "features": [
-    {
-      "code": "process",
-      "explain": "后台处理",
-      "cmds": ["处理"]
-    }
-  ]
-}
-```
-
-```javascript
-// preload.js
-window.exports = {
-  process: {
-    mode: 'none', // 无界面插件标识
-    args: {
-      enter: async (action) => {
-        // 处理逻辑
-        window.ztools.showNotification('执行完成')
-        return { success: true }
-      }
-    }
-  }
-}
-```
-
-### 插件 API
-
-ZTools 提供丰富的 API：
-
-- **数据库 API** - 持久化数据存储
-- **剪贴板 API** - 访问和监听剪贴板
-- **UI API** - 控制窗口和界面
-- **对话框 API** - 显示对话框和文件选择器
-- **Shell API** - 执行命令行命令
-- **窗口管理 API** - 创建独立窗口
-
-详细文档请查看 [CLAUDE.md](./CLAUDE.md)
 
 ## 🛠️ 技术栈
 
@@ -373,14 +263,6 @@ pnpm build:unpack       # 打包但不生成安装包（调试用）
 ## 📄 许可证
 
 本项目采用 [MIT License](./LICENSE) 许可证。
-
-## 💖 赞助支持
-
-如果 ZTools 对你有帮助，欢迎通过爱发电赞助支持项目的持续开发：
-
-<a href="https://afdian.com/a/ZTools">
-  <img src="https://img.shields.io/badge/爱发电-赞助支持-946ce6?style=for-the-badge" alt="爱发电">
-</a>
 
 ## 💝 致谢
 

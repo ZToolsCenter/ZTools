@@ -9,6 +9,7 @@ import httpServer from '../../core/httpServer.js'
 import mcpServer from '../../core/mcpServer.js'
 import superPanelManager from '../../core/superPanelManager.js'
 import translationManager from '../../core/translationManager.js'
+import providerManager from '../../core/provider/providerManager.js'
 import aiModelsAPI from '../renderer/aiModels.js'
 import commandsAPI from '../renderer/commands.js'
 import pluginsAPI from '../renderer/plugins.js'
@@ -396,6 +397,53 @@ export class InternalPluginAPI {
       return await pluginsAPI.market.fetchPluginMarket()
     })
 
+    ipcMain.handle(
+      'internal:fetch-plugin-market-recommendations',
+      async (event, limit?: number) => {
+        if (!requireInternalPlugin(this.pluginManager, event)) {
+          throw new PermissionDeniedError('internal:fetch-plugin-market-recommendations')
+        }
+        return await pluginsAPI.market.fetchPluginMarketRecommendations(limit)
+      }
+    )
+
+    ipcMain.handle(
+      'internal:fetch-plugin-market-comments',
+      async (event, pluginName: string, page?: number, pageSize?: number) => {
+        if (!requireInternalPlugin(this.pluginManager, event)) {
+          throw new PermissionDeniedError('internal:fetch-plugin-market-comments')
+        }
+        return await pluginsAPI.market.fetchComments(pluginName, page, pageSize)
+      }
+    )
+
+    ipcMain.handle(
+      'internal:create-plugin-market-comment',
+      async (event, input: { pluginName: string; content: string; parentId?: number | null }) => {
+        if (!requireInternalPlugin(this.pluginManager, event)) {
+          throw new PermissionDeniedError('internal:create-plugin-market-comment')
+        }
+        return await pluginsAPI.market.createComment(input)
+      }
+    )
+
+    ipcMain.handle(
+      'internal:toggle-plugin-market-comment-like',
+      async (event, commentId: number) => {
+        if (!requireInternalPlugin(this.pluginManager, event)) {
+          throw new PermissionDeniedError('internal:toggle-plugin-market-comment-like')
+        }
+        return await pluginsAPI.market.toggleCommentLike(commentId)
+      }
+    )
+
+    ipcMain.handle('internal:delete-plugin-market-comment', async (event, commentId: number) => {
+      if (!requireInternalPlugin(this.pluginManager, event)) {
+        throw new PermissionDeniedError('internal:delete-plugin-market-comment')
+      }
+      return await pluginsAPI.market.deleteComment(commentId)
+    })
+
     ipcMain.handle('internal:install-plugin-from-market', async (event, plugin: any) => {
       if (!requireInternalPlugin(this.pluginManager, event)) {
         throw new PermissionDeniedError('internal:install-plugin-from-market')
@@ -566,14 +614,142 @@ export class InternalPluginAPI {
       return await aiModelsAPI.deleteModel(modelId)
     })
 
+    // ==================== Provider（翻译 / OCR 等）管理 API ====================
+    ipcMain.handle('internal:providers-get-all', async (event, type?: string) => {
+      if (!requireInternalPlugin(this.pluginManager, event)) {
+        throw new PermissionDeniedError('internal:providers-get-all')
+      }
+      try {
+        const data = providerManager.getAllProviders(type as never)
+        return { success: true, data }
+      } catch (error: unknown) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : '未知错误'
+        }
+      }
+    })
+
+    ipcMain.handle('internal:providers-get-settings', async (event) => {
+      if (!requireInternalPlugin(this.pluginManager, event)) {
+        throw new PermissionDeniedError('internal:providers-get-settings')
+      }
+      try {
+        return { success: true, data: providerManager.getSettings() }
+      } catch (error: unknown) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : '未知错误'
+        }
+      }
+    })
+
+    ipcMain.handle(
+      'internal:providers-set-enabled',
+      async (event, providerId: string, enabled: boolean) => {
+        if (!requireInternalPlugin(this.pluginManager, event)) {
+          throw new PermissionDeniedError('internal:providers-set-enabled')
+        }
+        try {
+          const data = providerManager.setEnabled(providerId, enabled)
+          return { success: true, data }
+        } catch (error: unknown) {
+          return {
+            success: false,
+            error: error instanceof Error ? error.message : '未知错误'
+          }
+        }
+      }
+    )
+
+    ipcMain.handle(
+      'internal:providers-set-default',
+      async (event, type: string, providerId: string) => {
+        if (!requireInternalPlugin(this.pluginManager, event)) {
+          throw new PermissionDeniedError('internal:providers-set-default')
+        }
+        try {
+          const data = providerManager.setDefault(type as never, providerId)
+          return { success: true, data }
+        } catch (error: unknown) {
+          return {
+            success: false,
+            error: error instanceof Error ? error.message : '未知错误'
+          }
+        }
+      }
+    )
+
+    ipcMain.handle('internal:providers-get-params', async (event, providerId: string) => {
+      if (!requireInternalPlugin(this.pluginManager, event)) {
+        throw new PermissionDeniedError('internal:providers-get-params')
+      }
+      try {
+        return { success: true, data: providerManager.getParams(providerId) }
+      } catch (error: unknown) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : '未知错误'
+        }
+      }
+    })
+
+    ipcMain.handle(
+      'internal:providers-set-params',
+      async (event, providerId: string, params: Record<string, unknown>) => {
+        if (!requireInternalPlugin(this.pluginManager, event)) {
+          throw new PermissionDeniedError('internal:providers-set-params')
+        }
+        try {
+          const data = providerManager.setParams(providerId, params)
+          return { success: true, data }
+        } catch (error: unknown) {
+          return {
+            success: false,
+            error: error instanceof Error ? error.message : '未知错误'
+          }
+        }
+      }
+    )
+
+    // 超级面板翻译状态（供翻译 tab 展示内置 Bergamot 引擎状态）
+    ipcMain.handle('internal:providers-translation-status', async (event) => {
+      if (!requireInternalPlugin(this.pluginManager, event)) {
+        throw new PermissionDeniedError('internal:providers-translation-status')
+      }
+      return translationManager.getStatus()
+    })
+
+    ipcMain.handle(
+      'internal:providers-translation-set-enabled',
+      async (event, enabled: boolean) => {
+        if (!requireInternalPlugin(this.pluginManager, event)) {
+          throw new PermissionDeniedError('internal:providers-translation-set-enabled')
+        }
+        translationManager.updateEnabled(enabled)
+        return { success: true }
+      }
+    )
+
     // ==================== 全局快捷键 API ====================
     ipcMain.handle(
       'internal:register-global-shortcut',
-      async (event, shortcut: string, target: string) => {
+      async (
+        event,
+        shortcut: string,
+        target: string,
+        autoCopy?: boolean,
+        preScreenshotOptimization?: boolean
+      ) => {
         if (!requireInternalPlugin(this.pluginManager, event)) {
           throw new PermissionDeniedError('internal:register-global-shortcut')
         }
-        return settingsAPI.registerGlobalShortcut(shortcut, target)
+        return settingsAPI.registerGlobalShortcut(
+          shortcut,
+          target,
+          autoCopy ?? false,
+          preScreenshotOptimization ?? false
+        )
       }
     )
 
@@ -591,12 +767,33 @@ export class InternalPluginAPI {
       return await settingsAPI.startHotkeyRecording()
     })
 
+    ipcMain.handle('internal:get-current-shortcut', async (event) => {
+      if (!requireInternalPlugin(this.pluginManager, event)) {
+        throw new PermissionDeniedError('internal:get-current-shortcut')
+      }
+      return settingsAPI.getCurrentShortcutValue()
+    })
+
     ipcMain.handle('internal:update-shortcut', async (event, shortcut: string) => {
       if (!requireInternalPlugin(this.pluginManager, event)) {
         throw new PermissionDeniedError('internal:update-shortcut')
       }
       return await settingsAPI.updateShortcut(shortcut)
     })
+
+    ipcMain.handle(
+      'internal:update-global-shortcut-config',
+      async (
+        event,
+        shortcut: string,
+        config: { autoCopy: boolean; preScreenshotOptimization: boolean }
+      ) => {
+        if (!requireInternalPlugin(this.pluginManager, event)) {
+          throw new PermissionDeniedError('internal:update-global-shortcut-config')
+        }
+        return await settingsAPI.updateGlobalShortcutConfig(shortcut, config)
+      }
+    )
 
     // ==================== 应用快捷键 API ====================
     ipcMain.handle(
@@ -636,6 +833,13 @@ export class InternalPluginAPI {
         throw new PermissionDeniedError('internal:select-avatar')
       }
       return await systemAPI.selectAvatar()
+    })
+
+    ipcMain.handle('internal:select-image-file', async (event) => {
+      if (!requireInternalPlugin(this.pluginManager, event)) {
+        throw new PermissionDeniedError('internal:select-image-file')
+      }
+      return await systemAPI.selectImageFile()
     })
 
     ipcMain.handle('internal:set-theme', async (event, theme: string) => {
@@ -750,6 +954,15 @@ export class InternalPluginAPI {
         return { success: true }
       }
     )
+
+    // 更新窗口呼出位置策略（直接通知主进程）
+    ipcMain.handle('internal:update-window-position-strategy', async (event, strategy: string) => {
+      if (!requireInternalPlugin(this.pluginManager, event)) {
+        throw new PermissionDeniedError('internal:update-window-position-strategy')
+      }
+      await windowAPI.updateWindowPositionStrategy(strategy)
+      return { success: true }
+    })
 
     // 通知主渲染进程更新显示最近使用配置
     ipcMain.handle(
@@ -921,11 +1134,11 @@ export class InternalPluginAPI {
       return await updaterAPI.checkUpdate()
     })
 
-    ipcMain.handle('internal:updater-start-update', async (event, updateInfo: any) => {
+    ipcMain.handle('internal:updater-start-update', async (event) => {
       if (!requireInternalPlugin(this.pluginManager, event)) {
         throw new PermissionDeniedError('internal:updater-start-update')
       }
-      return await updaterAPI.startUpdate(updateInfo)
+      return await updaterAPI.startUpdate()
     })
 
     ipcMain.handle('internal:updater-set-auto-check', async (event, enabled: boolean) => {

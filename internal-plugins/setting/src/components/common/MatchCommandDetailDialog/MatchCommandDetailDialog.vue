@@ -218,7 +218,7 @@ async function copyRule(): Promise<void> {
   align-items: center;
   justify-content: center;
   padding: 24px;
-  background: rgba(0, 0, 0, 0.46);
+  background: rgba(0, 0, 0, 0.35);
 }
 
 .match-dialog {
@@ -231,6 +231,8 @@ async function copyRule(): Promise<void> {
   border: 1px solid var(--control-border);
   border-radius: 8px;
   box-shadow: 0 16px 50px rgba(0, 0, 0, 0.24);
+  transform-origin: calc(100% - 28px) 28px;
+  will-change: opacity, transform;
 }
 
 .dialog-header {
@@ -465,25 +467,63 @@ async function copyRule(): Promise<void> {
 
 .match-dialog-enter-active,
 .match-dialog-leave-active {
-  transition: opacity 0.18s ease;
+  pointer-events: none;
 }
 
-.match-dialog-enter-active .match-dialog,
+.match-dialog-enter-active {
+  animation: match-dialog-overlay-fade-in 0.25s ease-out forwards;
+}
+
+.match-dialog-leave-active {
+  animation: match-dialog-overlay-fade-out 0.35s ease-in forwards;
+}
+
+.match-dialog-enter-active .match-dialog {
+  animation: match-dialog-scale-in 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
 .match-dialog-leave-active .match-dialog {
-  transition:
-    opacity 0.18s ease,
-    transform 0.18s ease;
+  animation: match-dialog-collapse-to-close 0.35s cubic-bezier(0.4, 0, 0.2, 1) forwards;
 }
 
-.match-dialog-enter-from,
-.match-dialog-leave-to {
-  opacity: 0;
+@keyframes match-dialog-overlay-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
-.match-dialog-enter-from .match-dialog,
-.match-dialog-leave-to .match-dialog {
-  opacity: 0;
-  transform: scale(0.96);
+@keyframes match-dialog-overlay-fade-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes match-dialog-scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.85) translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes match-dialog-collapse-to-close {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0);
+  }
 }
 
 @media (max-width: 640px) {

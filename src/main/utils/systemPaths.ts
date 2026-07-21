@@ -37,6 +37,15 @@ export function getWindowsScanPaths(): string[] {
 }
 
 /**
+ * 获取 Windows 开始菜单根路径
+ */
+export function getWindowsRootScanPaths(): string[] {
+  return getWindowsScanPaths()
+    .filter((p) => p.endsWith(`${path.sep}Programs`))
+    .map(path.dirname)
+}
+
+/**
  * 获取 macOS 应用目录路径
  */
 export function getMacApplicationPaths(): string[] {

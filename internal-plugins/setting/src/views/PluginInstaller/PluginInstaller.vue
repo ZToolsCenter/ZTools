@@ -543,7 +543,7 @@ useJumpFunction<PluginInstallerJumpFunction>((state) => {
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: rgba(0, 0, 0, 0.35);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -558,6 +558,8 @@ useJumpFunction<PluginInstallerJumpFunction>((state) => {
   max-width: 420px;
   overflow: hidden;
   user-select: none;
+  transform-origin: calc(100% - 28px) 28px;
+  will-change: opacity, transform;
 }
 
 .dialog-header {
@@ -664,24 +666,62 @@ useJumpFunction<PluginInstallerJumpFunction>((state) => {
 /* 动画效果 */
 .dialog-enter-active,
 .dialog-leave-active {
-  transition: opacity 0.2s;
+  pointer-events: none;
 }
 
-.dialog-enter-active .dialog-container,
+.dialog-enter-active {
+  animation: security-dialog-overlay-fade-in 0.25s ease-out forwards;
+}
+
+.dialog-leave-active {
+  animation: security-dialog-overlay-fade-out 0.35s ease-in forwards;
+}
+
+.dialog-enter-active .dialog-container {
+  animation: security-dialog-scale-in 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
 .dialog-leave-active .dialog-container {
-  transition: all 0.2s;
+  animation: security-dialog-collapse-to-close 0.35s cubic-bezier(0.4, 0, 0.2, 1) forwards;
 }
 
-.dialog-enter-from,
-.dialog-leave-to {
-  opacity: 0;
+@keyframes security-dialog-overlay-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
-.dialog-enter-from .dialog-container {
-  transform: scale(0.9);
+@keyframes security-dialog-overlay-fade-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
 }
 
-.dialog-leave-to .dialog-container {
-  transform: scale(0.9);
+@keyframes security-dialog-scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.85) translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes security-dialog-collapse-to-close {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0);
+  }
 }
 </style>

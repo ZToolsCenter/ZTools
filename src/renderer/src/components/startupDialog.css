@@ -1,0 +1,186 @@
+body {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background: transparent;
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
+
+.startup-dialog-window {
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-color);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.15);
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  color: var(--text-color);
+  outline: none;
+}
+
+.startup-dialog-window .header {
+  padding: 20px 24px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  background: rgba(255, 255, 255, 0.5);
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+.startup-dialog-window .window-drag-region {
+  -webkit-app-region: drag;
+}
+
+.startup-dialog-window .header-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  object-fit: contain;
+}
+
+.startup-dialog-window .header-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.startup-dialog-window .title {
+  margin-bottom: 4px;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.startup-dialog-window .subtitle {
+  font-size: 13px;
+  color: #666;
+}
+
+.startup-dialog-window .content {
+  flex: 1;
+  padding: 26px 24px;
+  overflow: hidden;
+}
+
+.startup-dialog-window .message {
+  font-size: 15px;
+  line-height: 1.7;
+  color: var(--text-color);
+}
+
+.startup-dialog-window .message p {
+  margin: 0;
+}
+
+.startup-dialog-window .message p + p {
+  margin-top: 4px;
+}
+
+.startup-dialog-window .footer {
+  padding: 16px 24px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.startup-dialog-window .btn {
+  min-width: 110px;
+  height: 34px;
+  padding: 8px 20px;
+  border: none;
+  border-radius: 6px;
+  outline: none;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  -webkit-app-region: no-drag;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.startup-dialog-window .btn:disabled {
+  cursor: default;
+  opacity: 0.72;
+}
+
+.startup-dialog-window .cancel {
+  color: #666;
+  background: transparent;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+.startup-dialog-window .cancel:hover:not(:disabled) {
+  color: #333;
+  background: rgba(0, 0, 0, 0.05);
+}
+
+.startup-dialog-window .confirm {
+  color: white;
+  background: #3b82f6;
+}
+
+.startup-dialog-window .confirm:hover:not(:disabled) {
+  background: #2563eb;
+}
+
+.startup-dialog-window .confirm:active:not(:disabled) {
+  background: #1d4ed8;
+}
+
+.startup-dialog-window .loading-spinner {
+  width: 13px;
+  height: 13px;
+  border-radius: 999px;
+  border: 2px solid rgba(255, 255, 255, 0.45);
+  border-top-color: #fff;
+  animation: startup-dialog-spin 0.8s linear infinite;
+}
+
+@keyframes startup-dialog-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  .startup-dialog-window {
+    border-color: rgba(255, 255, 255, 0.1);
+    color: #e5e5e5;
+  }
+
+  .startup-dialog-window .header {
+    border-bottom-color: rgba(255, 255, 255, 0.06);
+    background: rgba(30, 30, 30, 0.5);
+  }
+
+  .startup-dialog-window .subtitle {
+    color: #999;
+  }
+
+  .startup-dialog-window .message {
+    color: #e5e5e5;
+  }
+
+  .startup-dialog-window .footer {
+    border-top-color: rgba(255, 255, 255, 0.06);
+    background: rgba(30, 30, 30, 0.5);
+  }
+
+  .startup-dialog-window .cancel {
+    color: #999;
+    border-color: rgba(255, 255, 255, 0.1);
+  }
+
+  .startup-dialog-window .cancel:hover:not(:disabled) {
+    color: #fff;
+    background: rgba(255, 255, 255, 0.05);
+  }
+}

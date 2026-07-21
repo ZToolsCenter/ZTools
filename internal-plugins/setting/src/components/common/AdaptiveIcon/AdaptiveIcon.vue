@@ -1,7 +1,11 @@
 <template>
   <img
     ref="imgRef"
-    :src="src"
+    :src="renderedSrc"
+    :data-src="isLazy ? src : undefined"
+    :alt="alt || ''"
+    :loading="loading"
+    :decoding="decoding"
     :class="['adaptive-icon', adaptiveClass]"
     :style="adaptiveStyle"
     v-bind="$attrs"
@@ -16,6 +20,8 @@ import { useColorScheme } from '@/composables'
 const props = defineProps<{
   src: string
   alt?: string
+  loading?: 'eager' | 'lazy'
+  decoding?: 'sync' | 'async' | 'auto'
   forceAdaptive?: boolean // 强制启用自适应（跳过检测）
 }>()
 
@@ -34,11 +40,15 @@ const analysisResult = ref<{
 
 const isAnalyzing = ref(false)
 const isVisible = ref(false)
+const shouldLoad = ref(props.loading !== 'lazy')
 let observer: IntersectionObserver | null = null
+
+const isLazy = computed(() => props.loading === 'lazy')
+const renderedSrc = computed(() => (shouldLoad.value ? props.src : undefined))
 
 // 分析图片
 async function analyzeImage(): Promise<void> {
-  if (isAnalyzing.value || !props.src) return
+  if (isAnalyzing.value || !props.src || !shouldLoad.value) return
 
   isAnalyzing.value = true
   try {
@@ -55,6 +65,7 @@ async function analyzeImage(): Promise<void> {
 // 仅在可见时触发分析
 function analyzeIfVisible(): void {
   if (isVisible.value) {
+    shouldLoad.value = true
     analyzeImage()
   }
 }
@@ -101,18 +112,33 @@ watch(
   () => props.src,
   () => {
     analysisResult.value = null
+    shouldLoad.value = !isLazy.value || isVisible.value
+    analyzeIfVisible()
+  }
+)
+
+watch(
+  () => props.loading,
+  () => {
+    shouldLoad.value = !isLazy.value || isVisible.value
     analyzeIfVisible()
   }
 )
 
 onMounted(() => {
   if (!imgRef.value) return
+  if (typeof IntersectionObserver === 'undefined') {
+    shouldLoad.value = true
+    analyzeImage()
+    return
+  }
 
   observer = new IntersectionObserver(
     (entries) => {
       const entry = entries[0]
       if (entry?.isIntersecting) {
         isVisible.value = true
+        shouldLoad.value = true
         // 进入视口时触发分析（如果尚未分析）
         if (!analysisResult.value && props.src) {
           analyzeImage()

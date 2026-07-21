@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 
 export interface Command {
   name: string
@@ -27,6 +27,7 @@ const api = {
   launchAsAdmin: (appPath: string, name?: string) =>
     ipcRenderer.invoke('launch-as-admin', appPath, name),
   hideWindow: () => ipcRenderer.send('hide-window'),
+  rendererReady: () => ipcRenderer.send('renderer-ready'),
   resizeWindow: (height: number) => ipcRenderer.send('resize-window', height),
   updateLaunchContext: (context: {
     searchQuery: string
@@ -37,12 +38,7 @@ const api = {
   getWindowPosition: () => ipcRenderer.invoke('get-window-position'),
   setWindowPosition: (x: number, y: number) => ipcRenderer.send('set-window-position', x, y),
   setWindowSizeLock: (lock: boolean) => ipcRenderer.send('set-window-size-lock', lock),
-  setWindowOpacity: (opacity: number) => ipcRenderer.send('set-window-opacity', opacity),
   getWindowMaterial: () => ipcRenderer.invoke('get-window-material'),
-  setTrayIconVisible: (visible: boolean) => ipcRenderer.invoke('set-tray-icon-visible', visible),
-  setLaunchAtLogin: (enable: boolean) => ipcRenderer.invoke('set-launch-at-login', enable),
-  getLaunchAtLogin: () => ipcRenderer.invoke('get-launch-at-login'),
-  setTheme: (theme: string) => ipcRenderer.invoke('set-theme', theme),
   openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
   copyToClipboard: (text: string) => ipcRenderer.invoke('copy-to-clipboard', text),
   openTerminal: (path: string) => ipcRenderer.invoke('open-terminal', path),
@@ -55,38 +51,8 @@ const api = {
     ipcRenderer.invoke('activate-app', identifier, type),
   revealInFinder: (filePath: string) => ipcRenderer.invoke('reveal-in-finder', filePath),
   showContextMenu: (menuItems: any[]) => ipcRenderer.invoke('show-context-menu', menuItems),
-  getPlugins: () => ipcRenderer.invoke('get-plugins'),
   getAllPlugins: () => ipcRenderer.invoke('get-all-plugins'),
   getDisabledPlugins: () => ipcRenderer.invoke('get-disabled-plugins'),
-  setPluginDisabled: (pluginPath: string, disabled: boolean) =>
-    ipcRenderer.invoke('set-plugin-disabled', pluginPath, disabled),
-  importPlugin: () => ipcRenderer.invoke('import-plugin'),
-  // 导入开发中的插件工程，可选直接传入 plugin.json 路径
-  importDevPlugin: (pluginJsonPath?: string) =>
-    ipcRenderer.invoke('import-dev-plugin', pluginJsonPath),
-  fetchPluginMarket: () => ipcRenderer.invoke('fetch-plugin-market'),
-  installPluginFromMarket: (plugin: any) =>
-    ipcRenderer.invoke('install-plugin-from-market', plugin),
-  cancelPluginMarketDownload: (pluginNameOrTaskId: string) =>
-    ipcRenderer.invoke('cancel-plugin-market-download', pluginNameOrTaskId),
-  onPluginMarketDownloadProgress: (callback: (payload: any) => void) => {
-    const handler = (_event: IpcRendererEvent, payload: any): void => callback(payload)
-    ipcRenderer.on('plugin-market-download-progress', handler)
-    return () => ipcRenderer.removeListener('plugin-market-download-progress', handler)
-  },
-  getPluginReadme: (pluginPath: string): Promise<any> =>
-    ipcRenderer.invoke('get-plugin-readme', pluginPath),
-  getPluginDbData: (pluginName: string): Promise<any> =>
-    ipcRenderer.invoke('get-plugin-db-data', pluginName),
-  installPluginFromNpm: (options: {
-    packageName: string
-    useChinaMirror?: boolean
-  }): Promise<any> => ipcRenderer.invoke('install-plugin-from-npm', options),
-  deletePlugin: (pluginPath: string, options?: { deleteData?: boolean }) =>
-    ipcRenderer.invoke('delete-plugin', pluginPath, options),
-  exportAllPlugins: () => ipcRenderer.invoke('export-all-plugins'),
-  getRunningPlugins: () => ipcRenderer.invoke('get-running-plugins'),
-  killPlugin: (pluginPath: string) => ipcRenderer.invoke('kill-plugin', pluginPath),
   killPluginAndReturn: (pluginPath: string) =>
     ipcRenderer.invoke('kill-plugin-and-return', pluginPath),
   // mainPush 功能
@@ -95,7 +61,6 @@ const api = {
   selectMainPush: (pluginPath: string, featureCode: string, selectData: any) =>
     ipcRenderer.invoke('select-main-push', pluginPath, featureCode, selectData),
   sendInputEvent: (event: any) => ipcRenderer.invoke('send-input-event', event),
-  selectAvatar: () => ipcRenderer.invoke('select-avatar'),
   openSettings: () => ipcRenderer.send('open-settings'),
   // 历史记录管理
   removeFromHistory: (appPath: string, featureCode?: string, name?: string) =>
@@ -278,10 +243,25 @@ const api = {
   // 快捷键相关
   updateShortcut: (shortcut: string) => ipcRenderer.invoke('update-shortcut', shortcut),
   getCurrentShortcut: () => ipcRenderer.invoke('get-current-shortcut'),
-  registerGlobalShortcut: (shortcut: string, target: string) =>
-    ipcRenderer.invoke('register-global-shortcut', shortcut, target),
+  registerGlobalShortcut: (
+    shortcut: string,
+    target: string,
+    autoCopy?: boolean,
+    preScreenshotOptimization?: boolean
+  ) =>
+    ipcRenderer.invoke(
+      'register-global-shortcut',
+      shortcut,
+      target,
+      autoCopy,
+      preScreenshotOptimization
+    ),
   unregisterGlobalShortcut: (shortcut: string) =>
     ipcRenderer.invoke('unregister-global-shortcut', shortcut),
+  updateGlobalShortcutConfig: (
+    shortcut: string,
+    config: { autoCopy: boolean; preScreenshotOptimization: boolean }
+  ) => ipcRenderer.invoke('update-global-shortcut-config', shortcut, config),
   // 快捷键录制（临时注册，触发后自动注销）
   startHotkeyRecording: () => ipcRenderer.invoke('start-hotkey-recording'),
   onHotkeyRecorded: (callback: (shortcut: string) => void) => {
@@ -313,20 +293,30 @@ const api = {
   // 数据库相关（主程序专用，直接操作 ZTOOLS 命名空间）
   dbPut: (key: string, data: any) => ipcRenderer.invoke('ztools:db-put', key, data),
   dbGet: (key: string) => ipcRenderer.invoke('ztools:db-get', key),
-  // 插件数据管理
-  getPluginDataStats: () => ipcRenderer.invoke('get-plugin-data-stats'),
-  getPluginDocKeys: (pluginName: string) => ipcRenderer.invoke('get-plugin-doc-keys', pluginName),
-  getPluginDoc: (pluginName: string, key: string) =>
-    ipcRenderer.invoke('get-plugin-doc', pluginName, key),
-  clearPluginData: (pluginName: string) => ipcRenderer.invoke('clear-plugin-data', pluginName),
   // 软件更新
   updater: {
     checkUpdate: () => ipcRenderer.invoke('updater:check-update'),
-    startUpdate: (updateInfo: any) => ipcRenderer.invoke('updater:start-update', updateInfo),
+    showUpdateWindow: () => ipcRenderer.invoke('updater:show-update-window'),
+    startUpdate: () => ipcRenderer.invoke('updater:start-update'),
     installDownloadedUpdate: () => ipcRenderer.invoke('updater:install-downloaded-update'),
     getDownloadStatus: () => ipcRenderer.invoke('updater:get-download-status')
   },
-  onUpdateDownloaded: (callback: (data: { version: string; changelog: string[] }) => void) => {
+  onUpdateAvailable: (callback: (data: { version: string; changelog: string }) => void) => {
+    ipcRenderer.on('update-available', (_event, data) => callback(data))
+  },
+  /**
+   * 监听自动检查更新开关变化。
+   * @param callback 接收最新开关状态的回调函数
+   * @returns 用于移除当前监听器的清理函数
+   */
+  onAutoCheckUpdateChanged: (callback: (enabled: boolean) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, enabled: boolean): void => callback(enabled)
+    ipcRenderer.on('auto-check-update-changed', handler)
+    return (): void => {
+      ipcRenderer.removeListener('auto-check-update-changed', handler)
+    }
+  },
+  onUpdateDownloaded: (callback: (data: { version: string; changelog: string }) => void) => {
     ipcRenderer.on('update-downloaded', (_event, data) => callback(data))
   },
   onUpdateDownloadStart: (callback: (data: { version: string }) => void) => {
@@ -335,16 +325,8 @@ const api = {
   onUpdateDownloadFailed: (callback: (data: { error: string }) => void) => {
     ipcRenderer.on('update-download-failed', (_event, data) => callback(data))
   },
-  // 获取应用版本
-  getAppVersion: () => ipcRenderer.invoke('get-app-version'),
-  // 获取应用名称
-  getAppName: () => ipcRenderer.invoke('get-app-name'),
-  // 获取环境版本信息 (Electron, Node, Chrome等)
-  getSystemVersions: () => ipcRenderer.invoke('get-system-versions'),
   // 获取系统平台 (darwin, win32, linux)
   getPlatform: () => ipcRenderer.sendSync('get-platform'),
-  // 检测是否为 Windows 11
-  isWindows11: () => ipcRenderer.invoke('is-windows11'),
   // 上次匹配状态管理
   getLastMatchState: () => ipcRenderer.invoke('get-last-match-state'),
   restoreLastMatch: () => ipcRenderer.invoke('restore-last-match'),
@@ -355,6 +337,7 @@ const api = {
     getAll: () => ipcRenderer.invoke('local-shortcuts:get-all'),
     add: (type: 'file' | 'folder') => ipcRenderer.invoke('local-shortcuts:add', type),
     delete: (id: string) => ipcRenderer.invoke('local-shortcuts:delete', id),
+    deleteWhenNotExist: () => ipcRenderer.invoke('local-shortcuts:delete-when-not-exist'),
     open: (path: string) => ipcRenderer.invoke('local-shortcuts:open', path),
     updateAlias: (id: string, alias: string) =>
       ipcRenderer.invoke('local-shortcuts:update-alias', id, alias)
@@ -363,13 +346,6 @@ const api = {
   checkFilePaths: (paths: string[]) => ipcRenderer.invoke('check-file-paths', paths),
   // 获取拖放文件的路径（Electron webUtils）
   getPathForFile: (file: File) => webUtils.getPathForFile(file),
-  // AI 模型管理
-  aiModels: {
-    getAll: () => ipcRenderer.invoke('ai-models:get-all'),
-    add: (model: any) => ipcRenderer.invoke('ai-models:add', model),
-    update: (model: any) => ipcRenderer.invoke('ai-models:update', model),
-    delete: (modelId: string) => ipcRenderer.invoke('ai-models:delete', modelId)
-  },
   // 超级面板相关
   onSuperPanelSearch: (callback: (data: { text: string; clipboardContent?: any }) => void) => {
     ipcRenderer.on('super-panel-search', (_event, data) => callback(data))
@@ -500,6 +476,7 @@ declare global {
         confirmDialog?: any
       }) => Promise<void>
       hideWindow: () => void
+      rendererReady: () => void
       resizeWindow: (height: number) => void
       updateLaunchContext: (context: {
         searchQuery: string
@@ -507,12 +484,7 @@ declare global {
         pastedFiles: Array<{ path: string; name: string; isDirectory: boolean }> | null
         pastedText: string | null
       }) => void
-      setWindowOpacity: (opacity: number) => void
       getWindowMaterial: () => Promise<'mica' | 'acrylic' | 'none'>
-      setTrayIconVisible: (visible: boolean) => Promise<void>
-      setLaunchAtLogin: (enable: boolean) => Promise<void>
-      getLaunchAtLogin: () => Promise<boolean>
-      setTheme: (theme: string) => Promise<void>
       openExternal: (url: string) => Promise<void>
       copyToClipboard: (text: string) => Promise<void>
       openTerminal: (path: string) => Promise<void>
@@ -529,38 +501,8 @@ declare global {
       ) => Promise<{ success: boolean; error?: string }>
       revealInFinder: (filePath: string) => Promise<void>
       showContextMenu: (menuItems: any[]) => Promise<void>
-      getPlugins: () => Promise<any[]>
       getAllPlugins: () => Promise<any[]>
       getDisabledPlugins: () => Promise<string[]>
-      setPluginDisabled: (
-        pluginPath: string,
-        disabled: boolean
-      ) => Promise<{ success: boolean; error?: string }>
-      importPlugin: () => Promise<{ success: boolean; error?: string }>
-      // 导入开发中的插件工程，可选直接传入 plugin.json 路径
-      importDevPlugin: (pluginJsonPath?: string) => Promise<{ success: boolean; error?: string }>
-      fetchPluginMarket: () => Promise<{ success: boolean; data?: any; error?: string }>
-      installPluginFromMarket: (plugin: any) => Promise<{
-        success: boolean
-        error?: string
-        plugin?: any
-      }>
-      cancelPluginMarketDownload: (
-        pluginNameOrTaskId: string
-      ) => Promise<{ success: boolean; error?: string }>
-      onPluginMarketDownloadProgress: (callback: (payload: any) => void) => () => void
-      deletePlugin: (
-        pluginPath: string,
-        options?: { deleteData?: boolean }
-      ) => Promise<{ success: boolean; error?: string }>
-      exportAllPlugins: () => Promise<{
-        success: boolean
-        exportPath?: string
-        count?: number
-        error?: string
-      }>
-      getRunningPlugins: () => Promise<string[]>
-      killPlugin: (pluginPath: string) => Promise<{ success: boolean; error?: string }>
       killPluginAndReturn: (pluginPath: string) => Promise<{ success: boolean; error?: string }>
       // mainPush 功能
       queryMainPush: (
@@ -582,7 +524,6 @@ declare global {
         button?: 'left' | 'right' | 'middle'
         clickCount?: number
       }) => Promise<{ success: boolean; error?: string }>
-      selectAvatar: () => Promise<{ success: boolean; path?: string; error?: string }>
       // 历史记录管理
       removeFromHistory: (appPath: string, featureCode?: string, name?: string) => Promise<void>
       // 固定应用管理
@@ -662,9 +603,15 @@ declare global {
       getCurrentShortcut: () => Promise<string>
       registerGlobalShortcut: (
         shortcut: string,
-        target: string
+        target: string,
+        autoCopy?: boolean,
+        preScreenshotOptimization?: boolean
       ) => Promise<{ success: boolean; error?: string }>
       unregisterGlobalShortcut: (shortcut: string) => Promise<{ success: boolean; error?: string }>
+      updateGlobalShortcutConfig: (
+        shortcut: string,
+        config: { autoCopy: boolean; preScreenshotOptimization: boolean }
+      ) => Promise<{ success: boolean; error?: string }>
       // 窗口相关
       windowPaste: () => Promise<{ success: boolean; error?: string }>
       // 子输入框相关
@@ -678,47 +625,12 @@ declare global {
       onUpdateSpaceOpenCommand: (callback: (enabled: boolean) => void) => void
       onUpdateShowRecentInSearch: (callback: (showRecentInSearch: boolean) => void) => void
       onUpdateMatchRecommendation: (callback: (showMatchRecommendation: boolean) => void) => void
+      onAutoCheckUpdateChanged: (callback: (enabled: boolean) => void) => () => void
       // 数据库相关（主程序专用，直接操作 ZTOOLS 命名空间）
       dbPut: (key: string, data: any) => Promise<any>
       dbGet: (key: string) => Promise<any>
-      // 插件数据管理
-      getPluginDataStats: () => Promise<{
-        success: boolean
-        data?: Array<{
-          pluginName: string
-          pluginTitle?: string | null
-          isDevelopment: boolean
-          docCount: number
-          attachmentCount: number
-          logo: string | null
-        }>
-        error?: string
-      }>
-      getPluginDocKeys: (pluginName: string) => Promise<{
-        success: boolean
-        data?: Array<{ key: string; type: 'document' | 'attachment' }>
-        error?: string
-      }>
-      getPluginDoc: (
-        pluginName: string,
-        key: string
-      ) => Promise<{
-        success: boolean
-        data?: any
-        type?: 'document' | 'attachment'
-        error?: string
-      }>
-      clearPluginData: (pluginName: string) => Promise<{
-        success: boolean
-        deletedCount?: number
-        error?: string
-      }>
       // 应用信息
-      getAppVersion: () => Promise<string>
-      getAppName: () => Promise<string>
-      getSystemVersions: () => Promise<NodeJS.ProcessVersions>
       getPlatform: () => NodeJS.Platform
-      isWindows11: () => Promise<boolean>
       // 上次匹配状态管理
       getLastMatchState: () => Promise<any>
       restoreLastMatch: () => Promise<any>
@@ -758,13 +670,6 @@ declare global {
         callback: (data: { requestId: number; windowInfo: SuperPanelWindowInfo }) => void
       ) => void
       sendSuperPanelWindowCommandsResult: (data: { requestId: number; results: any[] }) => void
-      // AI 模型管理
-      aiModels: {
-        getAll: () => Promise<{ success: boolean; data?: any[]; error?: string }>
-        add: (model: any) => Promise<{ success: boolean; error?: string }>
-        update: (model: any) => Promise<{ success: boolean; error?: string }>
-        delete: (modelId: string) => Promise<{ success: boolean; error?: string }>
-      }
       // 悬浮球
       floatingBall: {
         setEnabled: (enabled: boolean) => Promise<{ success: boolean }>

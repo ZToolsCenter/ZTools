@@ -9,9 +9,9 @@ export interface PluginMarketSettingJumpFunction {
    */
   payload?: string
   /**
-   * 类型
+   * 类型：over 表示填入搜索框，detail 表示打开插件详情
    */
-  type?: string
+  type?: 'over' | 'detail' | string
 }
 
 /**

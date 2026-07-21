@@ -40,11 +40,33 @@ export class AppsAPI {
   private isLocalAppSearchEnabled = true
   private cachedCommandsResult: { commands: any[]; regexCommands: any[]; plugins: any[] } | null =
     null
+  private afterFirstAppsReadyCallback: (() => void) | null = null
+  private hasNotifiedFirstAppsReady = false
   /** 由外部注入，用于在多屏场景下正确显示窗口（跟随光标所在屏幕） */
   private showWindowCallback?: () => void
 
   public setShowWindowCallback(callback: () => void): void {
     this.showWindowCallback = callback
+  }
+
+  public setAfterFirstAppsReadyCallback(callback: () => void): void {
+    this.afterFirstAppsReadyCallback = callback
+  }
+
+  private notifyFirstAppsReady(): void {
+    if (this.hasNotifiedFirstAppsReady || !this.afterFirstAppsReadyCallback) {
+      return
+    }
+
+    this.hasNotifiedFirstAppsReady = true
+    const callback = this.afterFirstAppsReadyCallback
+    setTimeout(() => {
+      try {
+        callback()
+      } catch (error) {
+        console.error('[Commands] 首次应用列表就绪后的回调执行失败:', error)
+      }
+    }, 0)
   }
 
   /**
@@ -173,7 +195,9 @@ export class AppsAPI {
     // 开发模式下强制重新扫描（方便调试）
     if (!app.isPackaged) {
       console.log('[Commands] 开发模式：跳过缓存，重新扫描应用...')
-      return await this.scanAndCacheApps()
+      const apps = await this.scanAndCacheApps()
+      this.notifyFirstAppsReady()
+      return apps
     }
 
     // 尝试从数据库缓存读取
@@ -203,6 +227,7 @@ export class AppsAPI {
           console.log('[Commands] 检测到旧格式图标缓存，将重新扫描并更新为 ztools-icon 协议...')
         } else {
           console.log(`从缓存读取到 ${cachedApps.length} 个应用`)
+          this.notifyFirstAppsReady()
           return cachedApps
         }
       }
@@ -212,7 +237,9 @@ export class AppsAPI {
 
     // 缓存不存在，执行扫描
     console.log('[Commands] 缓存不存在，开始扫描应用...')
-    return await this.scanAndCacheApps()
+    const apps = await this.scanAndCacheApps()
+    this.notifyFirstAppsReady()
+    return apps
   }
 
   /**
@@ -305,7 +332,7 @@ export class AppsAPI {
     let shouldAutoDetach = false
     if (pluginConfig && effectiveName) {
       try {
-        const autoDetachPlugins: string[] = databaseAPI.dbGet('autoDetachPlugin') || []
+        const autoDetachPlugins: string[] = databaseAPI.dbGet('auto-detach-plugin') || []
         if (Array.isArray(autoDetachPlugins) && autoDetachPlugins.includes(effectiveName)) {
           shouldAutoDetach = true
           console.log(`插件 ${effectiveName} 配置为自动分离，直接在独立窗口中创建`)

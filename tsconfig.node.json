@@ -8,10 +8,12 @@
   ],
   "compilerOptions": {
     "composite": true,
-    "baseUrl": ".",
     "paths": {
       "@shared/*": [
-        "src/shared/*"
+        "./src/shared/*"
+      ],
+      "@platform-updater": [
+        "./src/main/api/platformUpdater/windows.ts"
       ]
     },
     "types": [

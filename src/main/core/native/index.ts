@@ -26,6 +26,14 @@ interface UwpAppInfo {
   installLocation: string
 }
 
+export interface WindowsShortcutInfo {
+  name: string
+  path: string
+  icon?: string
+  targetPath?: string
+  sourceType?: 'lnk' | 'url' | 'lnk-url' | string
+}
+
 export interface FileLocationWindowInfo {
   platform?: 'win32' | 'darwin'
   kind?: 'windows-explorer' | 'windows-file-dialog' | 'mac-finder' | 'mac-file-dialog'
@@ -54,7 +62,18 @@ interface NativeAddon {
   activateWindow: (identifier: string | number) => boolean
   simulatePaste: () => boolean
   simulateKeyboardTap: (key: string, ...modifiers: string[]) => boolean
+  ensureOptimizedShortcutListener: (
+    callback: (payload: { shortcut: string; primed: boolean }) => void
+  ) => void
+  stopOptimizedShortcutListener: () => void
+  registerOptimizedShortcut: (shortcut: string) => { success: boolean; error?: string }
+  unregisterOptimizedShortcut: (shortcut: string) => { success: boolean; error?: string }
+  getOptimizedShortcutCount: () => number
+  primeScreenshotFrame: () => boolean
   startRegionCapture: (
+    callback: (result: { success: boolean; width?: number; height?: number }) => void
+  ) => void
+  startRegionCaptureWithPrimedFrame: (
     callback: (result: { success: boolean; width?: number; height?: number }) => void
   ) => void
   getClipboardFiles: () => ClipboardFile[]
@@ -73,6 +92,11 @@ interface NativeAddon {
   launchUwpApp: (appId: string) => boolean
   getFileIcon: (filePath: string) => Promise<Buffer>
   resolveMuiStrings: (refs: string[]) => { [ref: string]: string }
+  scanWindowsShortcuts: (
+    scanPaths: string[],
+    rootScanPaths: string[],
+    skipFolders: string[]
+  ) => WindowsShortcutInfo[]
   startColorPicker: (callback: (result: { success: boolean; hex: string | null }) => void) => void
   stopColorPicker: () => void
   /** 通过 Unicode 输入法模拟键入单个字符/字素簇 */
@@ -770,10 +794,95 @@ export class MouseMonitor {
   }
 }
 
+export class OptimizedShortcutManager {
+  private static _callback: ((payload: { shortcut: string; primed: boolean }) => void) | null = null
+  private static _isListening = false
+
+  /**
+   * 启动 native 优化快捷键监听。
+   */
+  static ensureListener(callback: (payload: { shortcut: string; primed: boolean }) => void): void {
+    if (platform !== 'win32') {
+      return
+    }
+
+    if (typeof callback !== 'function') {
+      throw new TypeError('Callback must be a function')
+    }
+
+    OptimizedShortcutManager._callback = callback
+    if (OptimizedShortcutManager._isListening) {
+      return
+    }
+
+    ;(addon as NativeAddon).ensureOptimizedShortcutListener((payload) => {
+      OptimizedShortcutManager._callback?.(payload)
+    })
+    OptimizedShortcutManager._isListening = true
+  }
+
+  /**
+   * 停止 native 优化快捷键监听。
+   */
+  static stopListener(): void {
+    if (platform !== 'win32') {
+      return
+    }
+    if (!OptimizedShortcutManager._isListening) {
+      return
+    }
+
+    ;(addon as NativeAddon).stopOptimizedShortcutListener()
+    OptimizedShortcutManager._isListening = false
+    OptimizedShortcutManager._callback = null
+  }
+
+  /**
+   * 注册一个由 native 接管监听的优化快捷键。
+   */
+  static registerShortcut(shortcut: string): { success: boolean; error?: string } {
+    if (platform !== 'win32') {
+      return { success: false, error: 'optimized shortcut is only supported on Windows' }
+    }
+    return (addon as NativeAddon).registerOptimizedShortcut(shortcut)
+  }
+
+  /**
+   * 注销一个由 native 接管监听的优化快捷键。
+   */
+  static unregisterShortcut(shortcut: string): { success: boolean; error?: string } {
+    if (platform !== 'win32') {
+      return { success: false, error: 'optimized shortcut is only supported on Windows' }
+    }
+    return (addon as NativeAddon).unregisterOptimizedShortcut(shortcut)
+  }
+
+  /**
+   * 获取当前由 native 接管的优化快捷键数量。
+   */
+  static getShortcutCount(): number {
+    if (platform !== 'win32') {
+      return 0
+    }
+    return (addon as NativeAddon).getOptimizedShortcutCount()
+  }
+}
+
 /**
  * 区域截图类
  */
 export class ScreenCapture {
+  /**
+   * 预抓取当前虚拟屏幕帧
+   */
+  static prime(): boolean {
+    if (platform === 'darwin') {
+      throw new Error('ScreenCapture is not yet supported on macOS')
+    }
+
+    return (addon as NativeAddon).primeScreenshotFrame()
+  }
+
   /**
    * 启动区域截图
    * @param {Function} callback - 截图完成时的回调函数
@@ -802,7 +911,7 @@ export class ScreenCapture {
       throw new TypeError('Callback must be a function')
     }
 
-    ;(addon as NativeAddon).startRegionCapture((result) => {
+    ;(addon as NativeAddon).startRegionCaptureWithPrimedFrame((result) => {
       callback(result)
     })
   }
@@ -889,6 +998,22 @@ export class MuiResolver {
     }
     const result = (addon as NativeAddon).resolveMuiStrings(refs)
     return new Map(Object.entries(result))
+  }
+}
+
+export class WindowsShortcutScanner {
+  static scan(
+    scanPaths: string[],
+    rootScanPaths: string[],
+    skipFolders: string[]
+  ): WindowsShortcutInfo[] {
+    if (platform !== 'win32') {
+      throw new Error('WindowsShortcutScanner is only supported on Windows')
+    }
+    if (!Array.isArray(scanPaths) || !Array.isArray(rootScanPaths) || !Array.isArray(skipFolders)) {
+      throw new TypeError('scanPaths, rootScanPaths and skipFolders must be arrays')
+    }
+    return (addon as NativeAddon).scanWindowsShortcuts(scanPaths, rootScanPaths, skipFolders)
   }
 }
 

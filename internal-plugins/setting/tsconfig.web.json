@@ -1,5 +1,5 @@
 {
-  "extends": "@electron-toolkit/tsconfig/tsconfig.web.json",
+  "extends": "../../node_modules/@electron-toolkit/tsconfig/tsconfig.web.json",
   "include": [
     "src/env.d.ts",
     "src/**/*",
@@ -9,7 +9,6 @@
   ],
   "compilerOptions": {
     "composite": true,
-    "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"],
       "@shared/*": ["../../src/shared/*"]

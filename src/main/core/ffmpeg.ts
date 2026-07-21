@@ -4,6 +4,7 @@ import { createWriteStream } from 'fs'
 import { promises as fs } from 'fs'
 import AdmZip from 'adm-zip'
 import ffmpegDownloadHtml from '../../../resources/ffmpeg.html?asset'
+import { getExtendsPath } from './appData/appDataPaths'
 
 class FFmpegManager {
   private downloadWindow: BrowserWindow | null = null
@@ -18,9 +19,9 @@ class FFmpegManager {
 
   private readonly DOWNLOAD_URLS = {
     'win32-x64':
-      'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.0-latest-win64-gpl-8.0.zip',
+      'https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-07-15-14-01/ffmpeg-n8.1.2-22-g94138f6973-win64-gpl-8.1.zip',
     'win32-arm64':
-      'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.0-latest-winarm64-gpl-8.0.zip',
+      'https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-07-15-14-01/ffmpeg-n8.1.2-22-g94138f6973-winarm64-gpl-8.1.zip',
     'darwin-arm64':
       'https://github.com/eko5624/mpv-mac/releases/download/2026-03-09/ffmpeg-arm64-248b481c33.zip',
     'darwin-x64':
@@ -32,7 +33,7 @@ class FFmpegManager {
    */
   private resolveFFmpegPath(): string {
     const ext = process.platform === 'win32' ? '.exe' : ''
-    return path.join(app.getPath('userData'), 'extends', `ffmpeg${ext}`)
+    return path.join(getExtendsPath(), `ffmpeg${ext}`)
   }
 
   private getDownloadUrl(): string {

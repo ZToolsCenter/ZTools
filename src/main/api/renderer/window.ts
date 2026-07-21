@@ -171,6 +171,11 @@ export class WindowAPI {
     await windowManager.updateAutoBackToSearch(autoBackToSearch)
     console.log('[WindowAPI] 更新自动返回搜索配置:', autoBackToSearch)
   }
+
+  public async updateWindowPositionStrategy(strategy: string): Promise<void> {
+    await windowManager.updateWindowPositionStrategy(strategy)
+    console.log('[WindowAPI] 更新窗口呼出位置策略:', strategy)
+  }
 }
 
 export default new WindowAPI()

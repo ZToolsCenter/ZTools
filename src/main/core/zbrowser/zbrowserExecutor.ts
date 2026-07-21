@@ -13,6 +13,7 @@
 import { BrowserWindow, clipboard, nativeImage, app } from 'electron'
 import { fork, type ChildProcess } from 'child_process'
 import path from 'path'
+import { getAppBundlePath } from '../../utils/appBundlePath'
 import fs from 'fs'
 
 import type {
@@ -1225,7 +1226,7 @@ export class ZBrowserExecutor {
       // 使用 app.isPackaged 选择 runner 路径（避免 asar 内 fork 失败）
       const actualRunnerPath = app.isPackaged
         ? path.join(process.resourcesPath, 'zbrowser', 'runner.js')
-        : path.join(__dirname, '../../resources/zbrowser/runner.js')
+        : getAppBundlePath('resources', 'zbrowser', 'runner.js')
 
       this._childProcess = fork(actualRunnerPath, [], {
         stdio: ['pipe', 'pipe', 'pipe', 'ipc']

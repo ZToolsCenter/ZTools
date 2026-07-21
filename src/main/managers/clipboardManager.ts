@@ -1,11 +1,12 @@
 import { createHash } from 'crypto'
-import { app, clipboard, nativeImage } from 'electron'
+import { clipboard, nativeImage } from 'electron'
 import { promises as fs } from 'fs'
 import path from 'path'
 
 import os from 'os'
 import { v4 as uuidv4 } from 'uuid'
 import lmdbInstance from '../core/lmdb/lmdbInstance'
+import { getClipboardPath } from '../core/appData/appDataPaths'
 import {
   hasClipboardFiles,
   readClipboardFilePaths,
@@ -111,7 +112,7 @@ class ClipboardManager {
   private cancelWatchTimeout: ReturnType<typeof setTimeout> | null = null
 
   constructor() {
-    this.IMAGE_DIR = path.join(app.getPath('userData'), 'clipboard', 'images')
+    this.IMAGE_DIR = path.join(getClipboardPath(), 'images')
     this.clipboardMonitor = new ClipboardMonitor()
     this.windowMonitor = new WindowMonitor()
     this.init()

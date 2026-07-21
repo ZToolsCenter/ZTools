@@ -102,7 +102,7 @@ class DoubleTapManager {
         resolve()
       }, timeoutMs)
 
-      const wrappedResolve = () => {
+      const wrappedResolve = (): void => {
         if (timer) {
           clearTimeout(timer)
           timer = null
@@ -129,7 +129,7 @@ class DoubleTapManager {
         resolve(false)
       }, timeoutMs)
 
-      const wrappedResolve = (released: boolean) => {
+      const wrappedResolve = (released: boolean): void => {
         if (timer) {
           clearTimeout(timer)
           timer = null

@@ -83,7 +83,7 @@ watch(
   padding: 12px 16px;
   border-radius: 6px;
   border: 2px solid;
-  z-index: 20000;
+  z-index: 40000;
   max-width: 400px;
   font-size: 14px;
   font-weight: 500;

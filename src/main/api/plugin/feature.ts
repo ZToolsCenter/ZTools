@@ -24,11 +24,16 @@ interface DynamicFeaturesData {
 export class PluginFeatureAPI {
   private pluginManager: PluginManager | null = null
   private notifyTimer: NodeJS.Timeout | null = null
+  private commandsCacheInvalidator: (() => void) | null = null
   private readonly NOTIFY_DEBOUNCE_DELAY = 3000 // 3秒防抖延迟
 
   public init(pluginManager: PluginManager): void {
     this.pluginManager = pluginManager
     this.setupIPC()
+  }
+
+  public setCommandsCacheInvalidator(invalidator: () => void): void {
+    this.commandsCacheInvalidator = invalidator
   }
 
   /**
@@ -218,10 +223,13 @@ export class PluginFeatureAPI {
 
     // 设置新的定时器，3秒后执行实际通知
     this.notifyTimer = setTimeout(() => {
+      this.commandsCacheInvalidator?.()
+
       const mainWindow = windowManager.getMainWindow()
       if (mainWindow) {
         mainWindow.webContents.send('plugins-changed')
       }
+
       this.notifyTimer = null
     }, this.NOTIFY_DEBOUNCE_DELAY)
   }

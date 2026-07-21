@@ -7,9 +7,12 @@ import type {
   ShortcutsSettingAliasCommandOption,
   ShortcutsSettingAliasDialogState,
   ShortcutsSettingAliasDraftTarget,
+  ShortcutsSettingCommandCmdType,
   ShortcutsSettingJumpFunction,
+  ShortcutsSettingShortcutTargetOption,
   ShortcutsSettingTab
 } from '@/views/ShortcutsSetting/ShortcutsSetting'
+import { buildShortcutTargetValue } from '@/views/ShortcutsSetting/ShortcutsSetting'
 import {
   COMMAND_ALIASES_KEY,
   DIRECT_APP_ALIAS_GROUP_KEY,
@@ -30,9 +33,10 @@ interface GlobalShortcut {
   configurable?: boolean
   configKey?: BuiltInShortcutKey
   autoCopy?: boolean
+  preScreenshotOptimization?: boolean
 }
 
-type BuiltInShortcutKey = 'search' | 'closePlugin' | 'killPlugin'
+type BuiltInShortcutKey = 'search' | 'closePlugin' | 'killPlugin' | 'esc'
 
 type BuiltInShortcutConfig = Record<BuiltInShortcutKey, boolean>
 
@@ -49,7 +53,8 @@ interface AliasRow {
 const DEFAULT_BUILTIN_SHORTCUTS_ENABLED: BuiltInShortcutConfig = {
   search: true,
   closePlugin: true,
-  killPlugin: true
+  killPlugin: true,
+  esc: true
 }
 
 // 获取平台信息
@@ -101,6 +106,14 @@ const baseBuiltInShortcuts: GlobalShortcut[] = [
     configKey: 'closePlugin'
   },
   {
+    id: 'builtin-esc',
+    shortcut: 'ESC',
+    target: '清空输入/退出插件/隐藏窗口',
+    enabled: true,
+    configurable: true,
+    configKey: 'esc'
+  },
+  {
     id: 'builtin-devtools',
     shortcut: 'DEVTOOLS',
     target: '打开/关闭开发者工具',
@@ -138,6 +151,12 @@ const builtInShortcutsEnabled = ref<BuiltInShortcutConfig>({ ...DEFAULT_BUILTIN_
 const aliasMappings = ref<CommandAliasStore>({})
 // alias 目标列表来自主进程整理后的 canonical commands，仅包含允许直接触发的插件指令和系统应用。
 const aliasTargetOptions = ref<ShortcutsSettingAliasCommandOption[]>([])
+const shortcutTargetOptions = computed<ShortcutsSettingShortcutTargetOption[]>(() =>
+  aliasTargetOptions.value.map((target) => ({
+    ...target,
+    value: buildShortcutTargetValue(target)
+  }))
+)
 const aliasDialogVisible = ref(false)
 const aliasDialogRef = ref<InstanceType<typeof AliasMappingDialog> | null>(null)
 const aliasDialogState = ref<ShortcutsSettingAliasDialogState | null>(null)
@@ -327,7 +346,8 @@ async function loadGlobalShortcuts(): Promise<void> {
     const data = await window.ztools.internal.dbGet('global-shortcuts')
     globalShortcuts.value = (data || []).map((shortcut: any) => ({
       ...shortcut,
-      autoCopy: shortcut.autoCopy ?? false // 默认禁用
+      autoCopy: shortcut.autoCopy ?? false,
+      preScreenshotOptimization: shortcut.preScreenshotOptimization ?? false
     }))
   } catch (err) {
     console.error('加载全局快捷键失败:', err)
@@ -376,7 +396,7 @@ async function loadAliasTargets(): Promise<void> {
       targetMap.set(target.commandId, target)
     }
 
-    const addPluginTarget = (command: any, cmdType: 'text' | 'window'): void => {
+    const addPluginTarget = (command: any, cmdType: ShortcutsSettingCommandCmdType): void => {
       if (command.type !== 'plugin') return
       if (!command.pluginName || !command.featureCode || !command.name) return
 
@@ -456,8 +476,14 @@ async function loadAliasTargets(): Promise<void> {
     }
 
     for (const command of result.regexCommands || []) {
-      if (command.cmdType === 'window') {
-        addPluginTarget(command, 'window')
+      if (
+        command.cmdType === 'regex' ||
+        command.cmdType === 'over' ||
+        command.cmdType === 'img' ||
+        command.cmdType === 'files' ||
+        command.cmdType === 'window'
+      ) {
+        addPluginTarget(command, command.cmdType)
       }
     }
 
@@ -648,13 +674,17 @@ function closeEditor(): void {
   prefillTarget.value = ''
 }
 
-async function handleSave(recordedShortcut: string, targetCommand: string): Promise<void> {
+async function handleSave(
+  recordedShortcut: string,
+  targetCommand: string,
+  preScreenshotOptimization: boolean
+): Promise<void> {
   if (!recordedShortcut || !targetCommand) {
     return
   }
 
   if (activeTab.value === 'global') {
-    await handleSaveGlobalShortcut(recordedShortcut, targetCommand)
+    await handleSaveGlobalShortcut(recordedShortcut, targetCommand, preScreenshotOptimization)
   } else {
     await handleSaveAppShortcut(recordedShortcut, targetCommand)
   }
@@ -662,7 +692,8 @@ async function handleSave(recordedShortcut: string, targetCommand: string): Prom
 
 async function handleSaveGlobalShortcut(
   recordedShortcut: string,
-  targetCommand: string
+  targetCommand: string,
+  preScreenshotOptimization: boolean
 ): Promise<void> {
   if (editingShortcut.value) {
     const exists = globalShortcuts.value.some(
@@ -674,7 +705,13 @@ async function handleSaveGlobalShortcut(
     }
 
     const oldShortcut = editingShortcut.value.shortcut
+    const oldTarget = editingShortcut.value.target
     const autoCopy = editingShortcut.value.autoCopy ?? false // 保留原有 autoCopy 配置
+    const oldPreScreenshotOptimization = editingShortcut.value.preScreenshotOptimization ?? false
+    const shouldRestorePreviousRegistration =
+      oldShortcut !== recordedShortcut ||
+      oldTarget !== targetCommand ||
+      oldPreScreenshotOptimization !== preScreenshotOptimization
 
     try {
       if (oldShortcut !== recordedShortcut) {
@@ -684,7 +721,8 @@ async function handleSaveGlobalShortcut(
       const result = await window.ztools.internal.registerGlobalShortcut(
         recordedShortcut,
         targetCommand,
-        autoCopy
+        autoCopy,
+        preScreenshotOptimization
       )
 
       if (result.success) {
@@ -692,28 +730,30 @@ async function handleSaveGlobalShortcut(
         if (index >= 0) {
           globalShortcuts.value[index].shortcut = recordedShortcut
           globalShortcuts.value[index].target = targetCommand
-          // autoCopy 保持不变
+          globalShortcuts.value[index].preScreenshotOptimization = preScreenshotOptimization
         }
 
         await saveGlobalShortcuts()
         success('快捷键更新成功!')
         closeEditor()
       } else {
-        if (oldShortcut !== recordedShortcut) {
+        if (shouldRestorePreviousRegistration) {
           await window.ztools.internal.registerGlobalShortcut(
             oldShortcut,
-            editingShortcut.value.target,
-            autoCopy
+            oldTarget,
+            autoCopy,
+            oldPreScreenshotOptimization
           )
         }
         error(`快捷键注册失败: ${result.error}`)
       }
     } catch (err: any) {
-      if (oldShortcut !== recordedShortcut) {
+      if (shouldRestorePreviousRegistration) {
         await window.ztools.internal.registerGlobalShortcut(
           oldShortcut,
-          editingShortcut.value.target,
-          autoCopy
+          oldTarget,
+          autoCopy,
+          oldPreScreenshotOptimization
         )
       }
       console.error('更新快捷键失败:', err)
@@ -733,7 +773,8 @@ async function handleSaveGlobalShortcut(
     shortcut: recordedShortcut,
     target: targetCommand,
     enabled: true,
-    autoCopy: false // 新建快捷键默认禁用自动复制
+    autoCopy: false,
+    preScreenshotOptimization
   }
 
   globalShortcuts.value.push(newShortcut)
@@ -743,7 +784,8 @@ async function handleSaveGlobalShortcut(
     const result = await window.ztools.internal.registerGlobalShortcut(
       recordedShortcut,
       targetCommand,
-      false // 新建快捷键默认禁用自动复制
+      false,
+      preScreenshotOptimization
     )
     if (result.success) {
       success('快捷键添加成功!')
@@ -922,6 +964,7 @@ async function handleAutoCopyToggle(shortcut: any, event: Event): Promise<void> 
       target: s.target,
       enabled: s.enabled,
       autoCopy: s.autoCopy,
+      preScreenshotOptimization: s.preScreenshotOptimization,
       ...(s.configurable !== undefined && { configurable: s.configurable }),
       ...(s.configKey !== undefined && { configKey: s.configKey })
     }))
@@ -931,10 +974,12 @@ async function handleAutoCopyToggle(shortcut: any, event: Event): Promise<void> 
     // 3. 通知主进程更新配置
     console.log('[AutoCopy] 通知主进程更新配置:', {
       shortcut: shortcut.shortcut,
-      autoCopy: newAutoCopy
+      autoCopy: newAutoCopy,
+      preScreenshotOptimization: shortcut.preScreenshotOptimization ?? false
     })
     const result = await window.ztools.internal.updateGlobalShortcutConfig(shortcut.shortcut, {
-      autoCopy: newAutoCopy
+      autoCopy: newAutoCopy,
+      preScreenshotOptimization: shortcut.preScreenshotOptimization ?? false
     })
     console.log('[AutoCopy] 主进程配置更新结果:', result)
 
@@ -1309,6 +1354,7 @@ useJumpFunction<ShortcutsSettingJumpFunction>(async (state) => {
         v-if="showShortcutEditor"
         :editing-shortcut="editingShortcut"
         :prefill-target="prefillTarget"
+        :target-options="shortcutTargetOptions"
         :is-app-shortcut="activeTab === 'app'"
         @back="closeEditor"
         @save="handleSave"

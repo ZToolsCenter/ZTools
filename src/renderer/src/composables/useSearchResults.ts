@@ -61,7 +61,8 @@ export function useSearchResults(props: {
     searchImageCommands,
     searchTextCommands,
     searchFileCommands,
-    matchesWindowCommand
+    matchesWindowCommand,
+    sortRecommendations
   } = commandDataStore
 
   // 使用统计缓存（key: "path:featureCode", value: useCount）
@@ -240,8 +241,8 @@ export function useSearchResults(props: {
 
     // 去重：同一个 feature 只保留第一个匹配的 cmd
     const deduplicated = deduplicateResults(overTypeResults)
-    // 按使用频率排序
-    return sortByUsage(deduplicated, usageStatsMap.value)
+    // 先保留原有使用频率排序，再应用用户独立设置的推荐置顶顺序。
+    return sortRecommendations(sortByUsage(deduplicated, usageStatsMap.value))
   })
 
   // 列表模式：合并所有搜索结果，按匹配分数排序

@@ -846,7 +846,7 @@ export class PluginManager {
   // 检查并终止插件
   private checkAndKillPlugin(pluginName: string, pluginPath: string): void {
     try {
-      const data = api.dbGet('outKillPlugin')
+      const data = api.dbGet('out-kill-plugin')
       if (Array.isArray(data) && data.includes(pluginName)) {
         console.log(`插件 ${pluginName} 配置为退出后立即结束，销毁 view`)
         this.killPlugin(pluginPath)
@@ -1696,7 +1696,7 @@ export class PluginManager {
    */
   private getStoredDetachedSize(pluginName: string): { width: number; height: number } | null {
     try {
-      const sizes = api.dbGet('detachedWindowSizes')
+      const sizes = api.dbGet('detached-window-sizes')
       const sizeKey = getDetachedWindowSizeKey(pluginName)
       if (sizes && typeof sizes === 'object' && !Array.isArray(sizes) && sizes[sizeKey]) {
         const rawSize = sizes[sizeKey]

@@ -28,11 +28,11 @@ body::-webkit-scrollbar {
   --control-bg: rgba(0, 0, 0, 0.035);
   --control-border: rgba(0, 0, 0, 0.1);
   --hover-bg: #f9fafb;
-  --active-bg: #f0f9ff;
-  --primary-color: #0284c7;
+  --active-bg: #ecfdf5;
+  --primary-color: #059669;
   --input-bg: #f4f4f4;
   --input-border: #e5e7eb;
-  --input-focus-bg: #f0f9ff;
+  --input-focus-bg: #ecfdf5;
   --placeholder-color: #616161;
   --shadow-color: rgba(0, 0, 0, 0.1);
   --primary-gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -92,7 +92,6 @@ body::-webkit-scrollbar {
 }
 
 /* 主题色定义 - 亮色模式 */
-:root,
 .theme-blue {
   --primary-color: #0284c7;
 }
@@ -128,6 +127,8 @@ body::-webkit-scrollbar {
     --control-bg: rgba(255, 255, 255, 0.04);
     --control-border: rgba(255, 255, 255, 0.1);
     --hover-bg: #374151;
+    --active-bg: rgba(52, 211, 153, 0.12);
+    --primary-color: #34d399;
     --input-bg: #374151;
     --input-border: #374151;
     --input-focus-bg: #4b5563;
@@ -191,7 +192,6 @@ body::-webkit-scrollbar {
 
   /* 主题色定义 - 暗色模式 */
   /* 主题色定义 - 暗色模式 */
-  :root,
   .theme-blue {
     --primary-color: #38bdf8;
   }
@@ -668,9 +668,9 @@ html:not(.os-windows[data-material='mica']):not(.os-windows[data-material='acryl
   --adaptive-icon-hue: 310deg;
 }
 
-/* 默认蓝色主题 */
+/* 未加载主题类名前使用默认绿色主题 */
 :root {
-  --adaptive-icon-hue: 180deg;
+  --adaptive-icon-hue: 100deg;
 }
 
 /* 滚动条样式由 src/main/core/globalStyles.ts 通过 insertCSS 统一注入 */

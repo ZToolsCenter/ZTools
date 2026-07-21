@@ -1,5 +1,5 @@
 import { BrowserWindow, ipcMain, screen } from 'electron'
-import path from 'path'
+import { getPreloadPath, getRendererPath } from '../utils/appBundlePath'
 import { is } from '@electron-toolkit/utils'
 import {
   ClipboardMonitor,
@@ -14,7 +14,7 @@ import pluginsAPI from '../api/renderer/plugins.js'
 import windowManager from '../managers/windowManager.js'
 import clipboardManager, { type LastCopiedContent } from '../managers/clipboardManager.js'
 import { applyWindowMaterial, getDefaultWindowMaterial } from '../utils/windowUtils.js'
-import translationManager from './translationManager.js'
+import providerManager from './provider/providerManager.js'
 import { filterSuperPanelPinnedCommands } from './superPanelPinnedCommands.js'
 import { decodeFileUrlToPath } from '../utils/common'
 
@@ -360,7 +360,7 @@ class SuperPanelManager {
       hasShadow: true,
       type: 'panel',
       webPreferences: {
-        preload: path.join(__dirname, '../preload/index.js'),
+        preload: getPreloadPath(),
         backgroundThrottling: false,
         contextIsolation: true,
         nodeIntegration: false,
@@ -395,7 +395,7 @@ class SuperPanelManager {
     if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
       win.loadURL(`${process.env['ELECTRON_RENDERER_URL']}/super-panel.html`)
     } else {
-      win.loadFile(path.join(__dirname, '../renderer/super-panel.html'))
+      win.loadFile(getRendererPath('super-panel.html'))
     }
 
     // 窗口加载完成后显示
@@ -524,17 +524,19 @@ class SuperPanelManager {
 
   /**
    * 请求翻译选中的文本
+   * 经 providerManager 按用户默认翻译提供商分发（内置 Bergamot 或插件翻译 provider）。
    */
   private async requestTranslation(text: string): Promise<void> {
     try {
-      const translation = await translationManager.translate(text)
-      if (translation) {
+      const result = await providerManager.invoke('translation', { text })
+      if (result?.text) {
         this.sendToSuperPanel('super-panel-translation', {
-          text: translation,
+          text: result.text,
           sourceText: text
         })
       }
     } catch (error) {
+      // 没有可用的翻译提供商属于正常情形（用户未启用），静默处理
       console.error('[SuperPanel] 翻译请求失败:', error)
     }
   }

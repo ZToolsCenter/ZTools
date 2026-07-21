@@ -1,37 +1,83 @@
-# 2.6.1
+# 3.0.0-beta.8
 
 ## 新功能 (Feat)
 
-- 插件详情新增「关闭搜索栏推送」开关，可按插件禁用搜索框推送结果（PR [#520](../../pull/520)，感谢 [@guopenghui](https://github.com/guopenghui) 的贡献 🎉）
-- 全局快捷键新增自动复制选中文本开关（PR [#521](../../pull/521)，感谢 [@Particaly](https://github.com/Particaly) 的贡献 🎉）
-- 插件市场 banner 和分类图标改为本地资源加载，减少远程资源依赖
-- 更新 Electron 版本
-- 更新内置原生模块
+- 支持github登录
+- 支持zpx安装为asar
+- 新增服务端同步能力，接入账号体系、服务端 checkpoint、文档 revision、冲突版本、附件 blob 同步和弱网重试队列
+- 新增 3.0 数据目录与多账号数据隔离能力，支持 `~/.ztools` 新目录、设备库/账号库拆分、旧数据导入和登录后导入本地数据
+- 插件市场改为服务端 API 数据源，支持 banner、分类、下载记录、下载量、插件详情 README 缓存、平台过滤、随机推荐和下载地址按需获取
+- 新增插件市场评论能力，支持登录评论、回复、点赞、删除自己的评论和用户头像展示
+- 新增账号登录状态入口、个人中心、头像修改、云空间占用和文档附件统计
+- 新增 Provider 抽象系统，支持插件提供翻译和 OCR 能力，并支持单插件对每种 type 声明多条 Provider（PR [#560](../../pull/560)，感谢 [@Particaly](https://github.com/Particaly) 的贡献 🎉）
+- 插件详情指令列表新增打开、固定、快捷键、别名、禁用等操作入口（PR [#567](../../pull/567)，感谢 [@Particaly](https://github.com/Particaly) 的贡献 🎉）
+- 快捷键设置支持选择目标指令，并新增快捷键目标选择弹窗（PR [#574](../../pull/574)，感谢 [@Particaly](https://github.com/Particaly) 的贡献 🎉）
+- 全局快捷键支持预截图优化配置，提升截图类快捷操作的响应体验（PR [#574](../../pull/574)，感谢 [@Particaly](https://github.com/Particaly) 的贡献 🎉）
+- 本地启动支持一键清除失效项，便于快速清理已不可用的本地启动记录（PR [#557](../../pull/557)，感谢 [@Flinglin](https://github.com/Flinglin) 的贡献 🎉）
+- 新增窗口呼出位置策略设置，支持记住上次位置、鼠标屏居中、主屏居中、上次活动屏居中（PR [#558](../../pull/558)，感谢 [@Cateds](https://github.com/Cateds) 的贡献 🎉）
+- 超级面板支持文件位置快捷跳转（PR [#532](../../pull/532)，感谢 [@Particaly](https://github.com/Particaly) 的贡献 🎉）
+- 支持禁用 ESC 退出插件，便于插件内弹窗自行处理 ESC（PR [#556](../../pull/556)，感谢 [@yunser](https://github.com/yunser) 的贡献 🎉）
+- 全部指令搜索支持搜索插件命令
+- 我的数据支持单条删除和单条数据导出
+- 安装包安装插件后支持立即打开
+- 支持自定义 Windows 安装路径
+- macOS 支持搜索启动嵌套子目录中的应用，并优化 PWA/应用目录扫描
+- 通用设置新增「终端打开」选项，可为 Finder 等文件管理器中的「在终端打开」功能选择终端应用；支持 macOS 的 Terminal、Ghostty、iTerm2，Windows 的 Windows Terminal、PowerShell、CMD，以及 Linux 的 GNOME Terminal、Konsole、XTerm，并支持使用 `{path}` 配置自定义命令（PR [#569](../../pull/569)，感谢 [@thirking](https://github.com/thirking) 的贡献 🎉）
+- macOS 启动时新增辅助功能权限检查与引导窗口，支持跳转系统设置、检测授权结果和重置异常权限
+- Windows 更新机制改用 `electron-updater` 下载并安装完整安装包，降低自定义升级程序引发安全软件误报的概率；旧版安装会引导完成一次完整安装，用户数据、设置和插件保持不变
 
 ## 修复 (Fix)
 
-- 修复位置位移窗口内部坍塌
-- 修复点击主窗口外原生菜单项目主窗口关闭
-- 修复插件打开系统文件对话框时主窗口被隐藏的问题（PR [#518](../../pull/518)，感谢 [@jn12-29](https://github.com/jn12-29) 的贡献 🎉）
-- 修复 Windows 下文件管理器成为前台窗口时当前窗口数据被错误切换的问题（PR [#517](../../pull/517)，感谢 [@Flinglin](https://github.com/Flinglin) 的贡献 🎉）
-- 修复 Windows「复制路径」系统指令在部分文件管理器窗口中无法匹配的问题（PR [#517](../../pull/517)，感谢 [@Flinglin](https://github.com/Flinglin) 的贡献 🎉）
-- 修复全局快捷键取词等待时间过长的问题（PR [#521](../../pull/521)，感谢 [@Particaly](https://github.com/Particaly) 的贡献 🎉）
-- 修复取词时文件优先级低于图片和文本的问题
-- 加强插件文件对话框期间的窗口 blur 处理，避免对话框关闭后窗口状态异常
+- 修复附件云同步拉取后只有 `_attachments` metadata 但缺少本地二进制时不会下载 blob 的问题
+- 修复「上次活动屏居中」策略在跨屏或异常坐标场景下可能定位不准确的问题，并增加 `NaN` / `Infinity` 防御（PR [#558](../../pull/558)，感谢 [@Cateds](https://github.com/Cateds) 的贡献 🎉）
+- 修复对象型指令缺失 type 导致搜索栏与历史记录空白的问题
+- 修复 Windows 开始菜单根级快捷方式无法扫描和监听的问题（PR [#552](../../pull/552)，感谢 [@gdm257](https://github.com/gdm257) 的贡献 🎉）
+- 修复固定列表项鼠标悬停显示移动光标的问题（PR [#549](../../pull/549)，感谢 [@Ethan0x0000](https://github.com/Ethan0x0000) 的贡献 🎉）
+- 修复普通字符串窗口标题匹配兼容性问题
+- 修复 macOS 应用扫描未跟随符号链接的问题，并复用统一应用目录
+- 修复进入插件后拖动窗口回到主搜索时搜索框没有聚焦的问题
+- 修复 Windows 修改快捷键后唤醒主窗口无法获取焦点的问题
+- 恢复全局快捷键自动复制触发限制，避免非预期自动复制（PR [#530](../../pull/530)，感谢 [@Particaly](https://github.com/Particaly) 的贡献 🎉）
+- 修复 macOS 在全屏应用中唤出 ZTools 时窗口一闪而过或落到桌面空间的问题（PR [#577](../../pull/577)，感谢 [@Ethan0x0000](https://github.com/Ethan0x0000) 的贡献 🎉）
+- 修复 macOS 唤出窗口时偶发焦点丢失的问题
+- 修复搜索结果包含 Finder 项目时，使用方向键导航位置异常的问题，并统一多分组搜索结果的网格导航逻辑
 
 ## 优化 (Optimize)
 
-- 优化插件市场默认地址配置
-- 优化全局快捷键取词流程，使用原生 `getSelectedContent` 替代剪贴板轮询
-- 优化 `getSelectedContent` 类型安全和防御性（PR [#525](../../pull/525)，感谢 [@pantao](https://github.com/pantao) 的贡献 🎉）
-- 增加插件搜索栏推送配置相关测试覆盖
+- 新版本不主动弹窗，改为在主窗口提示，点击后弹窗
+- 设置页主题色默认调整为绿色，并将绿色放到主题色选项第一位
+- 优化快捷键和别名设置相关交互，复用统一的指令目标选择组件
+- 优化插件市场 banner 切换、图标懒加载、插件详情展示和安装进度体验
+- 优化数据同步页面状态实时刷新、顶部样式、调试日志和重试状态展示
+- 优化 markdown 插件图片存储，改为附件 API，并迁移历史 `file://` 图片引用
+- 优化 markdown 插件 Vditor 资源加载，将远程 CDN 资源转为本地资源
+- 优化 macOS 超级面板唤醒复制流程
+- 推送到搜索选项默认关闭
+- 移除网页快开内置入口
+- 优化更新窗口的下载、安装和失败状态展示，新增下载进度、速度及失败重试交互
+- 优化终端启动的路径与参数转义，避免自定义路径或命令中的特殊字符导致启动失败
 
 ## 重构 (Refactor)
 
-无
+- windows首次扫描应用使用native，加快扫描速度
+- 重构云同步为 CouchDB 风格 `_attachments` + digest blob 模型，移除旧 WebDAV 同步实现
+- 重构同步 checkpoint、持久化任务队列、文档/附件重试和 LMDB 同步数据层
+- 重构插件数据存储路由，拆分设备库和账号库，为多账号数据隔离做准备
+- 抽取命令上下文匹配公共逻辑（PR [#546](../../pull/546)，感谢 [@Particaly](https://github.com/Particaly) 的贡献 🎉）
+- 优化指令操作 composable，并修复取消固定失效问题（PR [#567](../../pull/567)，感谢 [@Particaly](https://github.com/Particaly) 的贡献 🎉）
+- 移除冗余内联 cursor 样式，统一由 CSS 类控制
+- 按平台拆分应用更新实现，统一更新检查、下载进度和安装状态接口
+- 拆分主进程启动流程及首次运行数据导入逻辑，降低启动模块耦合
 
 ## 其他 (Chore)
 
-- 更新项目文档中的 Electron 版本说明
+- 更新appId
+- 更新 Windows 和 macOS 原生模块
+- 移除 `pnpm-workspace.yaml`
+- 移除 sharp 相关 API
+- 新增同步实现文档、Provider 开发文档和示例插件
+- 新增云同步、Provider、命令上下文、存储 3.0、Windows 扫描等测试覆盖
+- GitHub Actions 新增是否发布到 GitHub Release 的可配置选项
+- 新增终端启动、Windows 安装兼容性、版本比较、macOS 窗口激活和搜索方向导航等测试覆盖
 
 ---

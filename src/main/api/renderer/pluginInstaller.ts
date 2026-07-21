@@ -3,18 +3,40 @@ import type { PluginDevProjectsAPI } from './pluginDevProjects'
 import { app, shell, type WebContents } from 'electron'
 import { promises as fs } from 'fs'
 import path from 'path'
+import { randomUUID } from 'node:crypto'
 import { pathToFileURL } from 'url'
 import * as tar from 'tar'
 import AdmZip from 'adm-zip'
-import { isValidZpx, extractZpx, readTextFromZpx, readFileFromZpx } from '../../utils/zpxArchive.js'
+import {
+  extractAsar,
+  isValidZpx,
+  prepareZpxAsar,
+  readTextFromZpx,
+  readFileFromZpx
+} from '../../utils/zpxArchive.js'
+import { physicalFs } from '../../utils/physicalFs.js'
+import {
+  assertSafePluginArtifactPart,
+  createAsarArtifactPath,
+  removePluginArtifact,
+  resolvePluginStorageKind,
+  type PluginStorageKind
+} from '../../utils/pluginStorage.js'
 import { DownloadCancelledError, downloadFile } from '../../utils/download.js'
 import { httpGet } from '../../utils/httpRequest.js'
 import { sleep } from '../../utils/common.js'
 import databaseAPI from '../shared/database'
 import { openDialog } from '../../utils/windowUtils'
+import {
+  PluginMarketAuthMode,
+  getPluginMarketApiBase,
+  requestPluginMarket
+} from './pluginMarketConfig'
+import { getPluginsPath } from '../../core/appData/appDataPaths'
 
 /** 插件的本地安装目录 */
-const PLUGIN_DIR = path.join(app.getPath('userData'), 'plugins')
+const PLUGIN_DIR = getPluginsPath()
+const artifactFs = physicalFs.promises
 const MARKET_DOWNLOAD_PROGRESS_CHANNEL = 'plugin-market-download-progress'
 
 type MarketDownloadStatus = 'downloading' | 'installing' | 'success' | 'error' | 'cancelled'
@@ -57,6 +79,8 @@ export interface PluginInstallerDeps {
   writeInstalledPlugins(plugins: any[]): void
   /** 通知渲染进程插件列表已变更 */
   notifyPluginsChanged(): void
+  /** 将仍然保存旧物理路径的插件状态更新为新路径 */
+  replacePluginPathReferences(pluginName: string, oldPath: string, newPath: string): void
   /** 校验插件配置的合法性 */
   validatePluginConfig(config: any, existing: any[]): { valid: boolean; error?: string }
 }
@@ -70,6 +94,7 @@ export interface PluginInstallerDeps {
  */
 export class PluginInstallerAPI {
   private marketDownloadTasks = new Map<string, MarketDownloadTask>()
+  private installingPluginNames = new Set<string>()
 
   constructor(private deps: PluginInstallerDeps) {}
 
@@ -186,56 +211,26 @@ export class PluginInstallerAPI {
   }
 
   /**
-   * 从指定文件路径安装插件（.zpx），支持覆盖已存在的插件。
-   * 覆盖时会先终止运行中的插件、移除旧记录和目录，再执行全新安装。
-   * @param zpxPath - .zpx 文件的绝对路径
-   * @returns {success: boolean, plugin?: object, error?: string}
+   * 从本地 ZPX 或 ZIP 文件安装、升级插件。
+   * @param filePath 插件包绝对路径
+   * @returns 安装结果；成功时包含新的插件记录
    */
   public async installPluginFromPath(filePath: string): Promise<any> {
     try {
-      let config: any
-      let isZpx: boolean
-      try {
-        ;({ config, isZpx } = await this.readPluginJson(filePath))
-      } catch (e: any) {
-        return { success: false, error: e.message }
-      }
-
-      const pluginName = config.name
-      const pluginPath = path.join(PLUGIN_DIR, pluginName)
-
-      // 覆盖安装：先清理旧版本
-      const existingPlugins: any[] = databaseAPI.dbGet('plugins') || []
-      const existingIndex = existingPlugins.findIndex((p: any) => p.name === pluginName)
-      if (existingIndex !== -1) {
-        console.log('[Plugins] 插件已存在，执行覆盖安装:', pluginName)
-        try {
-          this.deps.pluginManager?.killPluginByName(pluginName)
-        } catch {
-          // 忽略终止错误
-        }
-        existingPlugins.splice(existingIndex, 1)
-        databaseAPI.dbPut('plugins', existingPlugins)
-        try {
-          await fs.rm(pluginPath, { recursive: true, force: true })
-          console.log('[Plugins] 已删除旧插件目录:', pluginPath)
-        } catch {
-          // 忽略删除错误
-        }
-      }
-
+      const { config, isZpx } = await this.readPluginJson(filePath)
       return await this.installFromPackageFile(filePath, isZpx, config)
     } catch (error: unknown) {
-      console.error('[Plugins] 覆盖安装插件失败:', error)
+      console.error('[Plugins] 安装插件失败:', error)
       return { success: false, error: error instanceof Error ? error.message : '安装失败' }
     }
   }
 
   /**
    * 从插件市场安装插件。
-   * 流程：下载 .zpx 文件（最多重试 3 次）→ 自动检测 ZPX/ZIP 格式 → 安装 → 清理临时文件。
-   * @param plugin - 市场插件对象，必须包含 name 和 downloadUrl 字段
-   * @returns {success: boolean, plugin?: object, error?: string}
+   * 流程：调用市场下载接口获取下载地址 → 下载 .zpx 文件（最多重试 3 次）→ 自动检测 ZPX/ZIP 格式 → 安装 → 清理临时文件。
+   * @param plugin 市场插件对象，必须包含 name 字段
+   * @param webContents 接收下载进度的渲染进程
+   * @returns 安装结果；成功时包含新的插件记录
    */
   public async installPluginFromMarket(plugin: any, webContents?: WebContents): Promise<any> {
     const pluginName = plugin?.name
@@ -263,7 +258,7 @@ export class PluginInstallerAPI {
 
     try {
       console.log('[Plugins] 开始从市场安装插件:', pluginName)
-      const downloadUrl = plugin.downloadUrl
+      const downloadUrl = await this.resolveMarketDownloadUrl(plugin)
       if (!downloadUrl) {
         return { success: false, error: '无效的下载链接' }
       }
@@ -320,30 +315,6 @@ export class PluginInstallerAPI {
       const { config: marketConfig, isZpx } = await this.readPluginJson(tempFilePath)
       console.log(`[Plugins] 市场插件格式: ${isZpx ? 'ZPX' : 'ZIP（兼容）'}`)
 
-      // 覆盖安装：若插件已存在则先清理旧版本（不清除插件 LMDB 数据）
-      const marketPluginName = marketConfig.name
-      const marketPluginPath = path.join(PLUGIN_DIR, marketPluginName)
-      const existingPluginsForMarket: any[] = databaseAPI.dbGet('plugins') || []
-      const existingMarketIndex = existingPluginsForMarket.findIndex(
-        (p: any) => p.name === marketPluginName
-      )
-      if (existingMarketIndex !== -1) {
-        console.log('[Plugins] 插件已存在，执行覆盖升级（保留数据）:', marketPluginName)
-        try {
-          this.deps.pluginManager?.killPluginByName(marketPluginName)
-        } catch {
-          // 忽略终止错误
-        }
-        existingPluginsForMarket.splice(existingMarketIndex, 1)
-        databaseAPI.dbPut('plugins', existingPluginsForMarket)
-        try {
-          await fs.rm(marketPluginPath, { recursive: true, force: true })
-          console.log('[Plugins] 已删除旧插件目录:', marketPluginPath)
-        } catch {
-          // 忽略删除错误
-        }
-      }
-
       const result = await this.installFromPackageFile(tempFilePath, isZpx, marketConfig)
       this.emitMarketDownloadProgress(task, {
         pluginName,
@@ -386,6 +357,11 @@ export class PluginInstallerAPI {
     }
   }
 
+  /**
+   * 取消指定插件或任务 ID 对应的市场下载。
+   * @param pluginNameOrTaskId 插件名或下载任务 ID
+   * @returns 取消结果
+   */
   public cancelPluginMarketDownload(pluginNameOrTaskId: string): {
     success: boolean
     error?: string
@@ -400,9 +376,39 @@ export class PluginInstallerAPI {
   }
 
   /**
+   * 请求插件市场并优先解析 ZPX 下载地址。
+   * @param plugin 市场插件对象
+   * @returns ZPX 下载地址；服务端未提供时回退 ZIP，插件信息无效时返回空字符串
+   */
+  private async resolveMarketDownloadUrl(plugin: any): Promise<string> {
+    const pluginName = typeof plugin?.name === 'string' ? plugin.name : ''
+    if (!pluginName) {
+      return ''
+    }
+
+    const marketApiBase = getPluginMarketApiBase()
+    const response = await requestPluginMarket(
+      `${marketApiBase}/plugins/download?name=${encodeURIComponent(pluginName)}`,
+      {},
+      PluginMarketAuthMode.OPTIONAL
+    )
+    const data = typeof response.data === 'string' ? JSON.parse(response.data) : response.data
+    // 新版优先安装 ZPX；回退 ZIP 仅用于服务端滚动升级和历史插件数据。
+    if (typeof data?.zpxDownloadUrl === 'string' && data.zpxDownloadUrl.trim()) {
+      return data.zpxDownloadUrl.trim()
+    }
+    if (typeof data?.downloadUrl === 'string' && data.downloadUrl.trim()) {
+      return data.downloadUrl.trim()
+    }
+
+    return ''
+  }
+
+  /**
    * 从 npm 安装插件
    * @param packageName npm 包名（支持作用域包，如 @ztools/example）
    * @param useChinaMirror 是否使用国内镜像（默认 false）
+   * @returns 安装结果；成功时包含新的插件记录
    */
   public async installPluginFromNpm(packageName: string, useChinaMirror = false): Promise<any> {
     try {
@@ -616,7 +622,11 @@ export class PluginInstallerAPI {
         const folderName: string = plugin.version ? `${baseName}-v${plugin.version}` : baseName
         const destPath = path.join(exportDir, folderName)
         try {
-          await fs.cp(pluginPath, destPath, { recursive: true })
+          if (resolvePluginStorageKind(plugin) === 'asar') {
+            await extractAsar(pluginPath, destPath)
+          } else {
+            await fs.cp(pluginPath, destPath, { recursive: true })
+          }
           successCount++
         } catch (err) {
           console.error(`[Plugins] 导出插件失败: ${folderName}`, err)
@@ -635,6 +645,11 @@ export class PluginInstallerAPI {
 
   // ━━━ Private ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+  /**
+   * 按插件名或任务 ID 查找市场下载任务。
+   * @param pluginNameOrTaskId 插件名或下载任务 ID
+   * @returns 匹配的下载任务；未找到时返回 undefined
+   */
   private findMarketDownloadTask(pluginNameOrTaskId: string): MarketDownloadTask | undefined {
     const directTask = this.marketDownloadTasks.get(pluginNameOrTaskId)
     if (directTask) return directTask
@@ -646,6 +661,12 @@ export class PluginInstallerAPI {
     return undefined
   }
 
+  /**
+   * 将市场下载进度发送给任务来源窗口或主窗口。
+   * @param task 市场下载任务
+   * @param payload 下载进度数据
+   * @returns 无返回值
+   */
   private emitMarketDownloadProgress(
     task: MarketDownloadTask,
     payload: MarketDownloadProgressPayload
@@ -659,6 +680,8 @@ export class PluginInstallerAPI {
 
   /**
    * 从插件包文件（ZPX 或 ZIP）中读取并解析 plugin.json，同时返回格式标识。
+   * @param filePath 插件包绝对路径
+   * @returns 插件配置和是否为 ZPX
    * @throws 若 plugin.json 缺失、解析失败或缺少 name 字段则抛出带描述的 Error
    */
   private async readPluginJson(filePath: string): Promise<{ config: any; isZpx: boolean }> {
@@ -686,21 +709,20 @@ export class PluginInstallerAPI {
   }
 
   /**
-   * 将插件包文件（ZPX 或 ZIP）解压到指定目录。
+   * 根据权威插件配置构建正式插件注册记录。
+   * @param config 从待发布实体中读取的 plugin.json
+   * @param pluginPath 正式插件实体路径
+   * @param storageKind 插件实体存储类型
+   * @param extra 安装来源等附加字段
+   * @returns 可写入插件注册表的记录
    */
-  private async extractToDir(filePath: string, isZpx: boolean, targetDir: string): Promise<void> {
-    if (isZpx) {
-      await extractZpx(filePath, targetDir)
-    } else {
-      new AdmZip(filePath).extractAllTo(targetDir, true)
-    }
-  }
-
-  /**
-   * 根据插件配置构建 pluginInfo 对象，写入数据库并返回该对象。
-   */
-  private persistPlugin(config: any, pluginPath: string, extra?: Record<string, any>): any {
-    const pluginInfo = {
+  private buildPluginInfo(
+    config: any,
+    pluginPath: string,
+    storageKind: PluginStorageKind,
+    extra?: Record<string, any>
+  ): any {
+    return {
       name: config.name,
       title: config.title,
       version: config.version,
@@ -712,10 +734,22 @@ export class PluginInstallerAPI {
       preload: config.preload,
       features: config.features,
       path: pluginPath,
+      storageKind,
       isDevelopment: false,
       installedAt: new Date().toISOString(),
       ...extra
     }
+  }
+
+  /**
+   * 保存 NPM 目录插件记录。
+   * @param config 插件配置
+   * @param pluginPath 插件目录路径
+   * @param extra 安装来源等附加字段
+   * @returns 已写入注册表的插件记录
+   */
+  private persistPlugin(config: any, pluginPath: string, extra?: Record<string, any>): any {
+    const pluginInfo = this.buildPluginInfo(config, pluginPath, 'directory', extra)
     let plugins: any = databaseAPI.dbGet('plugins')
     if (!plugins) plugins = []
     plugins.push(pluginInfo)
@@ -724,11 +758,12 @@ export class PluginInstallerAPI {
   }
 
   /**
-   * 将插件包安装到插件目录（核心安装逻辑，不做覆盖预处理）。
-   * @param filePath - 插件包路径（ZPX 或 ZIP）
-   * @param isZpx - 是否为 ZPX 格式（由 readPluginJson 返回）
-   * @param pluginConfig - 已解析的 plugin.json 配置
-   * @param extra - 写入数据库时附加的额外字段（如 installedFrom）
+   * 准备并发布 ZPX/ZIP 插件，然后把注册记录切换到新实体。
+   * @param filePath 插件包绝对路径
+   * @param isZpx 是否为 ZPX 格式
+   * @param pluginConfig 预览阶段读取的插件配置
+   * @param extra 安装来源等附加字段
+   * @returns 安装结果；成功后旧实体仅作为非关键清理处理
    */
   private async installFromPackageFile(
     filePath: string,
@@ -736,42 +771,243 @@ export class PluginInstallerAPI {
     pluginConfig: any,
     extra?: Record<string, any>
   ): Promise<any> {
-    await fs.mkdir(PLUGIN_DIR, { recursive: true })
+    const previewName = pluginConfig?.name
+    if (typeof previewName !== 'string' || !previewName) {
+      return { success: false, error: '无效的插件文件：缺少 name 字段' }
+    }
+    // 同名安装不排队，直接拒绝重复请求。
+    if (this.installingPluginNames.has(previewName)) {
+      return { success: false, error: '该插件正在安装中' }
+    }
+
+    this.installingPluginNames.add(previewName)
+    const operationId = randomUUID()
+    const workDir = path.join(PLUGIN_DIR, '.installing', operationId)
+    let publishedPath = ''
+    const publishedKind: PluginStorageKind = isZpx ? 'asar' : 'directory'
+    let directoryBackupPath = ''
+    let registryCommitted = false
 
     try {
-      const pluginPath = path.join(PLUGIN_DIR, pluginConfig.name)
+      // 所有新实体先在插件根目录内的临时目录完成准备。
+      await fs.mkdir(workDir, { recursive: true })
+      let authoritativeConfig = pluginConfig
+      let stagedAsarPath = ''
+      let stagedUnpackedPath: string | undefined
+      let stagedDirectoryPath = ''
 
-      // 检查目录是否已存在
-      try {
-        await fs.access(pluginPath)
-        return { success: false, error: '插件目录已存在' }
-      } catch {
-        // 不存在，继续
+      // ZPX 准备为 ASAR；ZIP 保持普通目录结构。
+      if (isZpx) {
+        const prepared = await prepareZpxAsar(filePath, workDir)
+        authoritativeConfig = prepared.pluginConfig
+        stagedAsarPath = prepared.asarPath
+        stagedUnpackedPath = prepared.unpackedPath
+      } else {
+        stagedDirectoryPath = path.join(workDir, 'plugin')
+        new AdmZip(filePath).extractAllTo(stagedDirectoryPath, true)
+        authoritativeConfig = JSON.parse(
+          await fs.readFile(path.join(stagedDirectoryPath, 'plugin.json'), 'utf-8')
+        )
       }
 
-      // 检查插件记录是否已存在
-      const existingPlugins = await this.deps.getPlugins()
-      if (existingPlugins.some((p: any) => p.name === pluginConfig.name)) {
-        return { success: false, error: '插件已存在' }
+      // 发布前重新读取包内配置，防止预览后源文件被替换。
+      if (authoritativeConfig.name !== previewName) {
+        throw new Error('插件包内容在预览与安装之间发生变化')
       }
+      assertSafePluginArtifactPart(authoritativeConfig.name, '插件名称')
+      assertSafePluginArtifactPart(authoritativeConfig.version, '插件版本')
 
-      // 验证插件配置
-      const validation = this.deps.validatePluginConfig(pluginConfig, existingPlugins)
+      // 升级校验排除当前同名旧版本，避免自身标题被判断为冲突。
+      const existingPlugins = this.deps.readInstalledPlugins()
+      const existingIndex = existingPlugins.findIndex((plugin: any) => plugin.name === previewName)
+      const previousPlugin = existingIndex >= 0 ? existingPlugins[existingIndex] : undefined
+      const validation = this.deps.validatePluginConfig(
+        authoritativeConfig,
+        existingPlugins.filter((plugin: any) => plugin.name !== previewName)
+      )
       if (!validation.valid) {
         return { success: false, error: validation.error }
       }
 
-      // 解压到目标目录
-      await this.extractToDir(filePath, isZpx, pluginPath)
+      const pluginPath = isZpx
+        ? createAsarArtifactPath(
+            PLUGIN_DIR,
+            authoritativeConfig.name as string,
+            authoritativeConfig.version as string,
+            operationId.slice(0, 8)
+          )
+        : path.join(PLUGIN_DIR, authoritativeConfig.name as string)
 
-      // 保存到数据库
-      const pluginInfo = this.persistPlugin(pluginConfig, pluginPath, extra)
-      this.logInstalledFeatures(pluginConfig)
-      this.deps.notifyPluginsChanged()
-      return { success: true, plugin: pluginInfo }
+      // 新实体已经完整准备后，才停止仍在运行的旧插件实例。
+      this.deps.pluginManager?.killPluginByName(previewName)
+
+      // 发布只移动本次准备结果，不重命名或覆盖版本化 ASAR。
+      if (isZpx) {
+        await this.publishAsar(stagedAsarPath, stagedUnpackedPath, pluginPath)
+      } else {
+        directoryBackupPath = await this.publishDirectory(stagedDirectoryPath, pluginPath, workDir)
+      }
+      publishedPath = pluginPath
+
+      // 用一次注册表写入替换同名插件记录，写入失败时旧记录保持有效。
+      const pluginInfo = this.buildPluginInfo(authoritativeConfig, pluginPath, publishedKind, extra)
+      const nextPlugins = [...existingPlugins]
+      if (existingIndex >= 0) nextPlugins[existingIndex] = pluginInfo
+      else nextPlugins.push(pluginInfo)
+
+      this.deps.writeInstalledPlugins(nextPlugins)
+      registryCommitted = true
+      const warnings: string[] = []
+      // 注册切换后刷新仍保存物理路径的兼容数据。
+      if (previousPlugin?.path && previousPlugin.path !== pluginPath) {
+        try {
+          this.deps.replacePluginPathReferences(previewName, previousPlugin.path, pluginPath)
+        } catch (error) {
+          console.error('[Plugins] 更新插件路径引用失败:', error)
+          warnings.push('部分历史记录仍引用旧插件路径')
+        }
+      }
+
+      // 旧实体和界面通知都属于提交后的非关键步骤，失败只返回警告。
+      const cleanupWarning = await this.cleanupPreviousPlugin(previousPlugin, pluginPath)
+      if (cleanupWarning) warnings.push(cleanupWarning)
+      try {
+        this.logInstalledFeatures(authoritativeConfig)
+        this.deps.notifyPluginsChanged()
+      } catch (error) {
+        console.error('[Plugins] 通知插件列表更新失败:', error)
+        warnings.push('插件已安装，但界面刷新失败')
+      }
+      return {
+        success: true,
+        plugin: pluginInfo,
+        ...(warnings.length > 0 ? { warning: warnings.join('；') } : {})
+      }
     } catch (error: unknown) {
+      if (!registryCommitted && publishedPath) {
+        // 注册表尚未切换时，删除新实体并恢复 ZIP 的旧目录。
+        try {
+          await this.rollbackPublishedPackage(publishedPath, publishedKind, directoryBackupPath)
+        } catch (rollbackError) {
+          console.error('[Plugins] 清理安装失败后的新实体失败:', rollbackError)
+        }
+      }
       console.error('[Plugins] 安装插件失败:', error)
       return { success: false, error: error instanceof Error ? error.message : '安装失败' }
+    } finally {
+      this.installingPluginNames.delete(previewName)
+      // 正常、失败和提前返回都只清理本次工作目录。
+      try {
+        await artifactFs.rm(workDir, { recursive: true, force: true })
+      } catch (error) {
+        console.error('[Plugins] 清理安装临时目录失败:', error)
+      }
+    }
+  }
+
+  /**
+   * 将准备完成的 ASAR 及其可选 sidecar 发布到正式路径。
+   * @param stagedAsarPath 临时 ASAR 实体路径
+   * @param stagedUnpackedPath 临时 unpack 目录路径
+   * @param destinationPath 正式版本化 ASAR 路径
+   * @returns 发布完成后结束的 Promise
+   */
+  private async publishAsar(
+    stagedAsarPath: string,
+    stagedUnpackedPath: string | undefined,
+    destinationPath: string
+  ): Promise<void> {
+    const destinationUnpackedPath = `${destinationPath}.unpacked`
+    // sidecar 先移动；ASAR 只有在配套内容就位后才对后续注册步骤可用。
+    if (stagedUnpackedPath) {
+      await artifactFs.rename(stagedUnpackedPath, destinationUnpackedPath)
+    }
+    try {
+      await artifactFs.rename(stagedAsarPath, destinationPath)
+    } catch (error) {
+      // ASAR 发布失败时删除已经移动的 sidecar，避免留下半个新实体。
+      await artifactFs.rm(destinationUnpackedPath, { recursive: true, force: true })
+      throw error
+    }
+  }
+
+  /**
+   * 将准备完成的 ZIP 目录发布到固定插件目录。
+   * @param stagedDirectoryPath 临时插件目录
+   * @param destinationPath 正式插件目录
+   * @param workDir 本次安装工作目录
+   * @returns 旧目录备份路径；没有旧目录时返回空字符串
+   */
+  private async publishDirectory(
+    stagedDirectoryPath: string,
+    destinationPath: string,
+    workDir: string
+  ): Promise<string> {
+    const backupPath = path.join(workDir, 'previous-directory')
+    let hasBackup = false
+    try {
+      // ZIP 使用固定目录名，发布前暂时保留同路径旧目录。
+      await artifactFs.access(destinationPath)
+      await artifactFs.rename(destinationPath, backupPath)
+      hasBackup = true
+    } catch (error: any) {
+      if (error?.code !== 'ENOENT') throw error
+    }
+
+    try {
+      await artifactFs.rename(stagedDirectoryPath, destinationPath)
+      return hasBackup ? backupPath : ''
+    } catch (error) {
+      // 新目录移动失败时立即恢复旧目录，不依赖后续启动恢复。
+      try {
+        await artifactFs.rename(backupPath, destinationPath)
+      } catch {
+        // backup 不存在时无需恢复
+      }
+      throw error
+    }
+  }
+
+  /**
+   * 回滚尚未写入插件注册表的新实体。
+   * @param pluginPath 已发布的新实体路径
+   * @param storageKind 新实体存储类型
+   * @param directoryBackupPath ZIP 发布时保留的旧目录路径
+   * @returns 回滚完成后结束的 Promise
+   */
+  private async rollbackPublishedPackage(
+    pluginPath: string,
+    storageKind: PluginStorageKind,
+    directoryBackupPath: string
+  ): Promise<void> {
+    // 先删除未注册的新实体，再按需恢复 ZIP 的固定目录。
+    await removePluginArtifact({ path: pluginPath, storageKind })
+    if (storageKind === 'directory' && directoryBackupPath) {
+      try {
+        await artifactFs.rename(directoryBackupPath, pluginPath)
+      } catch (error) {
+        console.error('[Plugins] 恢复旧插件目录失败:', error)
+      }
+    }
+  }
+
+  /**
+   * 在注册表切换成功后清理旧插件实体。
+   * @param previousPlugin 切换前的插件记录
+   * @param currentPath 当前插件实体路径
+   * @returns 清理成功时返回 undefined，失败时返回用户可见警告
+   */
+  private async cleanupPreviousPlugin(
+    previousPlugin: any,
+    currentPath: string
+  ): Promise<string | undefined> {
+    if (!previousPlugin?.path || previousPlugin.path === currentPath) return undefined
+    try {
+      await removePluginArtifact(previousPlugin)
+      return undefined
+    } catch (error) {
+      console.error('[Plugins] 清理旧插件实体失败:', error)
+      return '插件已安装，但旧版本文件清理失败'
     }
   }
 
@@ -779,6 +1015,7 @@ export class PluginInstallerAPI {
    * 输出新安装插件的功能指令列表到控制台。
    * @param pluginConfig - 插件配置对象（包含 name、version、features）
    * @param header - 可选的日志标题（默认“新增插件指令”）
+   * @returns 无返回值
    */
   private logInstalledFeatures(pluginConfig: any, header?: string): void {
     console.log(`[Plugins] \n=== ${header || '新增插件指令'} ===`)

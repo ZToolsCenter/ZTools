@@ -1,4 +1,9 @@
 import { describe, it, expect, vi } from 'vitest'
+
+vi.mock('../../src/main/core/native/index', () => ({
+  MuiResolver: { resolve: vi.fn(() => new Map()) }
+}))
+
 import {
   shouldSkipShortcut,
   getIconUrl,
@@ -93,6 +98,24 @@ describe('deduplicateCommands', () => {
     expect(result[0].name).toBe('App')
     // 保留第一个出现的 .lnk 路径
     expect(result[0].path).toBe('C:\\Users\\test\\Start Menu\\Programs\\App.lnk')
+  })
+
+  it('应合并 Start Menu 根级与 Programs 子树同名同目标的快捷方式', () => {
+    const apps = [
+      {
+        name: 'App',
+        path: 'C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\App.lnk',
+        _dedupeTarget: 'C:\\Program Files\\App\\app.exe'
+      },
+      {
+        name: 'App',
+        path: 'C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\\App.lnk',
+        _dedupeTarget: 'C:\\Program Files\\App\\app.exe'
+      }
+    ]
+    const result = deduplicateCommands(apps)
+    expect(result).toHaveLength(1)
+    expect(result[0].name).toBe('App')
   })
 
   it('应保留不同名但同目标的应用（核心特性）', () => {

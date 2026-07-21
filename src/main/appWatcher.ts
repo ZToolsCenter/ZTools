@@ -3,7 +3,11 @@ import { BrowserWindow } from 'electron'
 import fs from 'fs'
 import path from 'path'
 import appsAPI from './api/renderer/commands'
-import { getMacApplicationPaths, getWindowsScanPaths } from './utils/systemPaths'
+import {
+  getMacApplicationPaths,
+  getWindowsRootScanPaths,
+  getWindowsScanPaths
+} from './utils/systemPaths'
 
 // 要跳过的文件夹名称
 const SKIP_FOLDERS = [
@@ -20,25 +24,40 @@ const SKIP_FOLDERS = [
 ]
 
 class AppWatcher {
-  private watcher: FSWatcher | null = null
+  private recursiveWatcher: FSWatcher | null = null
+  private flatRootWatcher: FSWatcher | null = null
   private mainWindow: BrowserWindow | null = null
   private debounceTimer: NodeJS.Timeout | null = null
+  private started = false
   private readonly DEBOUNCE_DELAY = 1000 // 1秒防抖
 
   // 初始化监听器
   public init(mainWindow: BrowserWindow): void {
     this.mainWindow = mainWindow
+    if (this.started) {
+      return
+    }
+    this.started = true
     this.startWatching()
   }
 
-  // 获取监听路径
-  private getWatchPaths(): string[] {
+  // 获取递归监听路径
+  private getRecursiveWatchPaths(): string[] {
     if (process.platform === 'win32') {
       return getWindowsScanPaths()
     }
 
     if (process.platform === 'darwin') {
       return getMacApplicationPaths()
+    }
+
+    return []
+  }
+
+  // 获取扁平根监听路径
+  private getFlatRootWatchPaths(): string[] {
+    if (process.platform === 'win32') {
+      return getWindowsRootScanPaths()
     }
 
     return []
@@ -97,18 +116,32 @@ class AppWatcher {
 
   // 启动监听
   private startWatching(): void {
-    // 根据平台设置监听目录
-    const watchPaths = this.getWatchPaths()
-
-    console.log('[AppWatcher] 开始监听应用目录变化:', watchPaths)
-
+    const recursivePaths = this.getRecursiveWatchPaths()
+    const flatRootPaths = this.getFlatRootWatchPaths()
     const isWindows = process.platform === 'win32'
 
-    // 创建监听器
-    this.watcher = chokidar.watch(watchPaths, {
-      // Windows 需要递归监听子目录，macOS 只需要一级
-      depth: isWindows ? 5 : 1,
-      // 根据平台设置忽略规则
+    console.log('[AppWatcher] 开始监听应用目录变化(递归):', recursivePaths)
+    console.log('[AppWatcher] 开始监听应用目录变化(扁平根):', flatRootPaths)
+
+    // 递归 watcher
+    // Windows 需要递归监听子目录，macOS 只需要一级
+    this.recursiveWatcher = this.createWatcher(recursivePaths, isWindows ? 5 : 1, isWindows)
+
+    // 扁平根 watcher
+    if (flatRootPaths.length > 0) {
+      this.flatRootWatcher = this.createWatcher(flatRootPaths, 0, isWindows)
+    }
+
+    this.bindWatcherEvents(this.recursiveWatcher)
+    if (this.flatRootWatcher) {
+      this.bindWatcherEvents(this.flatRootWatcher)
+    }
+  }
+
+  private createWatcher(watchPaths: string[], depth: number, usePolling: boolean): FSWatcher {
+    return chokidar.watch(watchPaths, {
+      depth,
+      // 忽略规则
       ignored: (filePath: string) => {
         return this.shouldIgnore(filePath, watchPaths)
       },
@@ -117,9 +150,9 @@ class AppWatcher {
       // 忽略初始添加事件(避免启动时触发大量事件)
       ignoreInitial: true,
       // Windows 使用轮询避免 fs.watch 占用文件夹句柄导致无法重命名/删除
-      usePolling: isWindows,
-      interval: isWindows ? 5000 : undefined,
-      binaryInterval: isWindows ? 5000 : undefined,
+      usePolling,
+      interval: usePolling ? 5000 : undefined,
+      binaryInterval: usePolling ? 5000 : undefined,
       // 监听文件夹事件
       followSymlinks: false,
       // 避免在 macOS 上出现问题
@@ -128,11 +161,13 @@ class AppWatcher {
         pollInterval: 100
       }
     })
+  }
 
+  private bindWatcherEvents(watcher: FSWatcher): void {
     // 监听添加事件
     if (process.platform === 'win32') {
       // Windows: 监听 .lnk 文件
-      this.watcher.on('add', (filePath: string) => {
+      watcher.on('add', (filePath: string) => {
         if (filePath.endsWith('.lnk')) {
           console.log('[AppWatcher] 检测到新快捷方式:', filePath)
           this.notifyChange('add', filePath)
@@ -142,7 +177,7 @@ class AppWatcher {
 
     if (process.platform === 'darwin') {
       // macOS: 监听 .app 目录
-      this.watcher.on('addDir', (filePath: string) => {
+      watcher.on('addDir', (filePath: string) => {
         if (filePath.endsWith('.app')) {
           console.log('[AppWatcher] 检测到新应用:', filePath)
           this.notifyChange('add', filePath)
@@ -153,7 +188,7 @@ class AppWatcher {
     // 监听删除事件
     if (process.platform === 'win32') {
       // Windows: 监听 .lnk 文件删除
-      this.watcher.on('unlink', (filePath: string) => {
+      watcher.on('unlink', (filePath: string) => {
         if (filePath.endsWith('.lnk')) {
           console.log('[AppWatcher] 检测到快捷方式删除:', filePath)
           this.notifyChange('remove', filePath)
@@ -163,7 +198,7 @@ class AppWatcher {
 
     if (process.platform === 'darwin') {
       // macOS: 监听 .app 目录删除
-      this.watcher.on('unlinkDir', (filePath: string) => {
+      watcher.on('unlinkDir', (filePath: string) => {
         if (filePath.endsWith('.app')) {
           console.log('[AppWatcher] 检测到应用删除:', filePath)
           this.notifyChange('remove', filePath)
@@ -172,12 +207,12 @@ class AppWatcher {
     }
 
     // 监听错误
-    this.watcher.on('error', (error: unknown) => {
+    watcher.on('error', (error: unknown) => {
       console.error('[AppWatcher] 应用目录监听错误:', error)
     })
 
     // 监听准备完成
-    this.watcher.on('ready', () => {
+    watcher.on('ready', () => {
       console.log('[AppWatcher] 应用目录监听器已就绪')
     })
   }
@@ -202,11 +237,16 @@ class AppWatcher {
 
   // 停止监听
   public stop(): void {
-    if (this.watcher) {
-      console.log('[AppWatcher] 停止监听应用目录')
-      this.watcher.close()
-      this.watcher = null
+    const watchers = [this.recursiveWatcher, this.flatRootWatcher]
+    for (const watcher of watchers) {
+      if (watcher) {
+        console.log('[AppWatcher] 停止监听应用目录')
+        watcher.close()
+      }
     }
+    this.recursiveWatcher = null
+    this.flatRootWatcher = null
+    this.started = false
 
     if (this.debounceTimer) {
       clearTimeout(this.debounceTimer)

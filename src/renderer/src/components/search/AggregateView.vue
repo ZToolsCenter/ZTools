@@ -13,7 +13,7 @@
         :default-visible-rows="recentRows"
         :draggable="false"
         @select="$emit('select', $event)"
-        @contextmenu="(app) => $emit('contextmenu', app, false, false)"
+        @contextmenu="(app) => $emit('contextmenu', app, 'history')"
         @update:expanded="$emit('update:recent-expanded', $event)"
       />
 
@@ -26,7 +26,7 @@
         :default-visible-rows="pinnedRows"
         :draggable="true"
         @select="$emit('select', $event)"
-        @contextmenu="(app) => $emit('contextmenu', app, false, true)"
+        @contextmenu="(app) => $emit('contextmenu', app, 'pinned')"
         @update:apps="$emit('update:pinned-order', $event)"
         @update:expanded="$emit('update:pinned-expanded', $event)"
       />
@@ -45,7 +45,7 @@
         :draggable="false"
         :search-query="searchQuery"
         @select="$emit('select', $event)"
-        @contextmenu="(app) => $emit('contextmenu', app, true, false)"
+        @contextmenu="(app) => $emit('contextmenu', app, 'search')"
         @update:expanded="$emit('update:search-results-expanded', $event)"
       />
 
@@ -61,7 +61,7 @@
         :draggable="false"
         :search-query="searchQuery"
         @select="$emit('select', $event)"
-        @contextmenu="(app) => $emit('contextmenu', app, true, false)"
+        @contextmenu="(app) => $emit('contextmenu', app, 'search')"
         @update:expanded="$emit('update:best-matches-expanded', $event)"
       />
 
@@ -75,7 +75,9 @@
         :default-visible-rows="2"
         :draggable="false"
         :search-query="searchQuery"
+        :show-pinned-indicator="true"
         @select="$emit('select-recommendation', $event)"
+        @contextmenu="(app) => $emit('contextmenu', app, 'recommendation')"
         @update:expanded="$emit('update:recommendations-expanded', $event)"
       />
 
@@ -141,6 +143,8 @@ interface Props {
   recommendationsExpanded?: boolean
 }
 
+type ContextMenuSource = 'history' | 'pinned' | 'search' | 'recommendation'
+
 const props = withDefaults(defineProps<Props>(), {
   recentExpanded: false,
   pinnedExpanded: false,
@@ -155,7 +159,7 @@ defineEmits<{
   'select-recommendation': [item: any]
   'select-main-push': [group: MainPushGroup, item: MainPushItem]
   'enter-main-push-app': [group: MainPushGroup]
-  contextmenu: [app: any, fromSearch: boolean, fromPinned: boolean]
+  contextmenu: [app: any, source: ContextMenuSource]
   'update:pinned-order': [apps: any[]]
   'height-changed': []
   'update:recent-expanded': [value: boolean]

@@ -1,15 +1,24 @@
-appId: link.eiot.ztools
+appId: top.z-tools
 productName: ZTools
-publish: null
+publish:
+  provider: github
+  owner: ZToolsCenter
+  repo: ZTools
+electronUpdaterCompatibility: '>=2.16'
 directories:
   buildResources: build
 files:
   - '!**/.vscode/*'
+  - '!**/.DS_Store'
   - '!src/*'
   - '!electron.vite.config.{js,ts,mjs,cjs}'
-  - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
-  - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
-  - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
+  - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml}'
+  - '!{CHANGELOG.md,changelog.md,README.md,README_EN.md,CONTRIBUTING.md,CLAUDE.md}'
+  - '!{.env,.env.*,.npmrc,.gitmodules,pnpm-lock.yaml}'
+  - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json,tsconfig.*.tsbuildinfo,vitest.config.*}'
+  - '!{.claude/**,.githooks/**,.github/**}'
+  - '!docs/**'
+  - '!tests/**'
   - '!updater/**'
   - '!ztools-api-types/**'
   - '!ztools-plugin-cli/**'
@@ -36,21 +45,25 @@ win:
         - x64
 nsis:
   artifactName: ${name}-${version}-${os}-${arch}-setup.${ext}
+  include: build/installer.nsh
   shortcutName: ${productName}
   uninstallDisplayName: ${productName}
   createDesktopShortcut: always
   oneClick: false
   allowToChangeInstallationDirectory: true
   perMachine: false
+  deleteAppDataOnUninstall: false
 mac:
+  # The Developer ID identity is selected by CSC_NAME in CI. Leaving this
+  # unset keeps local builds compatible with machines that have no certificate.
+  entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
     - NSCameraUsageDescription: Application requests access to the device's camera.
     - NSMicrophoneUsageDescription: Application requests access to the device's microphone.
     - NSDocumentsFolderUsageDescription: Application requests access to the user's Documents folder.
     - NSDownloadsFolderUsageDescription: Application requests access to the user's Downloads folder.
-  notarize: false
-  identity: null # 不签名
+  notarize: true
   target:
     - dmg
     - zip

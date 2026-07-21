@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import {
   DEFAULT_AVATAR,
   DEFAULT_PLACEHOLDER,
@@ -8,7 +9,9 @@ import {
   type AutoPasteOption,
   type MouseButtonType,
   type PrimaryColor,
-  type ThemeType
+  type TerminalType,
+  type ThemeType,
+  type WindowPositionStrategy
 } from '@/constants'
 import { Dropdown, HotkeyInput, Slider, useToast } from '@/components'
 import { applyCustomColor, applyPrimaryColor } from '@/utils'
@@ -56,6 +59,13 @@ const autoBackToSearchOptions = [
   { label: '从不', value: 'never' }
 ]
 
+const windowPositionStrategyOptions = [
+  { label: '记住上次位置', value: 'remember' },
+  { label: '鼠标屏居中', value: 'cursor' },
+  { label: '主屏居中', value: 'primary' },
+  { label: '上次活动屏居中', value: 'lastActive' }
+]
+
 const recentRowsOptions = [
   { label: '1行', value: 1 },
   { label: '2行', value: 2 },
@@ -100,6 +110,38 @@ const superPanelMouseButtonOptions = [
 // 当前平台（与 window.ztools.getPlatform 返回类型保持一致）
 const platform = ref<'darwin' | 'win32' | 'linux'>('darwin')
 
+// 终端打开设置
+const terminal = ref<TerminalType>('default')
+const terminalCustomCommand = ref('')
+
+// 终端预设选项（按平台；仅 UI 标签，启动逻辑在主进程 terminalLauncher）
+const terminalOptions = computed(() => {
+  if (platform.value === 'win32') {
+    return [
+      { label: '系统默认', value: 'default' },
+      { label: 'Windows Terminal', value: 'wt' },
+      { label: 'PowerShell', value: 'powershell' },
+      { label: 'CMD', value: 'cmd' },
+      { label: '自定义', value: 'custom' }
+    ]
+  }
+  if (platform.value === 'linux') {
+    return [
+      { label: '系统默认', value: 'default' },
+      { label: 'GNOME Terminal', value: 'gnome-terminal' },
+      { label: 'Konsole', value: 'konsole' },
+      { label: 'XTerm', value: 'xterm' },
+      { label: '自定义', value: 'custom' }
+    ]
+  }
+  return [
+    { label: '系统默认 (Terminal)', value: 'default' },
+    { label: 'Ghostty', value: 'ghostty' },
+    { label: 'iTerm2', value: 'iterm2' },
+    { label: '自定义', value: 'custom' }
+  ]
+})
+
 // 默认快捷键（根据平台区分文案）
 const defaultHotkey = computed(() => {
   return platform.value === 'win32' ? 'Alt+Z' : 'Option+Z'
@@ -120,15 +162,17 @@ const hotkeyPresets = computed(() => {
 })
 
 const showHotkeyQuickActions = ref(false)
+const settingsLoaded = ref(false)
 
 // 本地状态（替代 windowStore）
 const theme = ref<ThemeType>('system')
-const primaryColor = ref<PrimaryColor>('blue')
+const primaryColor = ref<PrimaryColor>('green')
 const placeholder = ref(DEFAULT_PLACEHOLDER)
 const avatar = ref(DEFAULT_AVATAR)
 const autoPaste = ref<AutoPasteOption>('3s')
 const autoClear = ref<AutoClearOption>('immediately')
 const autoBackToSearch = ref<AutoBackToSearchOption>('never')
+const windowPositionStrategy = ref<WindowPositionStrategy>('remember')
 const showRecentInSearch = ref(true)
 const showMatchRecommendation = ref(true)
 const localAppSearch = ref(true)
@@ -153,13 +197,18 @@ const superPanelMouseButton = ref<MouseButtonType>('middle')
 const superPanelLongPressMs = ref(500)
 const superPanelBlockedApps = ref<Array<{ app: string; bundleId?: string; label?: string }>>([])
 
+const router = useRouter()
+
+// 跳转到提供商页面的翻译 tab（翻译能力已迁移）
+function goToTranslationProviders(): void {
+  router.push({ name: 'Providers', query: { tab: 'translation' } })
+}
+
 // 唤醒黑名单
 const wakeupBlacklist = ref<Array<{ app: string; bundleId?: string; label?: string }>>([])
 
-// 超级面板翻译设置
+// 超级面板翻译设置（开关已迁移到「提供商 → 翻译」，这里仅保留字段以兼容历史持久化数据）
 const superPanelTranslateEnabled = ref(false)
-const translationStatus = ref<'idle' | 'downloading' | 'initializing' | 'ready' | 'error'>('idle')
-
 // 超级面板触发模式（计算属性）
 const superPanelTriggerMode = computed({
   get: () => {
@@ -228,10 +277,6 @@ const customInternalApiPluginNames = ref<string[]>([])
 const proxyEnabled = ref(false)
 const proxyUrl = ref('')
 
-// 插件市场配置
-const pluginMarketCustom = ref(false)
-const pluginMarketUrl = ref('')
-
 // 窗口材质设置
 const windowMaterial = ref<'mica' | 'acrylic' | 'none'>('none')
 
@@ -247,9 +292,9 @@ const autoCheckUpdate = ref(true)
 
 // 主题色选项
 const themeColors = [
+  { label: '翡翠绿', value: 'green', hex: '#059669' },
   { label: '天空蓝', value: 'blue', hex: '#0284c7' },
   { label: '罗兰紫', value: 'purple', hex: '#7c3aed' },
-  { label: '翡翠绿', value: 'green', hex: '#059669' },
   { label: '活力橙', value: 'orange', hex: '#ea580c' },
   { label: '宝石红', value: 'red', hex: '#dc2626' }
 ]
@@ -503,6 +548,17 @@ async function handleAutoBackToSearchChange(): Promise<void> {
   }
 }
 
+// 处理窗口呼出位置策略变化
+async function handleWindowPositionStrategyChange(): Promise<void> {
+  try {
+    await saveSettings()
+    await window.ztools.internal.updateWindowPositionStrategy(windowPositionStrategy.value)
+    console.log('窗口呼出位置策略已更新:', windowPositionStrategy.value)
+  } catch (error) {
+    console.error('保存窗口呼出位置策略失败:', error)
+  }
+}
+
 // 处理主题变化
 async function handleThemeChange(): Promise<void> {
   try {
@@ -684,40 +740,6 @@ async function handleSuperPanelEnabledChange(): Promise<void> {
   } catch (err) {
     console.error('更新超级面板开关失败:', err)
   }
-}
-
-// 处理超级面板翻译开关变化
-async function handleSuperPanelTranslateChange(): Promise<void> {
-  try {
-    await saveSettings()
-    await window.ztools.internal.updateSuperPanelTranslate(superPanelTranslateEnabled.value)
-    if (superPanelTranslateEnabled.value) {
-      translationStatus.value = 'downloading'
-      // 轮询翻译状态
-      pollTranslationStatus()
-    } else {
-      translationStatus.value = 'idle'
-    }
-    console.log('超级面板翻译开关已更新:', superPanelTranslateEnabled.value)
-  } catch (err) {
-    console.error('更新超级面板翻译开关失败:', err)
-  }
-}
-
-// 轮询翻译引擎状态
-function pollTranslationStatus(): void {
-  const poll = async (): Promise<void> => {
-    try {
-      const result = await window.ztools.internal.getTranslationStatus()
-      translationStatus.value = result.status
-      if (result.status === 'downloading' || result.status === 'initializing') {
-        setTimeout(poll, 1000)
-      }
-    } catch {
-      // ignore
-    }
-  }
-  poll()
 }
 
 // 处理超级面板触发模式变化
@@ -1104,34 +1126,6 @@ async function handleProxyUrlChange(): Promise<void> {
   }
 }
 
-// 处理插件市场开关变化
-async function handlePluginMarketCustomChange(): Promise<void> {
-  try {
-    await saveSettings()
-    console.log('插件市场自定义开关已更新:', pluginMarketCustom.value)
-    info(pluginMarketCustom.value ? '自定义插件市场已启用' : '已恢复默认插件市场')
-  } catch (err) {
-    console.error('更新插件市场配置失败:', err)
-    pluginMarketCustom.value = !pluginMarketCustom.value
-  }
-}
-
-// 处理插件市场地址变化
-async function handlePluginMarketUrlChange(): Promise<void> {
-  try {
-    if (pluginMarketUrl.value && !pluginMarketUrl.value.startsWith('http')) {
-      error('市场地址必须以 http:// 或 https:// 开头')
-      return
-    }
-    await saveSettings()
-    console.log('插件市场地址已更新:', pluginMarketUrl.value)
-    info('插件市场地址已更新')
-  } catch (err: any) {
-    console.error('更新插件市场地址失败:', err)
-    error(`更新插件市场地址失败: ${err.message || '未知错误'}`)
-  }
-}
-
 async function handleAddCustomInternalApiPluginName(): Promise<void> {
   const pluginName = customInternalApiPluginNameInput.value.trim()
   if (!pluginName) {
@@ -1216,13 +1210,14 @@ async function loadSettings(): Promise<void> {
       autoPaste.value = data.autoPaste ?? '3s'
       autoClear.value = data.autoClear ?? 'immediately'
       autoBackToSearch.value = data.autoBackToSearch ?? 'never'
+      windowPositionStrategy.value = data.windowPositionStrategy ?? 'remember'
       showRecentInSearch.value = data.showRecentInSearch ?? true
       showMatchRecommendation.value = data.showMatchRecommendation ?? true
       localAppSearch.value = data.localAppSearch ?? true
       recentRows.value = data.recentRows ?? 2
       pinnedRows.value = data.pinnedRows ?? 2
       theme.value = data.theme ?? 'system'
-      primaryColor.value = data.primaryColor ?? 'blue'
+      primaryColor.value = data.primaryColor ?? 'green'
       searchMode.value = data.searchMode ?? 'aggregate'
       autoCheckUpdate.value = data.autoCheckUpdate ?? true
       tabKeyFunction.value =
@@ -1241,9 +1236,6 @@ async function loadSettings(): Promise<void> {
       superPanelBlockedApps.value = data.superPanelBlockedApps ?? []
       wakeupBlacklist.value = data.wakeupBlacklist ?? []
       superPanelTranslateEnabled.value = data.superPanelTranslateEnabled ?? false
-      if (superPanelTranslateEnabled.value) {
-        pollTranslationStatus()
-      }
       // 窗口材质由主进程启动时保证一定有值，无需兜底
       windowMaterial.value = data.windowMaterial
       acrylicLightOpacity.value = data.acrylicLightOpacity ?? 78
@@ -1260,13 +1252,13 @@ async function loadSettings(): Promise<void> {
       proxyEnabled.value = data.proxyEnabled ?? false
       proxyUrl.value = data.proxyUrl ?? ''
 
-      // 插件市场配置
-      pluginMarketCustom.value = data.pluginMarketCustom ?? false
-      pluginMarketUrl.value = data.pluginMarketUrl ?? ''
-
       // 悬浮球配置
       floatingBallEnabled.value = data.floatingBallEnabled ?? false
       floatingBallLetter.value = data.floatingBallLetter || 'Z'
+
+      // 终端打开配置
+      terminal.value = data.terminal ?? 'default'
+      terminalCustomCommand.value = data.terminalCustomCommand ?? ''
 
       // 加载自定义颜色
       if (data.customColor) {
@@ -1309,6 +1301,7 @@ async function saveSettings(): Promise<void> {
       autoPaste: autoPaste.value,
       autoClear: autoClear.value,
       autoBackToSearch: autoBackToSearch.value,
+      windowPositionStrategy: windowPositionStrategy.value,
       showRecentInSearch: showRecentInSearch.value,
       showMatchRecommendation: showMatchRecommendation.value,
       localAppSearch: localAppSearch.value,
@@ -1340,21 +1333,30 @@ async function saveSettings(): Promise<void> {
       customInternalApiPluginNames: [...customInternalApiPluginNames.value],
       proxyEnabled: proxyEnabled.value,
       proxyUrl: proxyUrl.value,
-      pluginMarketCustom: pluginMarketCustom.value,
-      pluginMarketUrl: pluginMarketUrl.value,
       autoCheckUpdate: autoCheckUpdate.value,
-      clipboardRetentionDays: clipboardRetentionDays.value
+      clipboardRetentionDays: clipboardRetentionDays.value,
+      terminal: terminal.value,
+      terminalCustomCommand: terminalCustomCommand.value
     })
   } catch (error) {
     console.error('保存设置失败:', error)
   }
 }
 
+async function initializeSettings(): Promise<void> {
+  try {
+    // 平台会影响快捷键默认值和平台专属选项，需在设置表单展示前确定。
+    await getPlatformInfo()
+    await loadSettings()
+  } finally {
+    settingsLoaded.value = true
+  }
+}
+
 // 初始化时加载设置
 onMounted(() => {
-  loadSettings()
-  getPlatformInfo()
   document.addEventListener('click', handleQuickActionsClickOutside)
+  void initializeSettings()
 })
 
 onUnmounted(() => {
@@ -1363,7 +1365,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="content-panel">
+  <div v-if="settingsLoaded" class="content-panel">
     <!-- ==================== 基础 ==================== -->
     <div class="setting-group">
       <h3 class="setting-group-title">基础</h3>
@@ -1590,6 +1592,40 @@ onUnmounted(() => {
             :step="1"
             :formatter="(value) => `${value}%`"
             @change="handleAcrylicDarkOpacityChange"
+          />
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== 终端打开 ==================== -->
+    <div class="setting-group">
+      <h3 class="setting-group-title">终端打开</h3>
+
+      <div class="setting-item">
+        <div class="setting-label">
+          <span>打开终端应用</span>
+          <span class="setting-desc">从 Finder 唤出「在终端打开」时使用的终端</span>
+        </div>
+        <div class="setting-control">
+          <Dropdown v-model="terminal" :options="terminalOptions" @change="saveSettings" />
+        </div>
+      </div>
+
+      <div v-if="terminal === 'custom'" class="setting-item">
+        <div class="setting-label">
+          <span>自定义命令</span>
+          <span class="setting-desc"
+            >用 {path} 代表目标目录，如 ghostty --working-directory={path}</span
+          >
+        </div>
+        <div class="setting-control">
+          <input
+            v-model="terminalCustomCommand"
+            type="text"
+            class="input"
+            placeholder="alacritty --working-directory={path}"
+            @blur="saveSettings"
+            @keyup.enter="saveSettings"
           />
         </div>
       </div>
@@ -1901,6 +1937,20 @@ onUnmounted(() => {
 
       <div class="setting-item">
         <div class="setting-label">
+          <span>窗口呼出位置</span>
+          <span class="setting-desc">每次呼出主窗口时的定位策略</span>
+        </div>
+        <div class="setting-control">
+          <Dropdown
+            v-model="windowPositionStrategy"
+            :options="windowPositionStrategyOptions"
+            @change="handleWindowPositionStrategyChange"
+          />
+        </div>
+      </div>
+
+      <div class="setting-item">
+        <div class="setting-label">
           <span>插件默认高度</span>
           <span class="setting-desc">设置进入插件时的默认高度（像素）</span>
         </div>
@@ -2037,49 +2087,13 @@ onUnmounted(() => {
 
       <div v-if="superPanelEnabled" class="setting-item">
         <div class="setting-label">
-          <span>选中翻译</span>
-          <span class="setting-desc">
-            选中文字触发超级面板时，自动翻译为中文显示（使用 Bergamot 离线翻译引擎，首次启用需下载约
-            55MB 模型）
-          </span>
-          <span
-            v-if="superPanelTranslateEnabled && translationStatus === 'downloading'"
-            class="setting-desc"
-            style="color: var(--primary-color)"
+          <span>翻译</span>
+          <span class="setting-desc"
+            >翻译能力已迁移至「提供商 → 翻译」，点击前往管理翻译引擎与提供商</span
           >
-            正在下载翻译模型...
-          </span>
-          <span
-            v-else-if="superPanelTranslateEnabled && translationStatus === 'initializing'"
-            class="setting-desc"
-            style="color: var(--primary-color)"
-          >
-            正在初始化翻译引擎...
-          </span>
-          <span
-            v-else-if="superPanelTranslateEnabled && translationStatus === 'ready'"
-            class="setting-desc"
-            style="color: var(--success-color)"
-          >
-            翻译引擎就绪
-          </span>
-          <span
-            v-else-if="superPanelTranslateEnabled && translationStatus === 'error'"
-            class="setting-desc"
-            style="color: var(--danger-color)"
-          >
-            翻译引擎初始化失败
-          </span>
         </div>
         <div class="setting-control">
-          <label class="toggle">
-            <input
-              v-model="superPanelTranslateEnabled"
-              type="checkbox"
-              @change="handleSuperPanelTranslateChange"
-            />
-            <span class="toggle-slider"></span>
-          </label>
+          <button class="btn" @click="goToTranslationProviders">前往翻译</button>
         </div>
       </div>
 
@@ -2229,40 +2243,6 @@ onUnmounted(() => {
           />
         </div>
       </div>
-
-      <div class="setting-item">
-        <div class="setting-label">
-          <span>自定义插件市场</span>
-          <span class="setting-desc">配置自定义插件市场地址</span>
-        </div>
-        <div class="setting-control">
-          <label class="toggle">
-            <input
-              v-model="pluginMarketCustom"
-              type="checkbox"
-              @change="handlePluginMarketCustomChange"
-            />
-            <span class="toggle-slider"></span>
-          </label>
-        </div>
-      </div>
-
-      <div v-if="pluginMarketCustom" class="setting-item">
-        <div class="setting-label">
-          <span>市场地址</span>
-          <span class="setting-desc">自定义插件市场的基础 URL</span>
-        </div>
-        <div class="setting-control">
-          <input
-            v-model="pluginMarketUrl"
-            type="text"
-            class="input"
-            placeholder="例如: https://market.example.com"
-            @blur="handlePluginMarketUrlChange"
-            @keyup.enter="handlePluginMarketUrlChange"
-          />
-        </div>
-      </div>
     </div>
 
     <!-- ==================== 开发者 ==================== -->
@@ -2346,6 +2326,7 @@ onUnmounted(() => {
       </div>
     </div>
   </div>
+  <div v-else class="content-panel" aria-busy="true"></div>
 </template>
 
 <style scoped>

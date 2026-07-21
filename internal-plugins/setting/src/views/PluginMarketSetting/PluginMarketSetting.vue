@@ -2,17 +2,12 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useToast } from '@/components'
 import type { PluginUninstallOptions } from '@/components'
-import {
-  compareVersions,
-  shuffleArray,
-  upgradeInstalledPluginFromMarket,
-  weightedSearch
-} from '@/utils'
+import { compareVersions, upgradeInstalledPluginFromMarket, weightedSearch } from '@/utils'
 import { PluginDetail, PluginCard, CategoryCard, CategoryDetail, RefreshButton } from './components'
 import type { Plugin, CategoryInfo, CategoryLayoutSection, PluginDownloadState } from './components'
 import { useJumpFunction, useZtoolsSubInput } from '@/composables'
 import { PluginMarketSettingJumpFunction } from '@/views/PluginMarketSetting/PluginMarketSetting'
-import { getMarketCategoryIcon, marketBannerImage } from './marketAssets'
+import { getMarketCategoryIcon } from './marketAssets'
 
 const { success, error, confirm } = useToast()
 
@@ -55,9 +50,7 @@ interface StorefrontPayload {
   categoryLayouts?: Record<string, CategoryLayoutSection[]>
 }
 
-interface MarketPlugin extends Omit<Plugin, 'installed'> {
-  platform?: string[]
-}
+interface MarketPlugin extends Omit<Plugin, 'installed'> {}
 
 interface InstalledPlugin {
   name: string
@@ -80,7 +73,9 @@ const categoryLayouts = ref<Record<string, CategoryLayoutSection[]>>({})
 const isLoading = ref(false)
 const installingPlugin = ref<string | null>(null)
 const downloadStates = ref<Record<string, PluginDownloadState | undefined>>({})
+const bannerActiveIndexes = ref<Record<string, number>>({})
 let stopDownloadProgressListener: (() => void) | undefined
+let bannerTimer: ReturnType<typeof window.setInterval> | undefined
 
 const { value: searchQuery, setSubInput } = useZtoolsSubInput('', '搜索插件市场...')
 
@@ -100,6 +95,7 @@ const hasStorefront = computed(() => storefrontSections.value.length > 0)
 // 插件详情面板状态
 const isDetailVisible = ref(false)
 const selectedPlugin = ref<Plugin | null>(null)
+const pendingDetailPluginName = ref<string | null>(null)
 
 // 分类详情面板状态
 const isCategoryDetailVisible = ref(false)
@@ -110,32 +106,36 @@ const showScrollableContent = computed(
   () => !isDetailVisible.value && !isCategoryDetailVisible.value
 )
 
+function openPendingPluginDetail(): void {
+  const pluginName = pendingDetailPluginName.value
+  if (!pluginName) return
+
+  const plugin = pluginMap.value.get(pluginName)
+  if (!plugin) return
+
+  pendingDetailPluginName.value = null
+  openPluginDetail(plugin)
+}
+
 // 将市场插件数据标记已安装状态
 function enrichPlugins(
   marketPlugins: MarketPlugin[],
-  installedPlugins: InstalledPlugin[],
-  currentPlatform: string
+  installedPlugins: InstalledPlugin[]
 ): Plugin[] {
-  return marketPlugins
-    .filter((plugin) => {
-      if (!plugin.platform || !Array.isArray(plugin.platform)) return true
-      return plugin.platform.includes(currentPlatform)
-    })
-    .map((plugin) => {
-      const installedPlugin = installedPlugins.find((item) => item.name === plugin.name)
-      return {
-        ...plugin,
-        installed: !!installedPlugin,
-        path: installedPlugin?.path,
-        localVersion: installedPlugin?.version
-      }
-    })
+  return marketPlugins.map((plugin) => {
+    const installedPlugin = installedPlugins.find((item) => item.name === plugin.name)
+    return {
+      ...plugin,
+      installed: !!installedPlugin,
+      path: installedPlugin?.path,
+      localVersion: installedPlugin?.version
+    }
+  })
 }
 
 async function fetchPlugins(): Promise<void> {
   isLoading.value = true
   try {
-    const currentPlatform = window.ztools.internal.getPlatform()
     const [marketResult, installedPlugins] = await Promise.all([
       window.ztools.internal.fetchPluginMarket(),
       window.ztools.internal.getPlugins()
@@ -148,7 +148,7 @@ async function fetchPlugins(): Promise<void> {
       const marketPlugins = typedMarketResult.data
 
       // 构建带安装状态的插件扁平列表（用于搜索）
-      plugins.value = enrichPlugins(marketPlugins, typedInstalledPlugins, currentPlatform)
+      plugins.value = enrichPlugins(marketPlugins, typedInstalledPlugins)
 
       // 构建 pluginMap
       const pMap = new Map<string, Plugin>()
@@ -173,7 +173,7 @@ async function fetchPlugins(): Promise<void> {
               key: cat.key,
               title: cat.title,
               description: cat.description,
-              icon: getMarketCategoryIcon(cat.key),
+              icon: cat.icon || getMarketCategoryIcon(cat.key),
               plugins: categoryPlugins
             }
           }
@@ -189,13 +189,7 @@ async function fetchPlugins(): Promise<void> {
         storefrontSections.value = typedMarketResult.storefront.sections
           .map((section) => {
             if (section.type === 'banner') {
-              return {
-                ...section,
-                items: section.items?.map((item) => ({
-                  ...item,
-                  image: marketBannerImage
-                }))
-              }
+              return section
             }
 
             if (section.type === 'navigation' && Array.isArray(section.categories)) {
@@ -203,7 +197,7 @@ async function fetchPlugins(): Promise<void> {
                 ...section,
                 categories: section.categories.map((cat) => ({
                   ...cat,
-                  icon: getMarketCategoryIcon(cat.key)
+                  icon: cat.icon || getMarketCategoryIcon(cat.key)
                 }))
               }
             }
@@ -228,12 +222,15 @@ async function fetchPlugins(): Promise<void> {
                 ? (section.categories?.length ?? 0) > 0
                 : (section.plugins?.length ?? 0) > 0
           )
+        resetBannerActiveIndexes()
       } else {
         storefrontSections.value = []
+        bannerActiveIndexes.value = {}
       }
     } else {
       console.error('获取插件市场列表失败:', typedMarketResult.error)
     }
+    openPendingPluginDetail()
   } catch (error) {
     console.error('获取插件列表出错:', error)
   } finally {
@@ -283,6 +280,27 @@ async function handleOpenPlugin(plugin: Plugin): Promise<void> {
   } catch (err: unknown) {
     console.error('打开插件失败:', err)
     error(`打开插件失败: ${err instanceof Error ? err.message : '未知错误'}`)
+  }
+}
+
+/**
+ * 在系统文件管理器中显示已安装插件的位置。
+ * @param plugin 要显示目录的插件信息
+ * @returns 完成文件管理器调用后结束的 Promise
+ */
+async function handleOpenFolder(plugin: Plugin): Promise<void> {
+  // 市场详情也可能展示尚未安装的插件，先阻止无效路径调用。
+  if (!plugin.path) {
+    error('无法打开插件目录: 路径未知')
+    return
+  }
+
+  try {
+    // 交由主进程按当前平台打开并选中插件文件。
+    await window.ztools.internal.revealInFinder(plugin.path)
+  } catch (err: unknown) {
+    console.error('打开插件目录失败:', err)
+    error(`打开插件目录失败: ${err instanceof Error ? err.message : '未知错误'}`)
   }
 }
 
@@ -445,28 +463,65 @@ async function handleUninstallPlugin(
 }
 
 function handleBannerClick(item: BannerItem): void {
-  if (item.url) {
-    window.ztools.shellOpenExternal(item.url)
+  if (!item.url) return
+  void window.ztools.hideMainWindow(false)
+  window.ztools.shellOpenExternal(item.url)
+}
+
+function getBannerActiveIndex(section: StorefrontSection): number {
+  return bannerActiveIndexes.value[section.key] || 0
+}
+
+function setBannerActiveIndex(section: StorefrontSection, index: number): void {
+  const count = section.items?.length || 0
+  if (count <= 0) return
+  bannerActiveIndexes.value = {
+    ...bannerActiveIndexes.value,
+    [section.key]: ((index % count) + count) % count
   }
 }
 
-function shuffleRandomSection(section: StorefrontSection): void {
-  if (section.type !== 'random' || !section.plugins) return
-  const allPlugins = plugins.value
-  const usedNames = new Set<string>()
-
-  // 收集其他区块已使用的插件名
-  for (const s of storefrontSections.value) {
-    if (s === section || s.type === 'banner' || s.type === 'navigation') continue
-    for (const p of s.plugins || []) {
-      usedNames.add(p.name)
+function resetBannerActiveIndexes(): void {
+  const nextIndexes: Record<string, number> = {}
+  for (const section of storefrontSections.value) {
+    if (section.type === 'banner' && (section.items?.length || 0) > 0) {
+      const current = bannerActiveIndexes.value[section.key] || 0
+      nextIndexes[section.key] = Math.min(current, (section.items?.length || 1) - 1)
     }
   }
+  bannerActiveIndexes.value = nextIndexes
+}
 
-  // 首页各区块互斥，从未被其他区块使用的插件中随机选取，避免重复展示
-  const available = allPlugins.filter((p) => !usedNames.has(p.name))
-  const count = section.plugins.length
-  section.plugins = shuffleArray(available).slice(0, count)
+function rotateBanners(): void {
+  for (const section of storefrontSections.value) {
+    if (section.type !== 'banner' || (section.items?.length || 0) <= 1) continue
+    setBannerActiveIndex(section, getBannerActiveIndex(section) + 1)
+  }
+}
+
+async function shuffleRandomSection(section: StorefrontSection): Promise<void> {
+  if (section.type !== 'random' || !section.plugins) return
+  try {
+    const [recommendations, installedPlugins] = await Promise.all([
+      window.ztools.internal.fetchPluginMarketRecommendations(section.plugins.length || 12),
+      window.ztools.internal.getPlugins()
+    ])
+    const enriched = enrichPlugins(
+      recommendations as MarketPlugin[],
+      installedPlugins as InstalledPlugin[]
+    )
+    if (enriched.length > 0) {
+      section.plugins = enriched
+      for (const plugin of enriched) {
+        if (plugin.name) {
+          pluginMap.value.set(plugin.name, plugin)
+        }
+      }
+    }
+  } catch (err) {
+    console.error('获取推荐插件失败:', err)
+    error(`获取推荐插件失败: ${err instanceof Error ? err.message : '未知错误'}`)
+  }
 }
 
 // 处理 ESC 按键 - 逐级返回
@@ -490,17 +545,24 @@ function getCategoryLayout(categoryKey: string): CategoryLayoutSection[] {
 useJumpFunction<PluginMarketSettingJumpFunction>((state) => {
   if (state.payload && state.type === 'over') {
     setSubInput(state.payload)
+  } else if (state.payload && state.type === 'detail') {
+    pendingDetailPluginName.value = state.payload
+    openPendingPluginDetail()
   }
 })
 
 onMounted(() => {
   fetchPlugins()
+  bannerTimer = window.setInterval(rotateBanners, 5000)
   stopDownloadProgressListener =
     window.ztools.internal.onPluginMarketDownloadProgress(handleDownloadProgress)
   window.addEventListener('keydown', handleKeydown, true)
 })
 
 onUnmounted(() => {
+  if (bannerTimer) {
+    window.clearInterval(bannerTimer)
+  }
   stopDownloadProgressListener?.()
   window.removeEventListener('keydown', handleKeydown, true)
 })
@@ -557,15 +619,33 @@ onUnmounted(() => {
             <template v-for="section in storefrontSections" :key="section.key">
               <!-- Banner 区块 -->
               <div v-if="section.type === 'banner'" class="storefront-banner">
-                <div
-                  v-for="(item, idx) in section.items"
-                  :key="idx"
-                  class="banner-item"
-                  :class="{ clickable: !!item.url }"
-                  :style="section.height ? { height: `${section.height}px` } : undefined"
-                  @click="handleBannerClick(item)"
-                >
-                  <img :src="item.image" alt="" class="banner-image" draggable="false" />
+                <div v-if="(section.items?.length || 0) > 0" class="banner-stage">
+                  <button
+                    v-for="(item, idx) in section.items"
+                    :key="`${section.key}-${idx}-${item.image}`"
+                    class="banner-item"
+                    :class="{
+                      active: idx === getBannerActiveIndex(section),
+                      clickable: !!item.url
+                    }"
+                    type="button"
+                    :aria-hidden="idx !== getBannerActiveIndex(section)"
+                    :tabindex="idx === getBannerActiveIndex(section) ? 0 : -1"
+                    @click="handleBannerClick(item)"
+                  >
+                    <img :src="item.image" alt="" class="banner-image" draggable="false" />
+                  </button>
+                </div>
+                <div v-if="(section.items?.length || 0) > 1" class="banner-dots">
+                  <button
+                    v-for="(_, idx) in section.items"
+                    :key="idx"
+                    class="banner-dot"
+                    :class="{ active: idx === getBannerActiveIndex(section) }"
+                    type="button"
+                    :aria-label="`切换到第 ${idx + 1} 张 Banner`"
+                    @click.stop="setBannerActiveIndex(section, idx)"
+                  />
                 </div>
               </div>
 
@@ -689,6 +769,7 @@ onUnmounted(() => {
         :download-state="downloadStates[selectedPlugin.name]"
         @back="closePluginDetail"
         @open="handleOpenPlugin(selectedPlugin)"
+        @open-folder="handleOpenFolder(selectedPlugin)"
         @download="downloadPlugin(selectedPlugin)"
         @upgrade="handleUpgradePlugin(selectedPlugin)"
         @uninstall="handleUninstallPlugin(selectedPlugin, $event)"
@@ -758,23 +839,46 @@ onUnmounted(() => {
 
 /* Banner */
 .storefront-banner {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+  position: relative;
+}
+
+.banner-stage {
+  position: relative;
+  aspect-ratio: 3.3 / 1;
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--bg-secondary);
 }
 
 .banner-item {
-  border-radius: 12px;
-  overflow: hidden;
+  position: absolute;
+  inset: 0;
   display: flex;
   align-items: center;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: transparent;
+  opacity: 0;
+  padding: 0;
+  pointer-events: none;
+  transform: scale(1.015);
+  transition:
+    opacity 0.55s ease,
+    transform 0.75s ease;
+}
+
+.banner-item.active {
+  opacity: 1;
+  pointer-events: auto;
+  transform: scale(1);
 }
 
 .banner-item.clickable {
   cursor: pointer;
 }
 .banner-item.clickable:hover {
-  opacity: 0.92;
+  filter: brightness(0.96);
 }
 .banner-image {
   width: 100%;
@@ -782,6 +886,37 @@ onUnmounted(() => {
   display: block;
   border-radius: 12px;
   object-fit: cover;
+}
+
+.banner-dots {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 10px;
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  pointer-events: none;
+}
+
+.banner-dot {
+  width: 7px;
+  height: 7px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.55);
+  cursor: pointer;
+  padding: 0;
+  pointer-events: auto;
+  transition:
+    background 0.2s,
+    transform 0.2s,
+    width 0.2s;
+}
+
+.banner-dot.active {
+  width: 18px;
+  background: rgba(255, 255, 255, 0.92);
 }
 
 /* Section 通用 */

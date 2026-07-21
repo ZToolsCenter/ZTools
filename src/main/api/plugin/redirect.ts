@@ -27,7 +27,8 @@ export class PluginRedirectAPI {
     })
 
     ipcMain.on('ztools-redirect-ai-models-setting', (event) => {
-      event.returnValue = this.redirectToSettingPage('AiModels', 'AI 模型')
+      // 兼容旧跳转：AI 模型已并入「提供商」容器页的 AI tab
+      event.returnValue = this.redirectToSettingPage('Providers', '提供商')
     })
   }
 

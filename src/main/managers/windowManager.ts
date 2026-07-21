@@ -9,7 +9,7 @@ import {
   screen,
   Tray
 } from 'electron'
-import path from 'path'
+import { getPreloadPath, getRendererPath } from '../utils/appBundlePath'
 // import trayIconLight from '../../../resources/icons/trayTemplate@2x-light.png?asset'
 import trayIcon from '../../../resources/icons/trayTemplate@2x.png?asset'
 import windowsIcon from '../../../resources/icons/windows-icon.png?asset'
@@ -90,6 +90,7 @@ class WindowManager {
   private windowPositionsByDisplay: Record<number, { x: number; y: number }> = {}
   private autoBackToSearchTimer: NodeJS.Timeout | null = null // 自动返回搜索定时器
   private autoBackToSearchConfig: string = 'never' // 自动返回搜索配置
+  private windowPositionStrategy: string = 'remember' // 窗口呼出位置策略
   private lastFocusTarget: 'mainWindow' | 'plugin' | null = null // 窗口隐藏前的焦点状态
   private isRestoringFocus: boolean = false // 是否正在恢复焦点状态（防止 focus 事件监听器干扰）
   private suppressBlurHide: boolean = false // 临时抑制 blur 事件隐藏窗口（文件关联打开等场景）
@@ -102,7 +103,8 @@ class WindowManager {
   // Double-tap 唤醒窗口时，Windows 可能紧跟一个短暂 blur；这两个 timer 用于跳过误关闭并补一次焦点。
   private doubleTapFocusTimer: ReturnType<typeof setTimeout> | null = null
   private windowsHotkeyFocusTimer: ReturnType<typeof setTimeout> | null = null
-  private doubleTapSuppressBlurTimer: ReturnType<typeof setTimeout> | null = null
+  private transientBlurSuppressTimer: ReturnType<typeof setTimeout> | null = null
+  private transientBlurSuppressUntil: number = 0 // 瞬时 blur 抑制截止时间戳，取最长值避免提前释放
   // 全局左键状态用于区分“点击外部关闭”和“从外部拖文件进窗口”。拖拽时 blur 先挂起，等 mouseup 再判断。
   private leftMouseDown: boolean = false // 全局左键是否按下，用于拖拽时延迟 blur 隐藏
   private pendingBlurHideOnMouseUp: boolean = false // blur 时左键按下，等待 mouseup 再决定是否隐藏
@@ -158,7 +160,33 @@ class WindowManager {
   }
 
   private isBlurHideSuppressed(): boolean {
-    return this.suppressBlurHide || this.modalDialogBlurHideSuppressed
+    return (
+      this.suppressBlurHide ||
+      this.modalDialogBlurHideSuppressed ||
+      this.transientBlurSuppressTimer !== null
+    )
+  }
+
+  /**
+   * 短暂抑制 blur 自动隐藏窗口。
+   *
+   * 窗口激活/呼出瞬间（尤其在其它应用处于全屏时抢焦点）系统可能补发一次瞬时 blur，
+   * 若不抑制会立刻触发 hideWindow 造成"一闪而过"。多次调用取最长的抑制时长，
+   * 避免后一次较短抑制把先前更长的抑制提前释放（例如双击唤醒与普通呼出叠加）。
+   */
+  private suppressBlurHideTransiently(durationMs: number): void {
+    const until = Date.now() + durationMs
+    if (this.transientBlurSuppressTimer && this.transientBlurSuppressUntil >= until) {
+      return
+    }
+    if (this.transientBlurSuppressTimer) {
+      clearTimeout(this.transientBlurSuppressTimer)
+    }
+    this.transientBlurSuppressUntil = until
+    this.transientBlurSuppressTimer = setTimeout(() => {
+      this.transientBlurSuppressTimer = null
+      this.transientBlurSuppressUntil = 0
+    }, durationMs)
   }
 
   private beginModalDialogBlurHideSuppression(): void {
@@ -314,7 +342,7 @@ class WindowManager {
       show: false,
       hasShadow: true, // 启用窗口阴影（可调整为 false 来移除阴影）
       webPreferences: {
-        preload: path.join(__dirname, '../preload/index.js'),
+        preload: getPreloadPath(),
         backgroundThrottling: false, // 窗口最小化时是否继续动画和定时器
         contextIsolation: true, // 禁用上下文隔离, 渲染进程和preload共用window对象
         nodeIntegration: false, // 渲染进程禁止直接使用 Node
@@ -411,8 +439,9 @@ class WindowManager {
     if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
       this.mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
     } else {
-      console.log('[Window] 生产模式下加载文件:', path.join(__dirname, '../renderer/index.html'))
-      this.mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'))
+      const rendererPath = getRendererPath('index.html')
+      console.log('[Window] 生产模式下加载文件:', rendererPath)
+      this.mainWindow.loadFile(rendererPath)
     }
 
     // 等待页面加载完成后再处理错误
@@ -756,12 +785,7 @@ class WindowManager {
     const willShow = !(this.mainWindow.isFocused() && this.mainWindow.isVisible())
     if (willShow) {
       // Double-tap 的 uiohook 回调刚触发后，系统可能补发一次 transient blur，短暂忽略避免刚显示就关闭。
-      this.suppressBlurHide = true
-      if (this.doubleTapSuppressBlurTimer) clearTimeout(this.doubleTapSuppressBlurTimer)
-      this.doubleTapSuppressBlurTimer = setTimeout(() => {
-        this.suppressBlurHide = false
-        this.doubleTapSuppressBlurTimer = null
-      }, 350)
+      this.suppressBlurHideTransiently(350)
     }
 
     this.toggleWindow()
@@ -782,19 +806,18 @@ class WindowManager {
   private forceActivateWindow(): void {
     if (!this.mainWindow) return
 
-    // 1. 显示窗口
-    this.mainWindow.show()
-
-    // 2. macOS特殊处理：重申置顶，防止因为系统事件掉层级
+    // macOS 使用非激活 panel 保留原应用的前台状态。短暂抑制呼出瞬间的 blur，
+    // 但不要激活整个应用，否则会破坏快捷面板不抢占原应用焦点的交互语义。
     if (platform.isMacOS) {
+      this.suppressBlurHideTransiently(200)
       this.mainWindow.setAlwaysOnTop(true, 'modal-panel', 1)
+      this.mainWindow.show()
       return
     }
 
-    // 3. 设置窗口层级为最前
+    // Windows / Linux：显示后重申层级并聚焦
+    this.mainWindow.show()
     this.mainWindow.setAlwaysOnTop(true)
-
-    // 4. 聚焦窗口
     this.mainWindow.focus()
   }
 
@@ -843,28 +866,68 @@ class WindowManager {
   }
 
   /**
-   * 将窗口移动到鼠标所在显示器
-   * 优先恢复该显示器记忆的位置，否则居中显示
+   * 根据窗口呼出位置策略将窗口移动到目标显示器并定位
+   * - remember：优先恢复该显示器记忆的位置，否则居中
+   * - cursor：鼠标所在显示器居中
+   * - primary：主显示器居中
+   * - lastActive：上次活动窗口所在显示器居中（无记录时 fallback 到鼠标屏）
    */
   private moveWindowToCursor(): void {
     if (!this.mainWindow) return
 
-    const { width, height, x: displayX, y: displayY, id: displayId } = this.getDisplayAtCursor()
+    let target: { width: number; height: number; x: number; y: number; id: number }
 
-    const savedPosition = this.windowPositionsByDisplay[displayId]
-
-    let x: number, y: number
-
-    if (savedPosition) {
-      // 恢复该显示器记忆的位置
-      x = savedPosition.x
-      y = savedPosition.y
-    } else {
-      // 计算默认居中位置（基于最大窗口高度）
-      x = displayX + Math.floor((width - WINDOW_WIDTH) / 2)
-      y = displayY + Math.floor((height - WINDOW_DEFAULT_HEIGHT) / 2)
+    switch (this.windowPositionStrategy) {
+      case 'primary': {
+        const display = screen.getPrimaryDisplay()
+        target = { ...display.workArea, id: display.id }
+        break
+      }
+      case 'lastActive': {
+        const prev = this.previousActiveWindow
+        if (
+          prev &&
+          typeof prev.x === 'number' &&
+          typeof prev.y === 'number' &&
+          Number.isFinite(prev.x) &&
+          Number.isFinite(prev.y)
+        ) {
+          const centerX =
+            prev.x +
+            (typeof prev.width === 'number' && Number.isFinite(prev.width)
+              ? Math.floor(prev.width / 2)
+              : 0)
+          const centerY =
+            prev.y +
+            (typeof prev.height === 'number' && Number.isFinite(prev.height)
+              ? Math.floor(prev.height / 2)
+              : 0)
+          const display = screen.getDisplayNearestPoint({ x: centerX, y: centerY })
+          target = { ...display.workArea, id: display.id }
+        } else {
+          target = this.getDisplayAtCursor()
+        }
+        break
+      }
+      case 'cursor': {
+        target = this.getDisplayAtCursor()
+        break
+      }
+      case 'remember':
+      default: {
+        const { width, height, x: displayX, y: displayY, id: displayId } = this.getDisplayAtCursor()
+        const savedPosition = this.windowPositionsByDisplay[displayId]
+        if (savedPosition) {
+          this.mainWindow.setPosition(savedPosition.x, savedPosition.y, false)
+          return
+        }
+        target = { width, height, x: displayX, y: displayY, id: displayId }
+        break
+      }
     }
 
+    const x = target.x + Math.floor((target.width - WINDOW_WIDTH) / 2)
+    const y = target.y + Math.floor((target.height - WINDOW_DEFAULT_HEIGHT) / 2)
     this.mainWindow.setPosition(x, y, false)
   }
 
@@ -1052,6 +1115,14 @@ class WindowManager {
   public async updateAutoBackToSearch(config: string): Promise<void> {
     this.autoBackToSearchConfig = config
     console.log('[Window] 更新自动返回搜索配置:', config)
+  }
+
+  /**
+   * 更新窗口呼出位置策略
+   */
+  public async updateWindowPositionStrategy(strategy: string): Promise<void> {
+    this.windowPositionStrategy = strategy
+    console.log('[Window] 更新窗口呼出位置策略:', strategy)
   }
 
   /**
@@ -1415,9 +1486,15 @@ class WindowManager {
       }
 
       this.moveWindowToCursor()
-      // macOS: forceActivateWindow 不会 setAlwaysOnTop/focus，需要单独处理焦点抢占
-      this.mainWindow.show()
       if (platform.isMacOS) {
+        // 与 forceActivateWindow 一致的激活顺序：先重申 Spaces/层级、激活应用到当前 Space，
+        // 再 show，避免面板落到桌面 Space。此处不直接调用 forceActivateWindow：本路径已用
+        // 外层手动 suppressBlurHide（500ms 释放）覆盖激活期，forceActivateWindow 内部的瞬时
+        // 抑制(200ms)会把它提前释放。
+        this.mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+        this.mainWindow.setAlwaysOnTop(true, 'modal-panel', 1)
+        app.focus({ steal: true })
+        this.mainWindow.show()
         this.mainWindow.focus()
       } else {
         this.forceActivateWindow()
