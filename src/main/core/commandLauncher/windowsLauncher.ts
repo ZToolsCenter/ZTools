@@ -64,6 +64,34 @@ async function openApplicationViaExplorer(
   await openWithElectronShell(appPath, fallback)
 }
 
+async function openUwpApplicationViaExplorer(appId: string): Promise<void> {
+  const target = `shell:AppsFolder\\${appId}`
+
+  try {
+    const result = await WindowsShellLauncher.launch({ target, showCommand: 1 })
+    if (result.success) {
+      console.log(`[Launcher] 已通过 Explorer 启动 UWP 应用: ${appId}`)
+      return
+    }
+
+    console.warn('[Launcher] Explorer COM 启动 UWP 应用失败，回退原生激活 API:', {
+      appId,
+      hresult: result.hresult,
+      stage: result.stage
+    })
+  } catch (error) {
+    console.warn('[Launcher] Explorer COM 启动 UWP 应用异常，回退原生激活 API:', {
+      appId,
+      error
+    })
+  }
+
+  if (!UwpManager.launchUwpApp(appId)) {
+    throw new Error(`启动 UWP 应用失败: ${appId}`)
+  }
+  console.log(`[Launcher] 已通过原生 API 启动 UWP 应用: ${appId}`)
+}
+
 /**
  * 执行系统命令（不等待进程结束，适用于 GUI 应用）
  * @param command 完整命令字符串（如 "rundll32 shell32.dll,Control_RunDLL"）或命令名
@@ -125,8 +153,7 @@ export async function launchApp(
   if (appPath.startsWith('uwp:')) {
     const appId = appPath.slice(4)
     try {
-      UwpManager.launchUwpApp(appId)
-      console.log(`[Launcher] 成功启动 UWP 应用: ${appId}`)
+      await openUwpApplicationViaExplorer(appId)
       return
     } catch (error) {
       console.error('[Launcher] 启动 UWP 应用失败:', error)
