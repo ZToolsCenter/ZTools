@@ -256,6 +256,8 @@ const windowDefaultHeight = ref(541)
 
 // 托盘图标显示设置
 const showTrayIcon = ref(true)
+// 静默启动（默认开启）
+const silentStart = ref(true)
 
 // 悬浮球设置
 const floatingBallEnabled = ref(false)
@@ -988,6 +990,18 @@ async function handleTrayIconChange(): Promise<void> {
   }
 }
 
+// 处理静默启动变化
+async function handleSilentStartChange(): Promise<void> {
+  const ok = await saveSettings()
+  if (!ok) {
+    // v-model 已切换，保存失败时回滚 UI
+    silentStart.value = !silentStart.value
+    console.error('更新静默启动设置失败')
+    return
+  }
+  console.log('静默启动设置已更新:', silentStart.value)
+}
+
 // 处理悬浮球开关变化
 async function handleFloatingBallChange(): Promise<void> {
   try {
@@ -1205,6 +1219,7 @@ async function loadSettings(): Promise<void> {
       windowDefaultHeight.value = data.windowDefaultHeight ?? 541
       hotkey.value = data.hotkey ?? defaultHotkey.value
       showTrayIcon.value = data.showTrayIcon ?? true
+      silentStart.value = data.silentStart ?? true
       placeholder.value = data.placeholder ?? DEFAULT_PLACEHOLDER
       avatar.value = data.avatar ?? DEFAULT_AVATAR
       autoPaste.value = data.autoPaste ?? '3s'
@@ -1283,8 +1298,8 @@ async function loadSettings(): Promise<void> {
   }
 }
 
-// 保存设置
-async function saveSettings(): Promise<void> {
+// 保存设置（返回是否成功，便于调用方在失败时回滚 UI）
+async function saveSettings(): Promise<boolean> {
   try {
     // 只有自定义头像才保存到数据库，默认头像不保存
     const avatarToSave = avatar.value === defaultAvatar ? undefined : avatar.value
@@ -1326,6 +1341,7 @@ async function saveSettings(): Promise<void> {
       primaryColor: primaryColor.value,
       customColor: customColor.value,
       showTrayIcon: showTrayIcon.value,
+      silentStart: silentStart.value,
       windowMaterial: windowMaterial.value,
       acrylicLightOpacity: acrylicLightOpacity.value,
       acrylicDarkOpacity: acrylicDarkOpacity.value,
@@ -1339,8 +1355,10 @@ async function saveSettings(): Promise<void> {
       terminal: terminal.value,
       terminalCustomCommand: terminalCustomCommand.value
     })
+    return true
   } catch (error) {
     console.error('保存设置失败:', error)
+    return false
   }
 }
 
@@ -1442,6 +1460,19 @@ onUnmounted(() => {
         <div class="setting-control">
           <label class="toggle">
             <input v-model="showTrayIcon" type="checkbox" @change="handleTrayIconChange" />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+      </div>
+
+      <div class="setting-item">
+        <div class="setting-label">
+          <span>静默启动</span>
+          <span class="setting-desc">启动时不显示主窗口，仅托盘运行</span>
+        </div>
+        <div class="setting-control">
+          <label class="toggle">
+            <input v-model="silentStart" type="checkbox" @change="handleSilentStartChange" />
             <span class="toggle-slider"></span>
           </label>
         </div>

@@ -1,6 +1,6 @@
 import './core/appData/configureAppDataRoot'
 import { platform } from '@electron-toolkit/utils'
-import { app, BrowserWindow, session, webContents } from 'electron'
+import { app, BrowserWindow, ipcMain, session, webContents } from 'electron'
 import log from 'electron-log'
 import path from 'path'
 import lmdbInstance from './core/lmdb/lmdbInstance'
@@ -128,6 +128,20 @@ export function getCurrentShortcut(): string {
 }
 
 app.whenReady().then(async () => {
+  // 启动时仅处理一次：关闭静默启动则在渲染就绪后显示主窗口（需在创建窗口前注册，避免竞态）
+  ipcMain.once('renderer-ready', () => {
+    try {
+      const settingsDoc = lmdbInstance.get('ZTOOLS/settings-general')
+      const silentStart = settingsDoc?.data?.silentStart ?? true
+      if (!silentStart) {
+        windowManager.showWindow()
+        console.log('[Main] 静默启动已关闭，渲染进程就绪后自动显示搜索窗口')
+      }
+    } catch {
+      console.log('[Main] 读取静默启动设置失败，按默认行为启动')
+    }
+  })
+
   // macOS 辅助功能权限检查和请求（如果未授权则弹窗提示）
   await ensureMacAccessibilityPermission()
 

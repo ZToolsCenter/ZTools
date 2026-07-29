@@ -53,6 +53,7 @@ const api = {
   launchAsAdmin: (appPath: string, name?: string) =>
     ipcRenderer.invoke('launch-as-admin', appPath, name),
   hideWindow: () => ipcRenderer.send('hide-window'),
+  rendererReady: () => ipcRenderer.send('renderer-ready'),
   resizeWindow: (height: number) => ipcRenderer.send('resize-window', height),
   updateLaunchContext: (context: {
     searchQuery: string
@@ -543,6 +544,7 @@ declare global {
         confirmDialog?: any
       }) => Promise<void>
       hideWindow: () => void
+      rendererReady: () => void
       resizeWindow: (height: number) => void
       updateLaunchContext: (context: {
         searchQuery: string

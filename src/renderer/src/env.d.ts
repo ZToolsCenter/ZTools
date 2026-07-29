@@ -84,6 +84,7 @@ declare global {
       }) => Promise<any>
       launchAsAdmin: (appPath: string, name?: string) => Promise<void>
       hideWindow: () => void
+      rendererReady: () => void
       resizeWindow: (height: number) => void
       updateLaunchContext: (context: {
         searchQuery: string

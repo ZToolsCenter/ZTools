@@ -524,6 +524,9 @@ onMounted(async () => {
   // 初始调整窗口高度
   updateWindowHeight()
 
+  // 通知主进程渲染进程已就绪（用于静默启动控制）
+  window.ztools.rendererReady()
+
   console.log('监听聚焦事件')
 
   // 监听窗口显示事件,聚焦搜索框，并接收窗口信息
