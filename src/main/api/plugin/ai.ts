@@ -12,6 +12,8 @@ export interface AiOption {
   model?: string // AI 模型，为空默认使用第一个配置的模型
   messages: Message[] // 消息列表
   tools?: Tool[] // 工具列表
+  headers?: Record<string, string> // Extra request headers; sensitive/framing headers are rejected.
+  extraBody?: Record<string, unknown> // Extra OpenAI-compatible fields; core fields are rejected.
 }
 
 /** 文本内容块 */
@@ -72,6 +74,28 @@ export interface Tool {
 }
 /** 工具调用循环最大轮次 */
 const MAX_TOOL_ROUNDS = 25
+const RESERVED_EXTRA_BODY_KEYS = ['model', 'messages', 'tools', 'stream'] as const
+const RESERVED_HEADER_KEYS = new Set([
+  'accept',
+  'authorization',
+  'connection',
+  'content-length',
+  'content-type',
+  'cookie',
+  'host',
+  'keep-alive',
+  'openai-beta',
+  'openai-organization',
+  'openai-project',
+  'proxy-authenticate',
+  'proxy-authorization',
+  'te',
+  'trailer',
+  'transfer-encoding',
+  'upgrade',
+  'user-agent'
+])
+const RESERVED_HEADER_PREFIXES = ['x-stainless-']
 
 /**
  * AI 调用 API（插件专用）- 基于 OpenAI SDK 直接调用
@@ -227,6 +251,55 @@ class PluginAiAPI {
       baseURL: modelConfig.apiUrl
     })
   }
+
+  private isPlainObject(value: unknown): value is Record<string, unknown> {
+    if (typeof value !== 'object' || value === null) return false
+    const prototype = Object.getPrototypeOf(value)
+    return prototype === Object.prototype || prototype === null
+  }
+
+  private normalizeHeaders(headers: unknown): Record<string, string> | undefined {
+    if (headers == null) return undefined
+    if (!this.isPlainObject(headers)) {
+      throw new Error('headers 必须是对象')
+    }
+
+    const normalized: Record<string, string> = {}
+    for (const [key, value] of Object.entries(headers)) {
+      const normalizedKey = key.trim().toLowerCase()
+      if (
+        RESERVED_HEADER_KEYS.has(normalizedKey) ||
+        RESERVED_HEADER_PREFIXES.some((prefix) => normalizedKey.startsWith(prefix))
+      ) {
+        throw new Error(`headers 不能包含保留请求头: ${key}`)
+      }
+      if (value != null) {
+        if (typeof value !== 'string') {
+          throw new Error(`headers.${key} 必须是字符串`)
+        }
+        normalized[key] = value
+      }
+    }
+    return Object.keys(normalized).length > 0 ? normalized : undefined
+  }
+
+  private normalizeExtraBody(extraBody: unknown): Record<string, unknown> | undefined {
+    if (extraBody == null) return undefined
+    if (!this.isPlainObject(extraBody)) {
+      throw new Error('extraBody 必须是对象')
+    }
+
+    const reservedKey = RESERVED_EXTRA_BODY_KEYS.find((key) =>
+      Object.prototype.hasOwnProperty.call(extraBody, key)
+    )
+    if (reservedKey) {
+      throw new Error(`extraBody 不能包含保留字段: ${reservedKey}`)
+    }
+
+    const normalized = { ...extraBody }
+    return Object.keys(normalized).length > 0 ? normalized : undefined
+  }
+
   /**
    * 将 Message[] 转为 OpenAI SDK 格式
    * 关键：保留 assistant 消息的 reasoning_content，解决 DeepSeek thinking mode 报错
@@ -325,17 +398,23 @@ class PluginAiAPI {
       const client = this.createClient(modelConfig)
       const openaiTools = option.tools?.length ? this.convertTools(option.tools) : undefined
       const messages = [...option.messages]
+      const requestHeaders = this.normalizeHeaders(option.headers)
+      const extraBody = this.normalizeExtraBody(option.extraBody)
 
       for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
         this.notifyAiStatus(round === 0 ? 'sending' : 'receiving', webContents)
 
         const response = await client.chat.completions.create(
           {
+            ...extraBody,
             model: modelConfig.id,
             messages: this.convertMessages(messages),
             ...(openaiTools?.length ? { tools: openaiTools } : {})
           },
-          { signal: abortController.signal }
+          {
+            signal: abortController.signal,
+            ...(requestHeaders ? { headers: requestHeaders } : {})
+          }
         )
 
         const choice = response.choices[0]
@@ -423,18 +502,24 @@ class PluginAiAPI {
       const client = this.createClient(modelConfig)
       const openaiTools = option.tools?.length ? this.convertTools(option.tools) : undefined
       const messages = [...option.messages]
+      const requestHeaders = this.normalizeHeaders(option.headers)
+      const extraBody = this.normalizeExtraBody(option.extraBody)
 
       for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
         this.notifyAiStatus(round === 0 ? 'sending' : 'receiving', webContents)
 
         const stream = await client.chat.completions.create(
           {
+            ...extraBody,
             model: modelConfig.id,
             messages: this.convertMessages(messages),
             stream: true,
             ...(openaiTools?.length ? { tools: openaiTools } : {})
           },
-          { signal: abortController.signal }
+          {
+            signal: abortController.signal,
+            ...(requestHeaders ? { headers: requestHeaders } : {})
+          }
         )
 
         let fullContent = ''
