@@ -401,6 +401,8 @@ declare global {
         updatePinnedRows: (rows: number) => Promise<void>
         updateClipboardConfig: (config: { retentionDays: number }) => Promise<void>
         updateSearchMode: (searchMode: 'aggregate' | 'list') => Promise<void>
+        updateTokenSearchEnabled: (enabled: boolean) => Promise<void>
+        updateMatchInsideWord: (enabled: boolean) => Promise<void>
         updateTabKeyFunction: (mode: 'navigate' | 'target-command') => Promise<void>
         updateTabTarget: (target: string) => Promise<void>
         updateSpaceOpenCommand: (enabled: boolean) => Promise<void>

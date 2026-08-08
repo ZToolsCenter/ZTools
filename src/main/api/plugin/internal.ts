@@ -1113,6 +1113,24 @@ export class InternalPluginAPI {
       return { success: true }
     })
 
+    // 通知主渲染进程更新分词搜索开关
+    ipcMain.handle('internal:update-token-search-enabled', async (event, enabled: boolean) => {
+      if (!requireInternalPlugin(this.pluginManager, event)) {
+        throw new PermissionDeniedError('internal:update-token-search-enabled')
+      }
+      this.mainWindow?.webContents.send('update-token-search-enabled', enabled)
+      return { success: true }
+    })
+
+    // 通知主渲染进程更新匹配单词内部开关
+    ipcMain.handle('internal:update-match-inside-word', async (event, enabled: boolean) => {
+      if (!requireInternalPlugin(this.pluginManager, event)) {
+        throw new PermissionDeniedError('internal:update-match-inside-word')
+      }
+      this.mainWindow?.webContents.send('update-match-inside-word', enabled)
+      return { success: true }
+    })
+
     // 通知主渲染进程更新 Tab 键目标指令
     ipcMain.handle('internal:update-tab-target', async (event, target: string) => {
       if (!requireInternalPlugin(this.pluginManager, event)) {

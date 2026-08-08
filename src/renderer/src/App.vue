@@ -805,6 +805,16 @@ onMounted(async () => {
     windowStore.updateSearchMode(mode as 'aggregate' | 'list')
   })
 
+  // 监听分词搜索开关更新事件
+  window.ztools.onUpdateTokenSearchEnabled((enabled: boolean) => {
+    windowStore.updateTokenSearchEnabled(enabled)
+  })
+
+  // 监听匹配单词内部开关更新事件
+  window.ztools.onUpdateMatchInsideWord((enabled: boolean) => {
+    windowStore.updateMatchInsideWord(enabled)
+  })
+
   // 监听主题色更新事件
   window.ztools.onUpdatePrimaryColor((data: { primaryColor: string; customColor?: string }) => {
     console.log('更新主题色:', data)

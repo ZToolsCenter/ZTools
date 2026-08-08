@@ -296,6 +296,8 @@ declare global {
       onUpdateSpaceOpenCommand: (callback: (enabled: boolean) => void) => void
       onUpdateFloatingBallDoubleClickCommand?: (callback: (command: string) => void) => void
       onUpdateSearchMode: (callback: (mode: string) => void) => void
+      onUpdateTokenSearchEnabled: (callback: (enabled: boolean) => void) => void
+      onUpdateMatchInsideWord: (callback: (enabled: boolean) => void) => void
       onUpdatePrimaryColor: (
         callback: (data: { primaryColor: string; customColor?: string }) => void
       ) => void
