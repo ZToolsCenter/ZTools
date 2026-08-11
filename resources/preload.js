@@ -969,6 +969,10 @@ window.ztools = {
       await electron.ipcRenderer.invoke('internal:toggle-plugin-market-comment-like', commentId),
     deletePluginMarketComment: async (commentId) =>
       await electron.ipcRenderer.invoke('internal:delete-plugin-market-comment', commentId),
+    getMarketSourceConfig: async () =>
+      await electron.ipcRenderer.invoke('internal:get-market-source-config'),
+    setMarketSourceConfig: async (config) =>
+      await electron.ipcRenderer.invoke('internal:set-market-source-config', config),
     notificationSummary: async () =>
       await electron.ipcRenderer.invoke('internal:notification-summary'),
     notificationList: async (beforeId, limit, unreadOnly) =>

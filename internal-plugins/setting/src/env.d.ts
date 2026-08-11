@@ -194,6 +194,20 @@ declare global {
           error?: string
           authRequired?: boolean
         }>
+        getMarketSourceConfig: () => Promise<{
+          type: 'official' | 'github' | 'cdn'
+          url?: string
+          branch?: string
+          pluginsDir?: string
+          token?: string
+        }>
+        setMarketSourceConfig: (config: {
+          type: 'official' | 'github' | 'cdn'
+          url?: string
+          branch?: string
+          pluginsDir?: string
+          token?: string
+        }) => Promise<{ success: boolean }>
         notificationSummary: () => Promise<{
           success: boolean
           data?: { unreadCount: number; latestId: number; hasMoreUnread: boolean }

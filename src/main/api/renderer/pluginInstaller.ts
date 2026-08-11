@@ -30,8 +30,10 @@ import { openDialog } from '../../utils/windowUtils'
 import {
   PluginMarketAuthMode,
   getPluginMarketApiBase,
+  getMarketSourceConfig,
   requestPluginMarket
 } from './pluginMarketConfig'
+import { DEFAULT_GITHUB_PLUGINS_DIR } from './marketSourceAdapter'
 import { getPluginsPath } from '../../core/appData/appDataPaths'
 
 /** 插件的本地安装目录 */
@@ -311,11 +313,27 @@ export class PluginInstallerAPI {
         progress: 100
       })
 
+      // GitHub 源下载的是整个仓库的 ZIP，需要提取插件子目录后重新打包
+      let installFilePath = tempFilePath
+      let extractedTempPath = ''
+      const source = getMarketSourceConfig()
+      if (source.type === 'github') {
+        console.log('[Plugins] 检测到 GitHub 源，提取插件子目录...')
+        const pluginsDir = source.pluginsDir || DEFAULT_GITHUB_PLUGINS_DIR
+        extractedTempPath = await this.extractPluginFromGitHubZip(
+          tempFilePath,
+          pluginName,
+          pluginsDir
+        )
+        installFilePath = extractedTempPath
+        console.log('[Plugins] GitHub 插件提取完成:', installFilePath)
+      }
+
       // 自动检测格式并安装
-      const { config: marketConfig, isZpx } = await this.readPluginJson(tempFilePath)
+      const { config: marketConfig, isZpx } = await this.readPluginJson(installFilePath)
       console.log(`[Plugins] 市场插件格式: ${isZpx ? 'ZPX' : 'ZIP（兼容）'}`)
 
-      const result = await this.installFromPackageFile(tempFilePath, isZpx, marketConfig)
+      const result = await this.installFromPackageFile(installFilePath, isZpx, marketConfig)
       this.emitMarketDownloadProgress(task, {
         pluginName,
         taskId,
@@ -376,11 +394,57 @@ export class PluginInstallerAPI {
   }
 
   /**
+   * 从 GitHub 仓库的全量 ZIP 归档中提取指定插件子目录，重新打包为独立 ZIP。
+   * GitHub 下载链接指向整个仓库的 ZIP，插件文件嵌套在 plugins/<name>/ 子目录中，
+   * 需要提取后重新打包才能被标准安装流程处理。
+   * @param repoZipPath - 已下载的仓库全量 ZIP 文件路径
+   * @param pluginName - 要提取的插件名称
+   * @param pluginsDir - 仓库中的插件目录名（默认 'plugins'）
+   * @returns 重新打包后的独立插件 ZIP 文件路径
+   */
+  private async extractPluginFromGitHubZip(
+    repoZipPath: string,
+    pluginName: string,
+    pluginsDir = DEFAULT_GITHUB_PLUGINS_DIR
+  ): Promise<string> {
+    const repoZip = new AdmZip(repoZipPath)
+    const entries = repoZip.getEntries()
+
+    // GitHub ZIP 内部结构: <repo>-<branch>/plugins/<pluginName>/...
+    // 找到插件目录前缀
+    const pluginDirPrefix = `${pluginsDir}/${pluginName}/`
+    const pluginEntries = entries.filter((entry) => {
+      const entryPath = entry.entryName
+      const idx = entryPath.indexOf(pluginDirPrefix)
+      return idx >= 0 && !entry.isDirectory
+    })
+
+    if (pluginEntries.length === 0) {
+      throw new Error(`GitHub 仓库中未找到插件目录: ${pluginDirPrefix}`)
+    }
+
+    // 重新打包为独立 ZIP，去掉仓库和插件目录前缀
+    const repackagedZip = new AdmZip()
+    for (const entry of pluginEntries) {
+      const entryPath = entry.entryName
+      const idx = entryPath.indexOf(pluginDirPrefix)
+      const relativePath = entryPath.substring(idx + pluginDirPrefix.length)
+      if (relativePath) {
+        repackagedZip.addFile(relativePath, entry.getData())
+      }
+    }
+
+    const outputPath = repoZipPath.replace(/\.zip$/i, '-extracted.zpx')
+    repackagedZip.writeZip(outputPath)
+    return outputPath
+  }
+
+  /**
    * 请求插件市场并优先解析 ZPX 下载地址。
    * @param plugin 市场插件对象
    * @returns ZPX 下载地址；服务端未提供时回退 ZIP，插件信息无效时返回空字符串
    */
-  private async resolveMarketDownloadUrl(plugin: any): Promise<string> {
+  private async resolveMarketDownloadUrl(plugin: Record<string, unknown>): Promise<string> {
     const pluginName = typeof plugin?.name === 'string' ? plugin.name : ''
     if (!pluginName) {
       return ''

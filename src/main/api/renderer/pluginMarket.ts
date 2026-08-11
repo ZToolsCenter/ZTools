@@ -9,8 +9,10 @@ import {
   PluginMarketAuthRequiredError,
   PluginMarketAuthMode,
   getPluginMarketApiBase,
+  getMarketSourceConfig,
   requestPluginMarket
 } from './pluginMarketConfig'
+import { fetchMarketFromAlternativeSource } from './marketSourceAdapter'
 
 // ━━━ Types ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -238,6 +240,17 @@ export class PluginMarketAPI {
     }
 
     try {
+      const source = getMarketSourceConfig()
+
+      // 非官方源（GitHub / CDN）走适配器，不经过官方 API 的认证和聚合流程
+      if (source.type !== 'official') {
+        const result = await fetchMarketFromAlternativeSource(source)
+        if (result.success && result.data) {
+          databaseAPI.dbPut('plugin-market-data', result.data)
+        }
+        return result
+      }
+
       const marketApiBase = getPluginMarketApiBase()
       const timestamp = Date.now()
       const platform = process.platform
@@ -335,6 +348,22 @@ export class PluginMarketAPI {
     pluginName: string,
     platform: string
   ): Promise<PluginMarketLatestResult> {
+    const source = getMarketSourceConfig()
+
+    // 非官方源：从本地缓存的市场数据中查找插件
+    if (source.type !== 'official') {
+      const cachedData = databaseAPI.dbGet('plugin-market-data')
+      if (Array.isArray(cachedData)) {
+        const found = cachedData.find((p: PluginMarketPlugin) => p?.name === pluginName) as
+          | PluginMarketPlugin
+          | undefined
+        if (found) {
+          return { available: true, plugin: found }
+        }
+      }
+      return { available: false, reason: 'not_found' }
+    }
+
     const query = new URLSearchParams({ name: pluginName })
     if (platform) query.set('platform', platform)
 
@@ -354,6 +383,10 @@ export class PluginMarketAPI {
   public async fetchPluginMarketRecommendations(
     limit = PLUGIN_MARKET_RECOMMEND_LIMIT
   ): Promise<PluginMarketPlugin[]> {
+    const source = getMarketSourceConfig()
+    // 非官方源不支持服务端推荐，返回空数组
+    if (source.type !== 'official') return []
+
     const marketApiBase = getPluginMarketApiBase()
     const timestamp = Date.now()
     const platform = process.platform
@@ -398,6 +431,12 @@ export class PluginMarketAPI {
     error?: string
     authRequired?: boolean
   }> {
+    // 非官方源不支持评论系统
+    const source = getMarketSourceConfig()
+    if (source.type !== 'official') {
+      return { success: true, data: { items: [], page: { page: 1, pageSize: 20, total: 0 } } }
+    }
+
     try {
       const query = new URLSearchParams({
         pluginName,
@@ -422,6 +461,11 @@ export class PluginMarketAPI {
     error?: string
     authRequired?: boolean
   }> {
+    const source = getMarketSourceConfig()
+    if (source.type !== 'official') {
+      return { success: false, error: '当前市场源不支持评论功能' }
+    }
+
     try {
       const response = await requestPluginMarket(
         '/plugins/comments',
@@ -444,6 +488,11 @@ export class PluginMarketAPI {
     error?: string
     authRequired?: boolean
   }> {
+    const source = getMarketSourceConfig()
+    if (source.type !== 'official') {
+      return { success: false, error: '当前市场源不支持评论功能' }
+    }
+
     try {
       const response = await requestPluginMarket(
         `/plugins/comments/${commentId}/like`,
@@ -468,6 +517,11 @@ export class PluginMarketAPI {
   public async deleteComment(
     commentId: number
   ): Promise<{ success: boolean; error?: string; authRequired?: boolean }> {
+    const source = getMarketSourceConfig()
+    if (source.type !== 'official') {
+      return { success: false, error: '当前市场源不支持评论功能' }
+    }
+
     try {
       await requestPluginMarket(
         `/plugins/comments/${commentId}`,

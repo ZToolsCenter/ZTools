@@ -3,7 +3,14 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useToast } from '@/components'
 import type { PluginUninstallOptions, TabId } from '@/components'
 import { compareVersions, upgradeInstalledPluginFromMarket, weightedSearch } from '@/utils'
-import { PluginDetail, PluginCard, CategoryCard, CategoryDetail, RefreshButton } from './components'
+import {
+  PluginDetail,
+  PluginCard,
+  CategoryCard,
+  CategoryDetail,
+  RefreshButton,
+  MarketSourceSettings
+} from './components'
 import type { Plugin, CategoryInfo, CategoryLayoutSection, PluginDownloadState } from './components'
 import { useJumpFunction, useZtoolsSubInput } from '@/composables'
 import { PluginMarketSettingJumpFunction } from '@/views/PluginMarketSetting/PluginMarketSetting'
@@ -76,6 +83,7 @@ const downloadStates = ref<Record<string, PluginDownloadState | undefined>>({})
 const bannerActiveIndexes = ref<Record<string, number>>({})
 let stopDownloadProgressListener: (() => void) | undefined
 let bannerTimer: ReturnType<typeof window.setInterval> | undefined
+const showSourceSettings = ref(false)
 
 const { value: searchQuery, setSubInput } = useZtoolsSubInput('', '搜索插件市场...')
 
@@ -593,6 +601,27 @@ onUnmounted(() => {
 </script>
 <template>
   <div class="plugin-market">
+    <!-- 市场源设置入口 -->
+    <button
+      v-if="showScrollableContent"
+      class="source-settings-btn"
+      type="button"
+      title="市场源设置"
+      @click="showSourceSettings = true"
+    >
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+        <path d="M12 15a3 3 0 100-6 3 3 0 000 6z" stroke="currentColor" stroke-width="2" />
+        <path
+          d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"
+          stroke="currentColor"
+          stroke-width="2"
+        />
+      </svg>
+    </button>
+
+    <!-- 市场源设置对话框 -->
+    <MarketSourceSettings v-model:visible="showSourceSettings" @saved="fetchPlugins()" />
+
     <!-- 可滚动内容区 -->
     <Transition name="list-slide">
       <div v-show="showScrollableContent" class="scrollable-content">
@@ -811,6 +840,34 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+/* 市场源设置按钮 */
+.source-settings-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: var(--control-bg);
+  color: var(--text-secondary);
+  cursor: pointer;
+  opacity: 0.6;
+  transition:
+    opacity 0.2s,
+    background 0.2s;
+}
+
+.source-settings-btn:hover {
+  opacity: 1;
+  background: var(--hover-bg);
 }
 
 /* 可滚动内容区 */

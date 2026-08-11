@@ -23,7 +23,8 @@ export const HOST_STORAGE_KEYS = {
   detachedWindowSizes: 'detached-window-sizes',
   devPluginRegistry: 'dev-plugin-registry',
   mcpDisabledPlugins: 'settings-mcp-disabled-plugins',
-  userProfile: 'user-profile'
+  userProfile: 'user-profile',
+  pluginMarketSource: 'plugin-market-source'
 } as const
 
 export const LEGACY_CAMEL_CASE_STORAGE_KEYS = {

@@ -15,6 +15,9 @@ import aiModelsAPI from '../renderer/aiModels.js'
 import commandsAPI from '../renderer/commands.js'
 import pluginsAPI from '../renderer/plugins.js'
 import type { DeletePluginOptions } from '../renderer/plugins'
+import { getMarketSourceConfig } from '../renderer/pluginMarketConfig'
+import type { MarketSourceConfig } from '../renderer/marketSourceAdapter'
+import { HOST_STORAGE_KEYS } from '../../../shared/storageKeys'
 import { promises as fs } from 'fs'
 import settingsAPI from '../renderer/settings.js'
 import systemAPI from '../renderer/system.js'
@@ -487,6 +490,27 @@ export class InternalPluginAPI {
       }
       return await notificationsAPI.archive(id)
     })
+
+    ipcMain.handle('internal:get-market-source-config', async (event) => {
+      if (!requireInternalPlugin(this.pluginManager, event)) {
+        throw new PermissionDeniedError('internal:get-market-source-config')
+      }
+      return getMarketSourceConfig()
+    })
+
+    ipcMain.handle(
+      'internal:set-market-source-config',
+      async (event, config: MarketSourceConfig) => {
+        if (!requireInternalPlugin(this.pluginManager, event)) {
+          throw new PermissionDeniedError('internal:set-market-source-config')
+        }
+        databaseAPI.dbPut(HOST_STORAGE_KEYS.pluginMarketSource, config)
+        databaseAPI.dbRemove('plugin-market-data')
+        databaseAPI.dbRemove('plugin-market-storefront')
+        databaseAPI.dbRemove('plugin-market-storefront-fingerprint')
+        return { success: true }
+      }
+    )
 
     ipcMain.handle('internal:install-plugin-from-market', async (event, plugin: any) => {
       if (!requireInternalPlugin(this.pluginManager, event)) {

@@ -5,6 +5,9 @@ import {
 } from '../../core/account/officialAccountService'
 import type { HttpRequestOptions, HttpResponse } from '../../utils/httpRequest'
 import { httpRequest } from '../../utils/httpRequest.js'
+import databaseAPI from '../shared/database'
+import { DEFAULT_MARKET_SOURCE, type MarketSourceConfig } from './marketSourceAdapter'
+import { HOST_STORAGE_KEYS } from '../../../shared/storageKeys'
 
 export const DEFAULT_PLUGIN_MARKET_API_BASE = 'https://z-tools.top/api/market'
 export const DEFAULT_SYNC_SERVER_URL = 'wss://z-tools.top'
@@ -23,8 +26,35 @@ export const PluginMarketAuthMode = {
 
 export type PluginMarketAuthMode = (typeof PluginMarketAuthMode)[keyof typeof PluginMarketAuthMode]
 
+/**
+ * 获取当前市场源配置。
+ * 从 LMDB 读取用户配置，未配置时返回默认官方源。
+ * @returns 当前生效的市场源配置
+ */
+export function getMarketSourceConfig(): MarketSourceConfig {
+  try {
+    const stored = databaseAPI.dbGet(HOST_STORAGE_KEYS.pluginMarketSource)
+    if (stored && typeof stored === 'object' && typeof stored.type === 'string') {
+      return stored as MarketSourceConfig
+    }
+  } catch {
+    // ignore read errors, fall back to default
+  }
+  return { ...DEFAULT_MARKET_SOURCE }
+}
+
+/**
+ * 获取当前市场的 API 基础地址。
+ * 仅当使用官方源时返回官方 API 地址；其他源类型返回空字符串。
+ * @returns 官方 API 基础地址或空字符串
+ */
 export function getPluginMarketApiBase(): string {
-  return DEFAULT_PLUGIN_MARKET_API_BASE
+  const source = getMarketSourceConfig()
+  if (source.type === 'official') {
+    return DEFAULT_PLUGIN_MARKET_API_BASE
+  }
+  // 非官方源不使用官方 API，返回空字符串
+  return ''
 }
 
 export async function getPluginMarketAuthHeaders(

@@ -13,7 +13,9 @@ import databaseAPI from '../shared/database'
 import { PluginDevProjectsAPI } from './pluginDevProjects'
 import { PluginInstallerAPI } from './pluginInstaller'
 import { PluginMarketAPI } from './pluginMarket'
-import { requestPluginMarket } from './pluginMarketConfig'
+import { requestPluginMarket, getMarketSourceConfig } from './pluginMarketConfig'
+import { HOST_STORAGE_KEYS } from '../../../shared/storageKeys'
+import type { MarketSourceConfig } from './marketSourceAdapter'
 import {
   getPluginDataPrefix,
   isDevelopmentPluginName
@@ -204,6 +206,15 @@ export class PluginsAPI {
     ipcMain.handle('delete-plugin-market-comment', (_event, commentId: number) =>
       this.market.deleteComment(commentId)
     )
+    ipcMain.handle('get-market-source-config', () => getMarketSourceConfig())
+    ipcMain.handle('set-market-source-config', (_event, config: MarketSourceConfig) => {
+      databaseAPI.dbPut(HOST_STORAGE_KEYS.pluginMarketSource, config)
+      // 清除市场缓存，下次获取时会从新源拉取
+      databaseAPI.dbRemove('plugin-market-data')
+      databaseAPI.dbRemove('plugin-market-storefront')
+      databaseAPI.dbRemove('plugin-market-storefront-fingerprint')
+      return { success: true }
+    })
     ipcMain.handle('install-plugin-from-market', (event, plugin: any) =>
       this.installer.installPluginFromMarket(plugin, event.sender)
     )
