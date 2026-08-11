@@ -87,6 +87,17 @@ try {
   // 读取失败时忽略，保持默认行为（GPU 加速开启）
 }
 
+// 防止进程管道断开时 electron-log 写 stdout/stderr 触发 EPIPE 崩溃
+// （electron-vite dev 模式下父进程退出后管道可能断裂）
+process.stdout.on('error', (err) => {
+  if ((err as NodeJS.ErrnoException).code === 'EPIPE') return
+  throw err
+})
+process.stderr.on('error', (err) => {
+  if ((err as NodeJS.ErrnoException).code === 'EPIPE') return
+  throw err
+})
+
 // 配置 electron-log
 log.transports.file.level = 'debug'
 log.transports.file.maxSize = 5 * 1024 * 1024 // 5MB
