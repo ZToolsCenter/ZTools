@@ -100,7 +100,7 @@ export const useWindowStore = defineStore('window', () => {
   // 固定栏显示行数
   const pinnedRows = ref(2)
   // 搜索框模式
-  const searchMode = ref<SearchMode>('aggregate')
+  const searchMode = ref<SearchMode>('list')
 
   const theme = ref('system') // system, light, dark
   const primaryColor = ref('green') // blue, purple, green, orange, red, pink, custom

@@ -181,6 +181,11 @@ app.whenReady().then(async () => {
   // 初始化悬浮球（从配置决定是否显示）
   if (!isE2ETest) await floatingBallManager.init()
 
+  // 启动后自动打开设置面板，让用户明确知道应用已运行
+  if (!isE2ETest) {
+    windowManager.showSettings()
+  }
+
   // 自动启动已配置的"跟随主程序同时启动运行"的插件
   if (mainWindow && !isE2ETest) {
     try {

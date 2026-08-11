@@ -164,8 +164,10 @@ watch([searchQuery, pastedImageData, pastedFilesData, pastedTextData], () => {
 })
 
 // 动态调整窗口高度
+// 插件模式下由主进程插件管理器控制窗口高度，渲染进程不应覆盖
 function updateWindowHeight(): Promise<void> {
   return nextTick(() => {
+    if (windowStore.currentPlugin) return
     const container = document.querySelector('.app-container')
     if (container) {
       const height = container.scrollHeight
