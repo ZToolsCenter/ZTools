@@ -11,7 +11,7 @@
       class="search-wallpaper-layer"
       :style="searchWallpaperStyle"
     ></div>
-    <div class="search-window">
+    <div v-if="currentView !== ViewMode.Onboarding" class="search-window">
       <div :class="['search-box-wrapper', { 'with-divider': currentView === ViewMode.Plugin }]">
         <SearchBox
           ref="searchBoxRef"
@@ -45,6 +45,9 @@
         <!-- 插件内容由 BrowserView 渲染，这里只是占位 -->
       </div>
     </div>
+
+    <!-- 首次启动画像向导 -->
+    <Onboarding v-if="currentView === ViewMode.Onboarding" @completed="handleOnboardingCompleted" />
   </div>
 </template>
 
@@ -52,6 +55,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import SearchBox from './components/search/SearchBox.vue'
 import SearchResults from './components/search/SearchResults.vue'
+import Onboarding from './components/onboarding/Onboarding.vue'
 import { useCommandDataStore } from './stores/commandDataStore'
 import { useWindowStore } from './stores/windowStore'
 import { CommonKeyboardModifier, readModifiers } from '@renderer/utils/convertKeyboardEvent'
@@ -65,7 +69,8 @@ interface FileItem {
 
 enum ViewMode {
   Search = 'search',
-  Plugin = 'plugin'
+  Plugin = 'plugin',
+  Onboarding = 'onboarding'
 }
 
 const windowStore = useWindowStore()
@@ -203,6 +208,37 @@ function handleComposing(composing: boolean): void {
 // 关闭插件，返回搜索页（胶囊标签关闭按钮）
 function handleClosePlugin(): void {
   exitPluginToSearch()
+}
+
+/**
+ * 首次启动且未完成画像引导时，进入画像向导视图并拉高窗口容纳向导。
+ * @returns 操作完成后结束的 Promise
+ */
+async function enterOnboardingIfNeeded(): Promise<void> {
+  try {
+    const profile = (await window.ztools.dbGet('user-profile')) as
+      | { completed?: boolean }
+      | null
+      | undefined
+    if (profile?.completed) return
+    currentView.value = ViewMode.Onboarding
+    // 向导内容在窗口内垂直居中，窗口高度取固定值以容纳多排卡片布局。
+    window.ztools.resizeWindow(560)
+  } catch (error) {
+    console.error('进入画像向导失败:', error)
+  }
+}
+
+/**
+ * 画像向导完成：返回搜索态并自动打开插件市场（独立一级入口）。
+ */
+function handleOnboardingCompleted(): void {
+  currentView.value = ViewMode.Search
+  nextTick(() => {
+    updateWindowHeight()
+    searchBoxRef.value?.focus()
+  })
+  void window.ztools.pluginUpdates.openMarketHome()
 }
 
 /**
@@ -958,6 +994,9 @@ onMounted(async () => {
 
   // 恢复已检测到的更新状态
   windowStore.checkUpdateStatus()
+
+  // 首次启动（未完成画像引导）时进入画像向导
+  await enterOnboardingIfNeeded()
 
   // 监听超级面板搜索请求（主进程转发，携带剪贴板内容）
   window.ztools.onSuperPanelSearch((data: { text: string; clipboardContent?: any }) => {

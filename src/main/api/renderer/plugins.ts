@@ -180,6 +180,7 @@ export class PluginsAPI {
     ipcMain.handle('upgrade-plugin-from-market', (event, pluginName: string, pluginPath: string) =>
       this.upgradeCurrentPluginFromMarket(pluginName, pluginPath, event.sender)
     )
+    ipcMain.handle('open-plugin-market', () => windowManager.showPluginMarket())
     ipcMain.handle('open-plugin-market-detail', (_event, pluginName: string) =>
       windowManager.showPluginMarketDetail(pluginName)
     )

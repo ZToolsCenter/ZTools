@@ -108,6 +108,12 @@ const api = {
     openMarket: (pluginName: string): Promise<{ success: boolean; error?: string }> =>
       ipcRenderer.invoke('open-plugin-market-detail', pluginName),
     /**
+     * 打开插件市场首页（独立一级入口，全屏浏览模式）。
+     * @returns 打开结果
+     */
+    openMarketHome: (): Promise<{ success: boolean; error?: string }> =>
+      ipcRenderer.invoke('open-plugin-market'),
+    /**
      * 监听当前窗口发起的市场升级进度。
      * @param callback 接收下载和安装进度的回调函数
      * @returns 用于移除监听器的清理函数
@@ -611,6 +617,7 @@ declare global {
           cancelled?: boolean
         }>
         openMarket: (pluginName: string) => Promise<{ success: boolean; error?: string }>
+        openMarketHome: () => Promise<{ success: boolean; error?: string }>
         onProgress: (callback: (payload: PluginMarketDownloadProgress) => void) => () => void
       }
       // mainPush 功能

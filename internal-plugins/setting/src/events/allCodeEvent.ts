@@ -1,4 +1,5 @@
 import { addZtoolsCodeEventListener } from '@/events/codeEvent'
+import { useMarketLayout } from '@/composables'
 import { jumpFunctionPluginInstaller } from '@/views/PluginInstaller/PluginInstaller'
 import { jumpFunctionPluginMarketSetting } from '@/views/PluginMarketSetting/PluginMarketSetting'
 import { jumpLocalLaunchSettingJumpFunction } from '@/views/LocalLaunchSetting/LocalLaunchSetting'
@@ -27,6 +28,18 @@ addZtoolsCodeEventListener('function.plugin-market-search', async (e) => {
   if (payload) {
     jumpFunctionPluginMarketSetting({ payload, type })
   }
+})
+
+/**
+ * 插件市场（独立一级入口，全屏浏览模式，隐藏设置侧栏）
+ * 由主进程 showPluginMarket 触发：home=市场首页，detail=指定插件详情。
+ */
+addZtoolsCodeEventListener('function.plugin-market', (e) => {
+  const { payload, code, type } = e.pluginEnterParams
+  console.info(`[code-event] ${code} 成功接收事件`, payload)
+  const { setMarketFullscreen } = useMarketLayout()
+  setMarketFullscreen(true)
+  jumpFunctionPluginMarketSetting({ payload, type })
 })
 
 /**

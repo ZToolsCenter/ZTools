@@ -1,8 +1,20 @@
 <script setup lang="ts">
 import { LeftMenu } from '@/components'
-import { onBeforeUnmount, onMounted } from 'vue'
-import { startNotificationPolling, stopNotificationPolling } from '@/composables'
+import { onBeforeUnmount, onMounted, watch } from 'vue'
+import { useRoute } from 'vue-router'
+import { startNotificationPolling, stopNotificationPolling, useMarketLayout } from '@/composables'
 import { applyInitialAppearance } from './applyInitialAppearance'
+
+const route = useRoute()
+const { isMarketFullscreen, setMarketFullscreen } = useMarketLayout()
+
+// 离开市场路由时重置全屏态，避免下一次从设置侧栏进入市场时误判为全屏。
+watch(
+  () => route.name,
+  (name) => {
+    if (name !== 'Market') setMarketFullscreen(false)
+  }
+)
 
 onMounted(() => {
   startNotificationPolling()
@@ -24,7 +36,8 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="setting-hone">
-    <div class="setting-hone-menu">
+    <!-- 市场全屏浏览时隐藏设置侧栏，让市场作为独立一级页面呈现 -->
+    <div v-if="!isMarketFullscreen" class="setting-hone-menu">
       <LeftMenu />
     </div>
     <div class="w-full setting-hone-content">

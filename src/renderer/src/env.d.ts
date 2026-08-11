@@ -137,6 +137,7 @@ declare global {
           cancelled?: boolean
         }>
         openMarket: (pluginName: string) => Promise<{ success: boolean; error?: string }>
+        openMarketHome: () => Promise<{ success: boolean; error?: string }>
         onProgress: (callback: (payload: PluginMarketDownloadProgress) => void) => () => void
       }
       // mainPush 功能

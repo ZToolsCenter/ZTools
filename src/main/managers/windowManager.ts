@@ -27,6 +27,7 @@ import detachedWindowManager from '../core/detachedWindowManager'
 import superPanelManager from '../core/superPanelManager'
 import { applyWindowMaterial, getDefaultWindowMaterial } from '../utils/windowUtils'
 import pluginManager from './pluginManager'
+import { isOnboarded } from '../core/userPreferences/userProfile'
 
 // 窗口材质类型
 type WindowMaterial = 'mica' | 'acrylic' | 'none'
@@ -650,6 +651,12 @@ class WindowManager {
         type: 'separator'
       },
       {
+        label: '插件市场',
+        click: () => {
+          void this.showPluginMarket()
+        }
+      },
+      {
         label: '设置',
         click: () => {
           this.showSettings()
@@ -996,6 +1003,21 @@ class WindowManager {
 
     // 使用强制激活逻辑（注意：show 事件会清除 isRestoringFocus 标志）
     this.forceActivateWindow()
+
+    // 唤起主窗口时自动打开插件市场（复用现成市场页：搜索框在上、市场在下）
+    void this.autoOpenMarketOnShow()
+  }
+
+  /**
+   * 唤起主窗口时自动打开插件市场（若当前处于纯搜索态且已完成画像引导）。
+   * @returns 操作完成后结束的 Promise
+   */
+  private async autoOpenMarketOnShow(): Promise<void> {
+    if (!this.mainWindow) return
+    // 未完成画像引导（向导态）不打扰；已有插件视图（含已打开的市场）不重复打开
+    if (!isOnboarded()) return
+    if (pluginManager.getCurrentPluginPath() !== null) return
+    await this.showPluginMarket()
   }
 
   /**
@@ -1447,16 +1469,17 @@ class WindowManager {
   }
 
   /**
-   * 打开设置插件中的指定插件市场详情页。
-   * @param pluginName 需要展示详情的插件名称
+   * 打开插件市场（独立一级入口，可指定插件详情）。
+   * 通过设置插件以市场专用事件码启动，市场页进入全屏浏览模式（隐藏设置侧栏）。
+   * @param pluginName 可选；传入时直接打开该插件的市场详情页
    * @returns 打开结果；无法启动设置插件时包含错误信息
    */
-  public async showPluginMarketDetail(
-    pluginName: string
+  public async showPluginMarket(
+    pluginName?: string
   ): Promise<{ success: boolean; error?: string }> {
-    const normalizedName = pluginName.trim()
-    if (!this.mainWindow || !normalizedName) {
-      return { success: false, error: '无效的插件名称' }
+    const normalizedName = pluginName?.trim() ?? ''
+    if (!this.mainWindow) {
+      return { success: false, error: '主窗口不可用' }
     }
 
     // 切换到设置插件前释放当前插件视图，避免两个插件视图重叠。
@@ -1471,17 +1494,17 @@ class WindowManager {
         return { success: false, error: '未找到设置插件' }
       }
 
-      // 复用设置插件现有的市场详情跳转事件协议。
+      // 以市场专用事件码启动：home=市场首页全屏，detail=指定插件详情全屏。
       const result = await api.launchPlugin({
         path: settingPlugin.path,
         type: 'plugin',
-        featureCode: 'function.plugin-market-search',
+        featureCode: 'function.plugin-market',
         name: '插件市场',
         cmdType: 'over',
         param: {
-          code: 'function.plugin-market-search',
-          type: 'detail',
-          payload: normalizedName
+          code: 'function.plugin-market',
+          type: normalizedName ? 'detail' : 'home',
+          payload: normalizedName || undefined
         }
       })
       if (!result.success) {
@@ -1492,12 +1515,23 @@ class WindowManager {
       this.forceActivateWindow()
       return { success: true }
     } catch (error: unknown) {
-      console.error('[Window] 打开插件市场详情失败:', error)
+      console.error('[Window] 打开插件市场失败:', error)
       return {
         success: false,
         error: error instanceof Error ? error.message : '打开插件市场失败'
       }
     }
+  }
+
+  /**
+   * 打开设置插件中的指定插件市场详情页。
+   * @param pluginName 需要展示详情的插件名称
+   * @returns 打开结果；无法启动设置插件时包含错误信息
+   */
+  public async showPluginMarketDetail(
+    pluginName: string
+  ): Promise<{ success: boolean; error?: string }> {
+    return this.showPluginMarket(pluginName)
   }
 
   /**

@@ -24,6 +24,7 @@ import mcpServer from './core/mcpServer'
 import { registerIconProtocolForSession, registerIconScheme } from './core/iconProtocol'
 import { getLogsPath } from './core/appData/appDataPaths'
 import { loadInternalPlugins } from './core/internalPluginLoader'
+import { isOnboarded, saveProfile } from './core/userPreferences/userProfile'
 import pluginManager from './managers/pluginManager'
 import windowManager from './managers/windowManager'
 
@@ -153,6 +154,11 @@ app.whenReady().then(async () => {
   // ✅ 首先加载内置插件
   loadInternalPlugins()
 
+  // E2E 测试使用隔离数据目录，预置完成画像，避免首次启动画像向导干扰自动化驱动。
+  if (isE2ETest) {
+    saveProfile({ completed: true })
+  }
+
   // 创建主窗口
   const mainWindow = windowManager.createWindow()
 
@@ -181,9 +187,12 @@ app.whenReady().then(async () => {
   // 初始化悬浮球（从配置决定是否显示）
   if (!isE2ETest) await floatingBallManager.init()
 
-  // 启动后自动打开设置面板，让用户明确知道应用已运行
-  if (!isE2ETest) {
-    windowManager.showSettings()
+  // 首次启动（未完成画像引导）时显示主窗口，让渲染层展示引导向导；
+  // 不再自动打开设置面板，避免把用户直接丢进"设置"大杂烩。
+  if (!isE2ETest && !isOnboarded()) {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.once('ready-to-show', () => windowManager.showWindow())
+    }
   }
 
   // 自动启动已配置的"跟随主程序同时启动运行"的插件
