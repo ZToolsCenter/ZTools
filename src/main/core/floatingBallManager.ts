@@ -1,4 +1,4 @@
-import { BrowserWindow, ipcMain, Menu, screen } from 'electron'
+import { app, BrowserWindow, ipcMain, Menu, screen } from 'electron'
 import floatingBallHtml from '../../../resources/floatingBall.html?asset'
 import databaseAPI from '../api/shared/database'
 import windowManager from '../managers/windowManager'
@@ -302,6 +302,14 @@ class FloatingBallManager {
         label: '隐藏悬浮球',
         click: () => {
           this.setEnabled(false)
+        }
+      },
+      { type: 'separator' },
+      {
+        label: '退出 ZTools',
+        click: () => {
+          windowManager.setQuitting(true)
+          app.quit()
         }
       }
     ])

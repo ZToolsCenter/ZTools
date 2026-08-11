@@ -100,11 +100,11 @@ _uTools 的开源实现 | 支持 macOS 和 Windows_
 #### 方式 2：从源码构建
 
 ```bash
-# 克隆仓库
-git clone https://github.com/ZToolsCenter/ZTools.git
+# 克隆仓库（含子模块）
+git clone https://github.com/ZToolsCenter/ZTools.git --recurse-submodules
 cd ZTools
 
-# 安装依赖
+# 安装依赖（Electron 等原生模块会自动编译/下载）
 pnpm install
 
 # 开发模式
@@ -117,6 +117,8 @@ pnpm build:linux  # Linux (当前主机架构)
 pnpm build:linux:x64 # Linux (按 amd64/x64 架构打包)
 pnpm build:linux:arm64 # Linux (按 arm64 架构打包)
 ```
+
+> **国内用户**：项目已内置 Electron 镜像配置（`.npmrc`），`pnpm install` 会自动从 npmmirror 下载，无需额外设置。
 
 ### 使用
 
@@ -180,26 +182,27 @@ ztools/
 
 ### 环境要求
 
-- Node.js >= 18
-- npm >= 9
+- [Node.js](https://nodejs.org/) >= 18
+- [pnpm](https://pnpm.io/) >= 9（`npm i -g pnpm` 安装）
 - macOS 或 Windows 开发环境
 
 ### 代码拉取
 
-1. 先 fork 仓库
-
-- 如果需要贡献代码请 fork [ztools-api-types](https://github.com/ZToolsCenter/ztools-api-types) 和 [ztools-plugin-cli](https://github.com/ZToolsCenter/ztools-plugin-cli) 仓库
-
-2. 拉取完整代码
-
 ```bash
-git clone https://github.com/ZToolsCenter/ZTools.git --recurse-submodules
+# Fork 本仓库后克隆（含子模块）
+git clone https://github.com/your-username/ZTools.git --recurse-submodules
+cd ZTools
+
+# 添加上游仓库
+git remote add upstream https://github.com/ZToolsCenter/ZTools.git
 ```
+
+> 需要贡献代码时，还需 fork [ztools-api-types](https://github.com/ZToolsCenter/ztools-api-types) 和 [ztools-plugin-cli](https://github.com/ZToolsCenter/ztools-plugin-cli) 子模块仓库。
 
 ### 开发命令
 
 ```bash
-# 安装依赖
+# 安装依赖（首次或依赖变更后执行）
 pnpm install
 
 # 开发模式（热重载）

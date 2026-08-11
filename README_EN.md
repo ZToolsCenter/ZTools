@@ -100,11 +100,11 @@ Download the latest version from [Releases](https://github.com/ZToolsCenter/ZToo
 #### Method 2: Build from Source
 
 ```bash
-# Clone the repository
-git clone https://github.com/ZToolsCenter/ZTools.git
+# Clone the repository (with submodules)
+git clone https://github.com/ZToolsCenter/ZTools.git --recurse-submodules
 cd ZTools
 
-# Install dependencies
+# Install dependencies (native modules like Electron compile/download automatically)
 pnpm install
 
 # Development mode
@@ -117,6 +117,8 @@ pnpm build:linux  # Linux (Default Arch)
 pnpm build:linux:x64 # Linux (amd64/x64)
 pnpm build:linux:arm64 # Linux (arm64)
 ```
+
+> **China users**: The project ships a built-in Electron mirror config (`.npmrc`). `pnpm install` downloads from npmmirror automatically — no extra setup needed.
 
 ### Usage
 
@@ -180,14 +182,14 @@ ztools/
 
 ### Requirements
 
-- Node.js >= 18
-- npm >= 9
+- [Node.js](https://nodejs.org/) >= 18
+- [pnpm](https://pnpm.io/) >= 9 (`npm i -g pnpm`)
 - macOS or Windows development environment
 
 ### Development Commands
 
 ```bash
-# Install dependencies
+# Install dependencies (run first time or after dependency changes)
 pnpm install
 
 # Development mode (hot reload)

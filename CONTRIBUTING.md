@@ -33,14 +33,15 @@
 ### 1. Fork 和克隆
 
 ```bash
-# Fork 本仓库到你的账号
-# 然后克隆你的 fork
-git clone https://github.com/your-username/ZTools.git
+# Fork 本仓库到你的账号，然后克隆（含子模块）
+git clone https://github.com/your-username/ZTools.git --recurse-submodules
 cd ZTools
 
 # 添加上游仓库
 git remote add upstream https://github.com/ZToolsCenter/ZTools.git
 ```
+
+> 项目已内置 `.npmrc` 配置（Electron 国内镜像 + 原生模块构建白名单），`pnpm install` 即可完成所有依赖安装，无需额外操作。
 
 ### 2. 创建分支
 
@@ -63,7 +64,7 @@ git checkout -b fix/my-bugfix
 ### 3. 开发
 
 ```bash
-# 安装依赖
+# 安装依赖（首次或依赖变更后执行，原生模块自动编译）
 pnpm install
 
 # 启动开发模式

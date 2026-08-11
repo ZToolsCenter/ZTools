@@ -19,3 +19,4 @@ test-results
 .pnpm-store/*
 _*
 /.sanshu-memory
+pnpm-workspace.yaml
