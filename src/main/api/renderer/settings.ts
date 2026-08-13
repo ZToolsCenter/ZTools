@@ -11,6 +11,7 @@ import { getCurrentShortcut, updateShortcut } from '../../appMain.js'
 
 import dndManager from '../../core/dndManager.js'
 import doubleTapManager from '../../core/doubleTapManager.js'
+import { getLinuxLaunchAtLogin, setLinuxLaunchAtLogin } from '../../core/linuxAutoStart.js'
 import proxyManager from '../../managers/proxyManager.js'
 import windowManager from '../../managers/windowManager.js'
 import { primeScreenCaptureFrame } from '../../core/screenCapture'
@@ -383,6 +384,17 @@ export class SettingsAPI {
 
   // 设置开机启动
   public setLaunchAtLogin(enable: boolean): void {
+    // Linux 打包版通过 XDG autostart 条目控制自启，开发模式不写入用户配置。
+    if (process.platform === 'linux') {
+      if (app.isPackaged) {
+        setLinuxLaunchAtLogin(enable)
+        console.log('[Settings] 设置开机启动:', enable)
+      } else {
+        console.log('[Settings] Linux 开发模式跳过开机自启设置:', enable)
+      }
+      return
+    }
+
     app.setLoginItemSettings({
       openAtLogin: enable,
       openAsHidden: true
@@ -392,6 +404,15 @@ export class SettingsAPI {
 
   // 获取开机启动状态
   public getLaunchAtLogin(): boolean {
+    // Linux 打包版读取 XDG autostart 条目，开发模式不读取用户配置。
+    if (process.platform === 'linux') {
+      if (app.isPackaged) {
+        return getLinuxLaunchAtLogin()
+      }
+      console.log('[Settings] Linux 开发模式跳过开机自启读取')
+      return false
+    }
+
     const settings = app.getLoginItemSettings()
     return settings.openAtLogin
   }

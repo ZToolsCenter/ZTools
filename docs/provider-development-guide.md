@@ -50,7 +50,7 @@ ZTools 把「翻译」「OCR」等能力抽象为 **Provider（提供商）**。
 ```json
 {
   "providers": {
-    "baidu":  { "type": "translation", "label": "百度翻译" },
+    "baidu": { "type": "translation", "label": "百度翻译" },
     "google": { "type": "translation", "label": "谷歌翻译" }
   }
 }
@@ -58,8 +58,12 @@ ZTools 把「翻译」「OCR」等能力抽象为 **Provider（提供商）**。
 
 ```js
 // preload.js
-ztools.registerProvider('baidu', async (input) => { /* 调用百度 */ })
-ztools.registerProvider('google', async (input) => { /* 调用谷歌 */ })
+ztools.registerProvider('baidu', async (input) => {
+  /* 调用百度 */
+})
+ztools.registerProvider('google', async (input) => {
+  /* 调用谷歌 */
+})
 ```
 
 两条都会出现在「设置 → 提供商 → 翻译」，用户可分别启用并选其中一个为默认。

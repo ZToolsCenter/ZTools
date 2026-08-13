@@ -124,6 +124,27 @@ pnpm build:linux:arm64 # Linux (arm64)
 2. Enter application name or command to search
 3. Use `↑` `↓` `←` `→` to navigate, `Enter` to confirm, `Esc` to exit
 
+### Wake Up from Command Line
+
+Run `ztools` in a terminal to bring up an already running ZTools instance and show its main window; if the app is not running yet, it will be started first and then shown. The command returns immediately and does not block the terminal.
+
+```bash
+# Linux (deb package) and macOS (after manual install) can use it directly
+ztools
+
+# In the development environment (run pnpm build first)
+pnpm ztools
+
+# Point to a specific executable with an environment variable
+ZTOOLS_BIN=/path/to/ZTools ztools
+```
+
+Availability by installation method:
+
+- **Linux deb**: the package creates `/usr/bin/ztools` automatically and removes it on uninstall
+- **macOS dmg**: create a symlink manually on first use: `sudo ln -s "/Applications/ZTools.app/Contents/Resources/ztools/ztools-launcher.sh" /usr/local/bin/ztools`
+- **Windows**: development environment only (`pnpm ztools`)
+
 ## 🧩 Plugin Development
 
 ZTools is a powerful and extensible plugin platform that enhances your productivity with custom plugins. With simple configuration, rich APIs, and cross-platform support, you can easily develop powerful plugins.
@@ -210,6 +231,9 @@ pnpm build:linux        # Package Linux app (Default Arch)
 pnpm build:linux:x64    # Package Linux app (amd64/x64)
 pnpm build:linux:arm64  # Package Linux app (arm64)
 pnpm build:unpack       # Package without installer (for debugging)
+
+# Command line wake-up
+pnpm ztools             # Wake up a running instance (or start the app)
 ```
 
 ### Debugging

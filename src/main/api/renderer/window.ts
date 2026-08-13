@@ -176,6 +176,16 @@ export class WindowAPI {
     await windowManager.updateWindowPositionStrategy(strategy)
     console.log('[WindowAPI] 更新窗口呼出位置策略:', strategy)
   }
+
+  /**
+   * 更新 Linux CSS app-region 拖拽开关状态。
+   *
+   * @param enabled 是否启用 CSS app-region 系统拖拽。
+   * @returns 无返回值。
+   */
+  public setCssAppRegionDrag(enabled: boolean): void {
+    windowManager.setCssAppRegionDragEnabled(enabled)
+  }
 }
 
 export default new WindowAPI()

@@ -1,7 +1,9 @@
+import { platform } from '@electron-toolkit/utils'
 import { BrowserWindow, ipcMain, Menu, screen } from 'electron'
 import floatingBallHtml from '../../../resources/floatingBall.html?asset'
 import databaseAPI from '../api/shared/database'
 import windowManager from '../managers/windowManager'
+import { shouldShowFloatingBallMoveMenu } from './floatingBallDragMode'
 
 // 悬浮球尺寸
 const BALL_SIZE = 48
@@ -18,6 +20,10 @@ class FloatingBallManager {
   // 拖拽状态：记录拖拽开始时鼠标相对窗口左上角的偏移
   private dragOffsetX = 0
   private dragOffsetY = 0
+  // 移动模式：Wayland 下整球交给合成器拖拽的状态标记
+  private moveMode = false
+  // 移动模式退出防抖定时器：move 事件停止 300ms 后自动退出并保存位置
+  private moveModeExitTimer: ReturnType<typeof setTimeout> | null = null
 
   /**
    * 初始化悬浮球管理器
@@ -163,6 +169,8 @@ class FloatingBallManager {
       x,
       y,
       frame: false,
+      // 固定窗口标题，便于 KDE 等桌面按「窗口规则」检测悬浮球
+      title: 'ZTools 悬浮球',
       transparent: true,
       alwaysOnTop: true,
       resizable: false,
@@ -177,6 +185,22 @@ class FloatingBallManager {
         contextIsolation: false,
         nodeIntegration: true
       }
+    })
+
+    // 移动模式监听：moved 触发立即退出，move 停止 300ms 后退出（覆盖不同合成器事件差异）
+    this.ballWindow.on('moved', () => {
+      if (this.moveMode) {
+        this.exitMoveMode()
+      }
+    })
+    this.ballWindow.on('move', () => {
+      if (!this.moveMode) return
+      // 拖拽仍在进行，重置防抖定时器
+      this.clearMoveModeExitTimer()
+      this.moveModeExitTimer = setTimeout(() => {
+        this.moveModeExitTimer = null
+        this.exitMoveMode()
+      }, 300)
     })
 
     // macOS 上设置窗口层级为浮动面板（高于普通窗口）
@@ -286,9 +310,47 @@ class FloatingBallManager {
 
   /**
    * 显示右键菜单
+   * 菜单项按当前平台、Wayland 会话与 CSS 拖拽开关动态构建；
+   * 移动模式下提供“退出移动模式”入口。
+   *
+   * @returns 无返回值。
    */
   private showContextMenu(): void {
-    if (!this.ballWindow) return
+    if (!this.ballWindow || this.ballWindow.isDestroyed()) return
+
+    // 读取当前会话与 CSS app-region 拖拽开关，决定是否显示移动入口
+    const isLinux = platform.isLinux
+    const isWayland = !!process.env.WAYLAND_DISPLAY
+    const cssAppRegionDragEnabled = this.isCssAppRegionDragEnabled()
+    const showMoveEntry = shouldShowFloatingBallMoveMenu(
+      isLinux,
+      isWayland,
+      cssAppRegionDragEnabled
+    )
+
+    const moveItems: Electron.MenuItemConstructorOptions[] = []
+    if (this.moveMode) {
+      // 移动模式中始终提供退出入口
+      moveItems.push({
+        label: '退出移动模式',
+        click: () => {
+          this.exitMoveMode()
+        }
+      })
+    } else if (showMoveEntry) {
+      moveItems.push({
+        label: '移动悬浮球',
+        click: () => {
+          this.enterMoveMode()
+        }
+      })
+    } else if (isLinux && isWayland) {
+      // Wayland 但未开启 CSS 拖拽时给出禁用提示，引导用户到设置中开启
+      moveItems.push({
+        label: '需在设置中开启 CSS 拖拽后使用',
+        enabled: false
+      })
+    }
 
     const menu = Menu.buildFromTemplate([
       {
@@ -297,6 +359,7 @@ class FloatingBallManager {
           this.handleBallClick()
         }
       },
+      ...(moveItems.length > 0 ? [{ type: 'separator' as const }, ...moveItems] : []),
       { type: 'separator' },
       {
         label: '隐藏悬浮球',
@@ -307,6 +370,69 @@ class FloatingBallManager {
     ])
 
     menu.popup({ window: this.ballWindow })
+  }
+
+  /**
+   * 进入移动模式
+   * 发送 IPC 通知悬浮球页面切换为合成器拖拽区域，等待拖拽结束后自动退出。
+   *
+   * @returns 无返回值。
+   */
+  private enterMoveMode(): void {
+    if (this.moveMode || !this.ballWindow || this.ballWindow.isDestroyed()) return
+
+    // 清理可能残留的退出定时器，避免旧定时器提前退出
+    this.clearMoveModeExitTimer()
+    this.moveMode = true
+    this.ballWindow.webContents.send('floating-ball-enter-move-mode')
+    console.log('[FloatingBall] 已进入移动模式')
+  }
+
+  /**
+   * 退出移动模式
+   * 清理防抖定时器、通知页面恢复交互并保存当前位置。
+   *
+   * @returns 无返回值。
+   */
+  private exitMoveMode(): void {
+    if (!this.moveMode) return
+
+    this.clearMoveModeExitTimer()
+    this.moveMode = false
+    if (this.ballWindow && !this.ballWindow.isDestroyed()) {
+      this.ballWindow.webContents.send('floating-ball-exit-move-mode')
+    }
+    // 拖拽结束后保存合成器决定的最终位置
+    this.savePosition()
+    console.log('[FloatingBall] 已退出移动模式')
+  }
+
+  /**
+   * 清理移动模式退出防抖定时器
+   *
+   * @returns 无返回值。
+   */
+  private clearMoveModeExitTimer(): void {
+    if (this.moveModeExitTimer) {
+      clearTimeout(this.moveModeExitTimer)
+      this.moveModeExitTimer = null
+    }
+  }
+
+  /**
+   * 读取 CSS app-region 系统拖拽开关
+   * 与设置插件持久化的 settings-general.useCssAppRegionDrag 保持一致。
+   *
+   * @returns 是否已开启 CSS app-region 系统拖拽。
+   */
+  private isCssAppRegionDragEnabled(): boolean {
+    try {
+      const data = databaseAPI.dbGet('settings-general')
+      return Boolean(data?.useCssAppRegionDrag)
+    } catch (error) {
+      console.error('[FloatingBall] 读取 CSS app-region 拖拽配置失败:', error)
+      return false
+    }
   }
 
   /**
@@ -379,13 +505,22 @@ class FloatingBallManager {
 
   /**
    * 销毁悬浮球窗口
+   *
+   * @returns 无返回值。
    */
   private destroyBallWindow(): void {
-    if (this.ballWindow && !this.ballWindow.isDestroyed()) {
-      this.enabled = false // 先标记为禁用，避免 close 事件 preventDefault
-      // 移除所有事件监听器，防止干扰销毁过程
-      this.ballWindow.removeAllListeners('close')
-      this.ballWindow.destroy()
+    if (this.ballWindow) {
+      if (!this.ballWindow.isDestroyed()) {
+        this.enabled = false // 先标记为禁用，避免 close 事件 preventDefault
+        // 移除所有事件监听器，防止干扰销毁过程
+        this.ballWindow.removeAllListeners('close')
+        this.ballWindow.removeAllListeners('moved')
+        this.ballWindow.removeAllListeners('move')
+        this.ballWindow.destroy()
+      }
+      // 复位移动模式并清理退出定时器，避免残留定时器在窗口销毁后触发
+      this.moveMode = false
+      this.clearMoveModeExitTimer()
       this.ballWindow = null
       console.log('[FloatingBall] 悬浮球窗口已销毁')
     }

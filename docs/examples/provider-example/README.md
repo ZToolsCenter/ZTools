@@ -21,8 +21,12 @@
 ```
 
 ```js
-ztools.registerProvider('baidu', async (input) => { /* ... */ })
-ztools.registerProvider('google', async (input) => { /* ... */ })
+ztools.registerProvider('baidu', async (input) => {
+  /* ... */
+})
+ztools.registerProvider('google', async (input) => {
+  /* ... */
+})
 ```
 
 详见主程序 `docs/provider-development-guide.md`。

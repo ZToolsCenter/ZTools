@@ -311,6 +311,18 @@ const api = {
   ) => {
     ipcRenderer.on('update-acrylic-opacity', (_event, data) => callback(data))
   },
+  /**
+   * 监听 CSS app-region 拖拽开关的实时更新。
+   * @param callback 接收开关状态（true 表示由系统接管搜索框区域拖拽）的回调函数
+   * @returns 用于移除监听器的清理函数
+   */
+  onUpdateCssAppRegionDrag: (callback: (enabled: boolean) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, enabled: boolean): void => callback(enabled)
+    ipcRenderer.on('update-css-app-region-drag', handler)
+    return (): void => {
+      ipcRenderer.removeListener('update-css-app-region-drag', handler)
+    }
+  },
   onIpcLaunch: (
     callback: (options: {
       path: string

@@ -90,4 +90,18 @@ describe('plugin preload internal api bridge', () => {
 
     expect(ipcInvoke).toHaveBeenCalledWith('account:delete')
   })
+
+  it('exposes getLinuxSession through the internal IPC channel', () => {
+    require(preloadPath)
+
+    const internalApi = (globalThis as any).window.ztools?.internal
+
+    expect(internalApi?.getLinuxSession).toBeTypeOf('function')
+
+    ipcSendSync.mockReturnValue({ isWayland: true })
+    const result = internalApi.getLinuxSession()
+
+    expect(ipcSendSync).toHaveBeenCalledWith('internal:get-linux-session')
+    expect(result).toEqual({ isWayland: true })
+  })
 })

@@ -1073,6 +1073,11 @@ window.ztools = {
     getAppVersion: async () => await electron.ipcRenderer.invoke('get-app-version'),
     getSystemVersions: async () => await electron.ipcRenderer.invoke('get-system-versions'),
     getPlatform: () => electron.ipcRenderer.sendSync('internal:get-platform'),
+    /**
+     * 返回当前 Linux 会话是否为 Wayland。
+     * @returns {{ isWayland: boolean }} Wayland 会话判定结果
+     */
+    getLinuxSession: () => electron.ipcRenderer.sendSync('internal:get-linux-session'),
 
     // 通知主渲染进程更新搜索框提示文字
     updatePlaceholder: async (placeholder) =>
@@ -1091,6 +1096,9 @@ window.ztools = {
       await electron.ipcRenderer.invoke('internal:update-auto-back-to-search', autoBackToSearch),
     updateWindowPositionStrategy: async (strategy) =>
       await electron.ipcRenderer.invoke('internal:update-window-position-strategy', strategy),
+    // 通知主渲染进程切换 CSS app-region 拖拽
+    updateCssAppRegionDrag: async (enabled) =>
+      await electron.ipcRenderer.invoke('internal:update-css-app-region-drag', enabled),
     // 通知主渲染进程更新显示最近使用配置
     updateShowRecentInSearch: async (showRecentInSearch) =>
       await electron.ipcRenderer.invoke(
