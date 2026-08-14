@@ -4,11 +4,14 @@
 
 import { spawn } from 'node:child_process'
 import fs from 'node:fs'
+import { createRequire } from 'node:module'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const WAKE_ARG = '--ztools-wake'
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+// ESM 模块没有全局 require，用 createRequire 桥接以解析本地 electron 依赖。
+const require = createRequire(import.meta.url)
 
 /**
  * 定位 ZTools 可执行文件。

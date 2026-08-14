@@ -7,7 +7,7 @@ import path from 'node:path'
 
 const projectRoot = path.resolve(__dirname, '../..')
 
-test('可以启动主窗口、打开内置设置插件并截图', async (_fixtures, testInfo) => {
+test('可以启动主窗口、打开内置设置插件并截图', async ({}, testInfo) => {
   const dataRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'ztools-playwright-'))
   const legacyRoot = path.join(dataRoot, 'legacy')
   const searchScreenshotPath = testInfo.outputPath('search-window.png')
@@ -249,22 +249,24 @@ test('命令行唤起已运行实例', async () => {
 
   await fs.mkdir(legacyRoot, { recursive: true })
 
+  // 主实例与第二实例必须使用完全一致的隔离环境，才能命中同一个单实例锁，
+  // 并且保证第二实例不会读写真实的 ~/.ztools 数据。
+  const testEnv = {
+    ...Object.fromEntries(
+      Object.entries(process.env).filter((entry): entry is [string, string] => Boolean(entry[1]))
+    ),
+    ZTOOLS_DATA_ROOT: dataRoot,
+    ZTOOLS_E2E: '1',
+    ZTOOLS_LEGACY_USER_DATA_PATH: legacyRoot,
+    ZTOOLS_SETTING_DEV_SERVER_URL: 'http://127.0.0.1:15177'
+  }
+
   try {
     // 使用完全隔离的数据目录启动真实 Electron 主进程。
     electronApp = await electron.launch({
       args: [projectRoot],
       cwd: projectRoot,
-      env: {
-        ...Object.fromEntries(
-          Object.entries(process.env).filter((entry): entry is [string, string] =>
-            Boolean(entry[1])
-          )
-        ),
-        ZTOOLS_DATA_ROOT: dataRoot,
-        ZTOOLS_E2E: '1',
-        ZTOOLS_LEGACY_USER_DATA_PATH: legacyRoot,
-        ZTOOLS_SETTING_DEV_SERVER_URL: 'http://127.0.0.1:15177'
-      }
+      env: testEnv
     })
 
     const page = await electronApp.firstWindow()
@@ -272,9 +274,30 @@ test('命令行唤起已运行实例', async () => {
     // 等待主窗口完全就绪，确保单实例锁已被首个实例持有。
     await expect(searchInput).toBeVisible()
 
-    // 用同一 Electron 二进制派生第二实例，携带命令行唤起参数。
+    // 隐藏主窗口并记录 show 事件，验证后续唤醒确实把窗口重新显示出来。
+    await electronApp.evaluate(({ BrowserWindow }) => {
+      const mainWindow = BrowserWindow.getAllWindows().find((window) => !window.isDestroyed())
+      if (!mainWindow) throw new Error('未找到主窗口')
+      ;(globalThis as Record<string, unknown>).__ztoolsE2EShowCount = 0
+      mainWindow.on('show', () => {
+        const current = (globalThis as Record<string, unknown>).__ztoolsE2EShowCount as number
+        ;(globalThis as Record<string, unknown>).__ztoolsE2EShowCount = current + 1
+      })
+      mainWindow.hide()
+    })
+    await expect
+      .poll(() =>
+        electronApp!.evaluate(({ BrowserWindow }) => {
+          const mainWindow = BrowserWindow.getAllWindows().find((window) => !window.isDestroyed())
+          return mainWindow?.isVisible() ?? false
+        })
+      )
+      .toBe(false)
+
+    // 用同一 Electron 二进制和同一隔离环境派生第二实例，携带命令行唤起参数。
     const secondInstance = spawn(electronPath, [projectRoot, '--ztools-wake'], {
       cwd: projectRoot,
+      env: testEnv,
       detached: false,
       stdio: ['ignore', 'pipe', 'pipe']
     })
@@ -292,11 +315,19 @@ test('命令行唤起已运行实例', async () => {
     })
     expect(secondExitCode).toBe(0)
 
-    // 原实例仍存活，主窗口未被销毁。
-    const hasMainWindow = await electronApp.evaluate(({ BrowserWindow }) =>
-      BrowserWindow.getAllWindows().some((window) => !window.isDestroyed())
+    // 原实例收到 second-instance 事件后应重新显示主窗口。
+    await expect
+      .poll(() =>
+        electronApp!.evaluate(({ BrowserWindow }) => {
+          const mainWindow = BrowserWindow.getAllWindows().find((window) => !window.isDestroyed())
+          return mainWindow?.isVisible() ?? false
+        })
+      )
+      .toBe(true)
+    const showCount = await electronApp.evaluate(
+      () => (globalThis as Record<string, unknown>).__ztoolsE2EShowCount as number
     )
-    expect(hasMainWindow).toBe(true)
+    expect(showCount).toBeGreaterThanOrEqual(1)
   } finally {
     await electronApp?.close()
     await fs.rm(dataRoot, { recursive: true, force: true })
