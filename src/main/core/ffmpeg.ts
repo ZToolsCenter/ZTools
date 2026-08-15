@@ -19,9 +19,9 @@ class FFmpegManager {
 
   private readonly DOWNLOAD_URLS = {
     'win32-x64':
-      'https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-07-15-14-01/ffmpeg-n8.1.2-22-g94138f6973-win64-gpl-8.1.zip',
+      'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip',
     'win32-arm64':
-      'https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-07-15-14-01/ffmpeg-n8.1.2-22-g94138f6973-winarm64-gpl-8.1.zip',
+      'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-winarm64-gpl.zip',
     'darwin-arm64':
       'https://github.com/eko5624/mpv-mac/releases/download/2026-03-09/ffmpeg-arm64-248b481c33.zip',
     'darwin-x64':
@@ -29,13 +29,19 @@ class FFmpegManager {
   }
 
   /**
-   * FFmpeg 存储路径: {userData}/extends/ffmpeg{.exe}
+   * 返回当前平台与架构隔离后的 FFmpeg 存储路径。
+   * @returns FFmpeg 可执行文件的绝对路径。
    */
   private resolveFFmpegPath(): string {
-    const ext = process.platform === 'win32' ? '.exe' : ''
-    return path.join(getExtendsPath(), `ffmpeg${ext}`)
+    const fileName = process.platform === 'win32' ? `ffmpeg-${process.arch}.exe` : 'ffmpeg'
+    return path.join(getExtendsPath(), fileName)
   }
 
+  /**
+   * 返回当前平台与架构对应的 FFmpeg 下载地址。
+   * @returns FFmpeg 压缩包下载地址。
+   * @throws 当前平台与架构没有可用构建时抛出错误。
+   */
   private getDownloadUrl(): string {
     const key = `${process.platform}-${process.arch}`
     const url = this.DOWNLOAD_URLS[key as keyof typeof this.DOWNLOAD_URLS]

@@ -95,7 +95,7 @@ _uTools 的开源实现 | 支持 macOS 和 Windows_
 从 [Releases](https://github.com/ZToolsCenter/ZTools/releases) 页面下载最新版本：
 
 - **macOS**: `ztools-x.x.x.dmg` 或 `ZTools-x.x.x-arm64-mac.zip`
-- **Windows**: `ztools-x.x.x-setup.exe` 或 `ztools-x.x.x-win.zip`
+- **Windows x64 / ARM64**: `ZTools-x.x.x-win-{arch}-setup.exe` 或 `ZTools-x.x.x-win-{arch}.zip`
 
 #### 方式 2：从源码构建
 
@@ -112,7 +112,8 @@ pnpm dev
 
 # 构建
 pnpm build:mac    # macOS
-pnpm build:win    # Windows
+pnpm build:win:x64   # Windows x64（build:win 仍为 x64 别名）
+pnpm build:win:arm64 # Windows ARM64
 pnpm build:linux  # Linux (当前主机架构)
 pnpm build:linux:x64 # Linux (按 amd64/x64 架构打包)
 pnpm build:linux:arm64 # Linux (按 arm64 架构打包)
@@ -217,7 +218,8 @@ pnpm lint               # ESLint 检查
 # 构建
 pnpm build              # 仅编译源码
 pnpm build:mac          # 打包 macOS 应用
-pnpm build:win          # 打包 Windows 应用
+pnpm build:win:x64      # 打包 Windows x64 应用（build:win 仍为 x64 别名）
+pnpm build:win:arm64    # 打包 Windows ARM64 应用
 pnpm build:linux        # 打包 Linux 应用 (当前主机架构)
 pnpm build:linux:x64    # 打包 Linux 应用 (amd64/x64)
 pnpm build:linux:arm64  # 打包 Linux 应用 (arm64)

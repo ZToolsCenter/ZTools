@@ -8,8 +8,10 @@ import {
 } from './version-utils.mjs'
 import {
   mergeMacUpdateMetadata,
+  mergeWindowsUpdateMetadata,
   readUpdateMetadata,
   selectMacUpdateZip,
+  selectWindowsInstaller,
   validateReferencedAsset,
   withReleaseNotes,
   writeUpdateMetadata
@@ -32,21 +34,46 @@ console.log(`下载地址: ${downloadUrl}`)
 const downloadLinks = generateDownloadLinksMarkdown(downloadUrl, version)
 const updatedChangelog = changelog + downloadLinks
 
-// CI 使用独立目录避免两个 macOS job 的同名 latest-mac.yml 相互覆盖。
-const windowsMetadataPath = process.env.WINDOWS_UPDATE_METADATA || 'dist/latest.yml'
+// CI 使用独立目录避免不同架构 job 的同名更新元数据相互覆盖。
+const windowsX64MetadataPath = process.env.WINDOWS_X64_UPDATE_METADATA
+const windowsArm64MetadataPath = process.env.WINDOWS_ARM64_UPDATE_METADATA
+const fallbackWindowsMetadataPath = process.env.WINDOWS_UPDATE_METADATA || 'dist/latest.yml'
 const macX64MetadataPath = process.env.MAC_X64_UPDATE_METADATA
 const macArm64MetadataPath = process.env.MAC_ARM64_UPDATE_METADATA
 const metadataOutputDir =
-  process.env.UPDATE_METADATA_OUTPUT_DIR || path.dirname(windowsMetadataPath)
+  process.env.UPDATE_METADATA_OUTPUT_DIR ||
+  path.dirname(windowsX64MetadataPath || fallbackWindowsMetadataPath)
 const requireUpdateMetadata = process.env.REQUIRE_UPDATE_METADATA === 'true'
 
-if (existsSync(windowsMetadataPath)) {
-  const windowsMetadata = withReleaseNotes(readUpdateMetadata(windowsMetadataPath), changelog)
+if (windowsX64MetadataPath || windowsArm64MetadataPath) {
+  if (!windowsX64MetadataPath || !windowsArm64MetadataPath) {
+    throw new Error('必须同时提供 WINDOWS_X64_UPDATE_METADATA 和 WINDOWS_ARM64_UPDATE_METADATA')
+  }
+
+  const x64Metadata = readUpdateMetadata(windowsX64MetadataPath)
+  const arm64Metadata = readUpdateMetadata(windowsArm64MetadataPath)
+  const x64Installer = selectWindowsInstaller(x64Metadata, 'x64')
+  const arm64Installer = selectWindowsInstaller(arm64Metadata, 'arm64')
+
+  // 发布前确认两个架构的安装包都实际存在于各自构建产物目录。
+  validateReferencedAsset(windowsX64MetadataPath, x64Installer)
+  validateReferencedAsset(windowsArm64MetadataPath, arm64Installer)
+
+  const windowsMetadata = mergeWindowsUpdateMetadata(x64Metadata, arm64Metadata, changelog)
+  const windowsOutputPath = path.join(metadataOutputDir, 'latest.yml')
+  writeUpdateMetadata(windowsOutputPath, windowsMetadata)
+  console.log(`✅ 已生成 ${windowsOutputPath}`)
+} else if (existsSync(fallbackWindowsMetadataPath)) {
+  // 保留单架构调用方式，供本地或旧版发布脚本继续规范化已有 latest.yml。
+  const windowsMetadata = withReleaseNotes(
+    readUpdateMetadata(fallbackWindowsMetadataPath),
+    changelog
+  )
   const windowsOutputPath = path.join(metadataOutputDir, 'latest.yml')
   writeUpdateMetadata(windowsOutputPath, windowsMetadata)
   console.log(`✅ 已生成 ${windowsOutputPath}`)
 } else {
-  const message = `未找到 Windows 更新元数据: ${windowsMetadataPath}`
+  const message = `未找到 Windows 更新元数据: ${fallbackWindowsMetadataPath}`
   if (requireUpdateMetadata) throw new Error(message)
   console.warn(`⚠️ ${message}`)
 }

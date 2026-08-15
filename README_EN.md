@@ -95,7 +95,7 @@ English | [简体中文](./README.md)
 Download the latest version from [Releases](https://github.com/ZToolsCenter/ZTools/releases):
 
 - **macOS**: `ztools-x.x.x.dmg` or `ZTools-x.x.x-arm64-mac.zip`
-- **Windows**: `ztools-x.x.x-setup.exe` or `ztools-x.x.x-win.zip`
+- **Windows x64 / ARM64**: `ZTools-x.x.x-win-{arch}-setup.exe` or `ZTools-x.x.x-win-{arch}.zip`
 
 #### Method 2: Build from Source
 
@@ -112,7 +112,8 @@ pnpm dev
 
 # Build
 pnpm build:mac    # macOS
-pnpm build:win    # Windows
+pnpm build:win:x64   # Windows x64 (build:win remains an x64 alias)
+pnpm build:win:arm64 # Windows ARM64
 pnpm build:linux  # Linux (Default Arch)
 pnpm build:linux:x64 # Linux (amd64/x64)
 pnpm build:linux:arm64 # Linux (arm64)
@@ -205,7 +206,8 @@ pnpm lint               # ESLint check
 # Build
 pnpm build              # Compile source code only
 pnpm build:mac          # Package macOS app
-pnpm build:win          # Package Windows app
+pnpm build:win:x64      # Package Windows x64 app (build:win remains an x64 alias)
+pnpm build:win:arm64    # Package Windows ARM64 app
 pnpm build:linux        # Package Linux app (Default Arch)
 pnpm build:linux:x64    # Package Linux app (amd64/x64)
 pnpm build:linux:arm64  # Package Linux app (arm64)

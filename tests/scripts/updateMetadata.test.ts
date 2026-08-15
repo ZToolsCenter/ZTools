@@ -1,9 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import {
   mergeMacUpdateMetadata,
+  mergeWindowsUpdateMetadata,
   selectMacUpdateZip,
-  withReleaseNotes
+  selectWindowsInstaller,
+  validateReferencedAsset
 } from '../../scripts/update-metadata.mjs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 
 const x64Metadata = {
   version: '3.0.0-beta.9',
@@ -63,22 +68,109 @@ describe('macOS update metadata', () => {
 })
 
 describe('Windows update metadata', () => {
-  it('adds release notes without rewriting electron-builder metadata', () => {
-    const normalized = withReleaseNotes(
+  const windowsX64Metadata = {
+    version: '3.0.0-beta.9',
+    files: [
       {
-        version: '3.0.0-beta.9',
-        files: [{ url: 'ZTools-3.0.0-beta.9-win-x64-setup.exe', sha512: 'setup-sha512' }],
-        path: 'ZTools-3.0.0-beta.9-win-x64-setup.exe',
-        sha512: 'setup-sha512',
-        releaseDate: '2026-07-20T00:00:00.000Z'
+        url: 'ZTools-3.0.0-beta.9-win-x64-setup.exe',
+        sha512: 'setup-x64',
+        size: 120
       },
+      { url: 'ZTools-3.0.0-beta.9-win-x64.zip', sha512: 'zip-x64' }
+    ],
+    path: 'ZTools-3.0.0-beta.9-win-x64-setup.exe',
+    sha512: 'setup-x64',
+    releaseDate: '2026-07-20T00:00:00.000Z'
+  }
+
+  const windowsArm64Metadata = {
+    version: '3.0.0-beta.9',
+    files: [
+      {
+        url: 'ZTools-3.0.0-beta.9-win-arm64-setup.exe',
+        sha512: 'setup-arm64',
+        size: 110
+      }
+    ],
+    releaseDate: '2026-07-20T00:00:01.000Z'
+  }
+
+  it('selects exactly one checksummed installer for the requested architecture', () => {
+    expect(selectWindowsInstaller(windowsArm64Metadata, 'arm64')).toMatchObject({
+      url: 'ZTools-3.0.0-beta.9-win-arm64-setup.exe',
+      sha512: 'setup-arm64'
+    })
+  })
+
+  it('merges x64 then arm64 installers and keeps legacy fields on x64', () => {
+    const merged = mergeWindowsUpdateMetadata(
+      windowsX64Metadata,
+      windowsArm64Metadata,
       'release notes'
     )
 
-    expect(normalized.files[0].sha512).toBe('setup-sha512')
-    expect(normalized.path).toBe('ZTools-3.0.0-beta.9-win-x64-setup.exe')
-    expect(normalized.sha512).toBe('setup-sha512')
-    expect(normalized.releaseNotes).toBe('release notes')
-    expect(normalized).not.toHaveProperty('changelog')
+    expect(merged.files).toEqual([
+      {
+        url: 'ZTools-3.0.0-beta.9-win-x64-setup.exe',
+        sha512: 'setup-x64',
+        size: 120
+      },
+      {
+        url: 'ZTools-3.0.0-beta.9-win-arm64-setup.exe',
+        sha512: 'setup-arm64',
+        size: 110
+      }
+    ])
+    expect(merged.path).toBe('ZTools-3.0.0-beta.9-win-x64-setup.exe')
+    expect(merged.sha512).toBe('setup-x64')
+    expect(merged.releaseNotes).toBe('release notes')
+  })
+
+  it('rejects Windows metadata from different versions', () => {
+    expect(() =>
+      mergeWindowsUpdateMetadata(
+        windowsX64Metadata,
+        { ...windowsArm64Metadata, version: '3.0.1' },
+        ''
+      )
+    ).toThrow('版本不一致')
+  })
+
+  it('rejects missing, duplicate, or unsigned Windows installers', () => {
+    expect(() => selectWindowsInstaller({ ...windowsArm64Metadata, files: [] }, 'arm64')).toThrow(
+      '必须包含且仅包含一个'
+    )
+    expect(() =>
+      selectWindowsInstaller(
+        {
+          ...windowsArm64Metadata,
+          files: [...windowsArm64Metadata.files, ...windowsArm64Metadata.files]
+        },
+        'arm64'
+      )
+    ).toThrow('必须包含且仅包含一个')
+    expect(() =>
+      selectWindowsInstaller(
+        {
+          ...windowsArm64Metadata,
+          files: [{ url: 'ZTools-3.0.0-beta.9-win-arm64-setup.exe' }]
+        },
+        'arm64'
+      )
+    ).toThrow('缺少 SHA-512')
+  })
+
+  it('rejects metadata that references an installer missing from disk', () => {
+    const metadataDir = mkdtempSync(path.join(tmpdir(), 'ztools-update-metadata-'))
+    const metadataPath = path.join(metadataDir, 'latest.yml')
+    writeFileSync(metadataPath, 'version: 3.0.0-beta.9\n')
+
+    try {
+      expect(() => validateReferencedAsset(metadataPath, windowsArm64Metadata.files[0])).toThrow(
+        '引用的文件不存在'
+      )
+    } finally {
+      rmSync(metadataDir, { recursive: true, force: true })
+    }
   })
 })

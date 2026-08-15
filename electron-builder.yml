@@ -44,12 +44,8 @@ win:
   executableName: ZTools
   artifactName: ${name}-${version}-${os}-${arch}.${ext}
   target:
-    - target: nsis
-      arch:
-        - x64
-    - target: zip
-      arch:
-        - x64
+    - nsis
+    - zip
 nsis:
   artifactName: ${name}-${version}-${os}-${arch}-setup.${ext}
   include: build/installer.nsh

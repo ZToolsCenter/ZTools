@@ -44,7 +44,12 @@ jobs:
           # Windows x64
           - os: windows-latest
             arch: x64
-            build_cmd: pnpm run build:win
+            build_cmd: pnpm run build:win:x64
+            signing_identity: ''
+          # Windows ARM64
+          - os: windows-11-arm
+            arch: arm64
+            build_cmd: pnpm run build:win:arm64
             signing_identity: ''
 
     steps:
@@ -72,10 +77,12 @@ jobs:
             exit 1
           fi
 
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "tag=v$version" >> "$GITHUB_OUTPUT"
-          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
-          echo "make_latest=$([ "$prerelease" = "true" ] && echo false || echo true)" >> "$GITHUB_OUTPUT"
+          {
+            echo "version=$version"
+            echo "tag=v$version"
+            echo "prerelease=$prerelease"
+            echo "make_latest=$([ "$prerelease" = "true" ] && echo false || echo true)"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Set package version
         env:
@@ -84,20 +91,25 @@ jobs:
           node -e "const fs=require('fs'); const pkg=JSON.parse(fs.readFileSync('package.json','utf8')); pkg.version=process.env.RELEASE_VERSION; fs.writeFileSync('package.json', JSON.stringify(pkg,null,2)+'\n');"
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v2
+        uses: pnpm/action-setup@v4
         with:
           version: 9
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.12'
 
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
+          architecture: ${{ matrix.arch }}
           cache: 'pnpm'
+
+      - name: Set up MSBuild
+        if: startsWith(matrix.os, 'windows')
+        uses: microsoft/setup-msbuild@v2
 
       - name: Install plugin dependencies
         run: |
@@ -106,6 +118,46 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Build and verify Windows native API
+        if: startsWith(matrix.os, 'windows')
+        shell: pwsh
+        env:
+          NATIVE_API_COMMIT: bb2025c9dddeedfd0738b7632650b2e4e8147466
+          TARGET_ARCH: ${{ matrix.arch }}
+        run: |
+          if ((node -p process.arch) -ne $env:TARGET_ARCH) {
+            throw "Node architecture does not match the target: $(node -p process.arch)"
+          }
+
+          $nativeRoot = Join-Path $env:RUNNER_TEMP 'ztools-native-api'
+          git clone https://github.com/ZToolsCenter/ZTools-native-api.git $nativeRoot
+          git -C $nativeRoot checkout --detach $env:NATIVE_API_COMMIT
+
+          Push-Location $nativeRoot
+          try {
+            npm ci --ignore-scripts
+            npm run build
+          } finally {
+            Pop-Location
+          }
+
+          $binaryPath = Join-Path $nativeRoot 'build/Release/ztools_native.node'
+          if (-not (Test-Path $binaryPath)) {
+            throw "Native API build output was not found: $binaryPath"
+          }
+
+          # Read IMAGE_FILE_HEADER.Machine directly so packaging cannot hide a cross-arch binary.
+          $bytes = [System.IO.File]::ReadAllBytes($binaryPath)
+          $peOffset = [System.BitConverter]::ToInt32($bytes, 0x3c)
+          $machine = [System.BitConverter]::ToUInt16($bytes, $peOffset + 4)
+          $expectedMachine = if ($env:TARGET_ARCH -eq 'arm64') { 0xaa64 } else { 0x8664 }
+          if ($machine -ne $expectedMachine) {
+            throw ('Native API PE machine mismatch: expected 0x{0:x4}, got 0x{1:x4}' -f $expectedMachine, $machine)
+          }
+
+          Copy-Item $binaryPath 'resources/lib/win/ztools_native.node' -Force
+          Write-Host ('Verified Windows native API PE machine 0x{0:x4}' -f $machine)
 
       - name: Prepare App Store Connect API key
         if: startsWith(matrix.os, 'macos')
@@ -196,10 +248,12 @@ jobs:
             exit 1
           fi
 
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "tag=v$version" >> "$GITHUB_OUTPUT"
-          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
-          echo "make_latest=$([ "$prerelease" = "true" ] && echo false || echo true)" >> "$GITHUB_OUTPUT"
+          {
+            echo "version=$version"
+            echo "tag=v$version"
+            echo "prerelease=$prerelease"
+            echo "make_latest=$([ "$prerelease" = "true" ] && echo false || echo true)"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Set package version
         env:
@@ -208,7 +262,7 @@ jobs:
           node -e "const fs=require('fs'); const pkg=JSON.parse(fs.readFileSync('package.json','utf8')); pkg.version=process.env.RELEASE_VERSION; fs.writeFileSync('package.json', JSON.stringify(pkg,null,2)+'\n');"
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v2
+        uses: pnpm/action-setup@v4
         with:
           version: 9
 
@@ -233,17 +287,24 @@ jobs:
           name: artifact-macos-14-arm64
           path: dist/mac-arm64
 
-      - name: Download Windows artifact
+      - name: Download Windows x64 artifact
         uses: actions/download-artifact@v4
         with:
           name: artifact-windows-latest-x64
-          path: dist/windows
+          path: dist/windows-x64
 
-      # 合并 macOS 双架构元数据，并规范化 Windows 与 macOS 的更新清单。
+      - name: Download Windows ARM64 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: artifact-windows-11-arm-arm64
+          path: dist/windows-arm64
+
+      # 合并 Windows 与 macOS 双架构元数据，生成各平台的统一更新清单。
       - name: Generate update info
         env:
           RELEASE_VERSION: ${{ steps.release_meta.outputs.version }}
-          WINDOWS_UPDATE_METADATA: dist/windows/latest.yml
+          WINDOWS_X64_UPDATE_METADATA: dist/windows-x64/latest.yml
+          WINDOWS_ARM64_UPDATE_METADATA: dist/windows-arm64/latest.yml
           MAC_X64_UPDATE_METADATA: dist/mac-x64/latest-mac.yml
           MAC_ARM64_UPDATE_METADATA: dist/mac-arm64/latest-mac.yml
           UPDATE_METADATA_OUTPUT_DIR: dist/release
@@ -261,9 +322,12 @@ jobs:
           make_latest: ${{ steps.release_meta.outputs.make_latest }}
           body_path: changelog.md
           files: |
-            dist/windows/*.exe
-            dist/windows/*.zip
-            dist/windows/*.blockmap
+            dist/windows-x64/*.exe
+            dist/windows-x64/*.zip
+            dist/windows-x64/*.blockmap
+            dist/windows-arm64/*.exe
+            dist/windows-arm64/*.zip
+            dist/windows-arm64/*.blockmap
             dist/mac-x64/*.dmg
             dist/mac-x64/*.zip
             dist/mac-x64/*.blockmap
