@@ -1071,6 +1071,14 @@ export class InternalPluginAPI {
       }
     )
 
+    ipcMain.handle('internal:update-show-system-apps', async (event, showSystemApps: boolean) => {
+      if (!requireInternalPlugin(this.pluginManager, event)) {
+        throw new PermissionDeniedError('internal:update-show-system-apps')
+      }
+      this.mainWindow?.webContents.send('update-show-system-apps', showSystemApps)
+      return { success: true }
+    })
+
     // 通知主渲染进程更新匹配推荐配置
     ipcMain.handle(
       'internal:update-match-recommendation',

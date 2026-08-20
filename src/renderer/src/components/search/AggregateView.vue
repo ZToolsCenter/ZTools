@@ -35,7 +35,7 @@
     <div v-if="hasSearchContent" class="search-results">
       <!-- 最佳搜索结果（模糊搜索） -->
       <CollapsibleList
-        v-if="bestSearchResults.length > 0"
+        v-if="bestSearchResults.length > 0 || canToggleSystemApps"
         :expanded="searchResultsExpanded"
         title="最佳搜索结果"
         :apps="bestSearchResults"
@@ -47,7 +47,17 @@
         @select="$emit('select', $event)"
         @contextmenu="(app) => $emit('contextmenu', app, 'search')"
         @update:expanded="$emit('update:search-results-expanded', $event)"
-      />
+      >
+        <template v-if="canToggleSystemApps" #header-extra>
+          <button
+            type="button"
+            class="expand-btn-text system-apps-chip"
+            @click.stop="$emit('toggle-system-apps')"
+          >
+            {{ showSystemApps ? '隐藏系统应用' : '显示系统应用' }}
+          </button>
+        </template>
+      </CollapsibleList>
 
       <!-- 最佳匹配（匹配指令：regex/img/files） -->
       <CollapsibleList
@@ -141,6 +151,8 @@ interface Props {
   searchResultsExpanded?: boolean
   bestMatchesExpanded?: boolean
   recommendationsExpanded?: boolean
+  showSystemApps?: boolean
+  canToggleSystemApps?: boolean
 }
 
 type ContextMenuSource = 'history' | 'pinned' | 'search' | 'recommendation'
@@ -150,7 +162,9 @@ const props = withDefaults(defineProps<Props>(), {
   pinnedExpanded: false,
   searchResultsExpanded: false,
   bestMatchesExpanded: false,
-  recommendationsExpanded: false
+  recommendationsExpanded: false,
+  showSystemApps: false,
+  canToggleSystemApps: false
 })
 
 defineEmits<{
@@ -167,6 +181,7 @@ defineEmits<{
   'update:search-results-expanded': [value: boolean]
   'update:best-matches-expanded': [value: boolean]
   'update:recommendations-expanded': [value: boolean]
+  'toggle-system-apps': []
 }>()
 
 // 是否有搜索内容
@@ -238,5 +253,18 @@ function getMainPushSelectedIndex(featureKey: string): number {
 .search-results {
   display: flex;
   flex-direction: column;
+}
+
+.system-apps-chip {
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+}
+
+.system-apps-chip:hover {
+  opacity: 1;
 }
 </style>

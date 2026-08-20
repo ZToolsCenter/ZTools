@@ -270,6 +270,9 @@ const api = {
       callback(showRecentInSearch)
     )
   },
+  onUpdateShowSystemApps: (callback: (showSystemApps: boolean) => void) => {
+    ipcRenderer.on('update-show-system-apps', (_event, showSystemApps) => callback(showSystemApps))
+  },
   onUpdateMatchRecommendation: (callback: (showMatchRecommendation: boolean) => void) => {
     ipcRenderer.on('update-match-recommendation', (_event, showMatchRecommendation) =>
       callback(showMatchRecommendation)
@@ -733,6 +736,7 @@ declare global {
       onUpdateTabKeyFunction: (callback: (mode: 'navigate' | 'target-command') => void) => void
       onUpdateSpaceOpenCommand: (callback: (enabled: boolean) => void) => void
       onUpdateShowRecentInSearch: (callback: (showRecentInSearch: boolean) => void) => void
+      onUpdateShowSystemApps: (callback: (showSystemApps: boolean) => void) => void
       onUpdateMatchRecommendation: (callback: (showMatchRecommendation: boolean) => void) => void
       onAutoCheckUpdateChanged: (callback: (enabled: boolean) => void) => () => void
       // 数据库相关（主程序专用，直接操作 ZTOOLS 命名空间）

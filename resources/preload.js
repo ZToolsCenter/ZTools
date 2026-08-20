@@ -1097,6 +1097,8 @@ window.ztools = {
         'internal:update-show-recent-in-search',
         showRecentInSearch
       ),
+    updateShowSystemApps: async (showSystemApps) =>
+      await electron.ipcRenderer.invoke('internal:update-show-system-apps', showSystemApps),
     // 通知主渲染进程更新匹配推荐配置
     updateMatchRecommendation: async (showMatchRecommendation) =>
       await electron.ipcRenderer.invoke(

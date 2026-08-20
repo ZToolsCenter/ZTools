@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest'
-import { deduplicateResults } from '../../src/renderer/src/composables/useSearchResults'
+import {
+  deduplicateResults,
+  excludeHiddenSystemApps
+} from '../../src/renderer/src/composables/useSearchResults'
 
 describe('deduplicateResults', () => {
   describe('非插件类型', () => {
@@ -77,5 +80,21 @@ describe('deduplicateResults', () => {
     ]
     const deduped = deduplicateResults(results)
     expect(deduped[0].extra).toBe('first')
+  })
+})
+
+describe('excludeHiddenSystemApps', () => {
+  const results = [
+    { name: 'Chrome', path: '/Applications/Google Chrome.app' },
+    { name: '访达', path: '/System/Applications/Finder.app', isSystemApp: true },
+    { name: '计算器', path: '/System/Applications/Calculator.app', isSystemApp: true }
+  ]
+
+  it('默认应过滤系统自带应用', () => {
+    expect(excludeHiddenSystemApps(results, false).map((item) => item.name)).toEqual(['Chrome'])
+  })
+
+  it('开启后应保留系统自带应用', () => {
+    expect(excludeHiddenSystemApps(results, true)).toEqual(results)
   })
 })

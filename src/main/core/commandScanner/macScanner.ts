@@ -405,7 +405,8 @@ export async function scanApplications(): Promise<Command[]> {
           path: appPath,
           icon: iconUrl,
           aliases,
-          acronym: acronymSource ? extractAcronym(acronymSource) : ''
+          acronym: acronymSource ? extractAcronym(acronymSource) : '',
+          isSystemApp: appPath.startsWith('/System/Applications/')
         }
       } catch {
         const name = path.basename(appPath, '.app')
@@ -413,7 +414,8 @@ export async function scanApplications(): Promise<Command[]> {
           name,
           path: appPath,
           icon: `ztools-icon://${encodeURIComponent(appPath)}`,
-          acronym: extractAcronym(name)
+          acronym: extractAcronym(name),
+          isSystemApp: appPath.startsWith('/System/Applications/')
         }
       }
     })

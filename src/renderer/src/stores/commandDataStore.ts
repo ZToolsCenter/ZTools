@@ -117,6 +117,7 @@ export interface Command {
   confirmDialog?: any // 确认对话框配置
   originalName?: string // 原始名称（用于 direct/app 旧版禁用键兼容）
   persistedName?: string // 持久化记录里的名称（用于历史/固定在 alias 删除后的删除与取消固定）
+  isSystemApp?: boolean // macOS /System/Applications 下的系统自带应用
 }
 
 interface SearchResultScoreMeta {

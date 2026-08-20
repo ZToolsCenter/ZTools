@@ -395,6 +395,7 @@ declare global {
         updateAutoBackToSearch: (autoBackToSearch: string) => Promise<void>
         updateWindowPositionStrategy: (strategy: string) => Promise<void>
         updateShowRecentInSearch: (showRecentInSearch: boolean) => Promise<void>
+        updateShowSystemApps: (showSystemApps: boolean) => Promise<void>
         updateMatchRecommendation: (showMatchRecommendation: boolean) => Promise<void>
         updateLocalAppSearch: (enabled: boolean) => Promise<void>
         updateRecentRows: (rows: number) => Promise<void>

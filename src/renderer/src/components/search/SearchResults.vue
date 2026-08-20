@@ -27,6 +27,8 @@
       :show-recent-in-search="showRecentInSearch"
       :recent-rows="windowStore.recentRows"
       :pinned-rows="windowStore.pinnedRows"
+      :show-system-apps="showSystemApps"
+      :can-toggle-system-apps="canToggleSystemApps"
       @select="handleSelectApp"
       @select-window="handleWindowAction"
       @select-recommendation="handleRecommendationSelect"
@@ -35,10 +37,16 @@
       @contextmenu="handleAppContextMenu"
       @update:pinned-order="updatePinnedOrder"
       @height-changed="emit('height-changed')"
+      @toggle-system-apps="toggleShowSystemApps"
     />
 
     <!-- 列表模式 -->
     <div v-if="searchMode === 'list' && hasSearchContent" class="list-mode-results">
+      <div v-if="canToggleSystemApps" class="list-system-apps-row">
+        <button type="button" class="system-apps-chip" @click.stop="toggleShowSystemApps">
+          {{ showSystemApps ? '隐藏系统应用' : '显示系统应用' }}
+        </button>
+      </div>
       <VerticalList
         :apps="allListModeResults"
         :selected-index="listModeSelectedIndex"
@@ -128,8 +136,16 @@ const {
 } = commandDataStore
 
 // 使用搜索结果 composable
-const { bestSearchResults, bestMatches, recommendations, allListModeResults } =
-  useSearchResults(props)
+const {
+  bestSearchResults,
+  bestMatches,
+  recommendations,
+  allListModeResults,
+  hasMatchingSystemApps
+} = useSearchResults(props)
+
+const showSystemApps = computed(() => windowStore.showSystemApps)
+const canToggleSystemApps = computed(() => hasMatchingSystemApps.value)
 
 // 为推荐项附加仅用于渲染的置顶状态，避免把 UI 字段写入固定列表数据。
 const recommendationItems = computed(() =>
@@ -1055,9 +1071,21 @@ async function handleContextMenuCommand(command: string): Promise<void> {
 }
 
 // 点击容器聚焦输入框
+async function toggleShowSystemApps(): Promise<void> {
+  const next = !windowStore.showSystemApps
+  windowStore.updateShowSystemApps(next)
+  try {
+    const settings = (await window.ztools.dbGet('settings-general')) || {}
+    await window.ztools.dbPut('settings-general', { ...settings, showSystemApps: next })
+  } catch (error) {
+    console.error('保存系统自带应用显示配置失败:', error)
+  }
+  emit('height-changed')
+}
+
 function handleContainerClick(event: MouseEvent): void {
   const target = event.target as HTMLElement
-  if (target.closest('.app-item')) {
+  if (target.closest('.app-item') || target.closest('.system-apps-chip')) {
     return
   }
   emit('focus-input')
@@ -1108,5 +1136,30 @@ defineExpose({
 .list-mode-results {
   display: flex;
   flex-direction: column;
+}
+
+.list-system-apps-row {
+  display: flex;
+  justify-content: flex-end;
+  padding: 2px 12px;
+  min-height: 28px;
+  align-items: center;
+}
+
+.system-apps-chip {
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  font-size: 14px;
+  opacity: 0.6;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.system-apps-chip:hover {
+  opacity: 1;
 }
 </style>

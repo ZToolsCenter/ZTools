@@ -1,17 +1,20 @@
 <template>
-  <div v-if="apps.length > 0" class="collapsible-section">
+  <div v-if="apps.length > 0 || hasHeaderExtra" class="collapsible-section">
     <div
       class="section-header"
       :class="{ clickable: canExpand }"
       @click="canExpand ? toggleExpand() : undefined"
     >
       <div class="section-title">{{ title }}</div>
-      <div v-if="canExpand" class="expand-btn-text">
-        {{ isExpanded ? '收起' : `展开 (${apps.length})` }}
+      <div class="header-actions">
+        <slot name="header-extra" />
+        <div v-if="canExpand" class="expand-btn-text">
+          {{ isExpanded ? '收起' : `展开 (${apps.length})` }}
+        </div>
       </div>
     </div>
     <!-- 统一使用 CommandList，通过 draggable prop 控制 -->
-    <div class="list-content">
+    <div v-if="apps.length > 0" class="list-content">
       <AppList
         :apps="visibleApps"
         :selected-index="selectedIndex"
@@ -28,9 +31,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed, toValue, type MaybeRefOrGetter } from 'vue'
+import { computed, toValue, useSlots, type MaybeRefOrGetter } from 'vue'
 import type { Command } from '../../stores/commandDataStore'
 import AppList from './CommandList.vue'
+
+const slots = useSlots()
+const hasHeaderExtra = computed(() => Boolean(slots['header-extra']))
 
 interface Props {
   title: string // 标题
@@ -158,6 +164,12 @@ function handleAppsUpdate(newOrder: Command[]): void {
   line-height: 24px; /* 控制行高 */
 }
 
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .expand-btn-text {
   font-size: 14px;
   opacity: 0.6;
@@ -165,8 +177,16 @@ function handleAppsUpdate(newOrder: Command[]): void {
   white-space: nowrap; /* 防止文本换行 */
 }
 
+:slotted(.expand-btn-text) {
+  font-size: 14px;
+  opacity: 0.6;
+  user-select: none;
+  white-space: nowrap;
+}
+
 /* 只在可点击状态下，hover 时改变透明度 */
-.section-header.clickable:hover .expand-btn-text {
+.section-header.clickable:hover .expand-btn-text,
+.section-header.clickable:hover :slotted(.expand-btn-text) {
   opacity: 1;
 }
 </style>

@@ -30,8 +30,8 @@ interface LastMatchState {
  * 应用管理API - 主程序专用
  */
 export class AppsAPI {
-  // v4: macOS 扫描下钻一层以纳入浏览器 PWA（Chrome/Edge Apps.localized）以及 Python 安装子目录下的 IDLE 等
-  private static readonly APP_CACHE_VERSION = 4
+  // v5: 为 macOS /System/Applications 下的应用标记 isSystemApp
+  private static readonly APP_CACHE_VERSION = 5
   private static readonly APP_CACHE_VERSION_KEY = 'cached-commands-version'
   private mainWindow: Electron.BrowserWindow | null = null
   private pluginManager: PluginManager | null = null
@@ -1104,7 +1104,8 @@ export class AppsAPI {
           path: app.path,
           icon: app.icon,
           type: 'direct',
-          subType: 'app'
+          subType: 'app',
+          isSystemApp: app.isSystemApp
         })
       }
 

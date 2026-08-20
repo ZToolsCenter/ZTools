@@ -3,6 +3,17 @@ import { useCommandDataStore } from '../stores/commandDataStore'
 import { useWindowStore } from '../stores/windowStore'
 
 /**
+ * 默认过滤系统自带应用；历史/固定列表不走这里。
+ */
+export function excludeHiddenSystemApps<T extends { isSystemApp?: boolean }>(
+  results: T[],
+  showSystemApps: boolean
+): T[] {
+  if (showSystemApps) return results
+  return results.filter((item) => !item.isSystemApp)
+}
+
+/**
  * 去重：同一个 feature 只保留第一个匹配的 cmd
  * 插件类型用 path+featureCode 去重，非插件用 name+path 去重
  */
@@ -52,6 +63,7 @@ export function useSearchResults(props: {
   bestMatches: any
   recommendations: any
   allListModeResults: any
+  hasMatchingSystemApps: any
 } {
   const commandDataStore = useCommandDataStore()
   const windowStore = useWindowStore()
@@ -110,7 +122,7 @@ export function useSearchResults(props: {
   })
 
   // 最佳搜索结果（模糊搜索：应用、插件、系统设置）
-  const bestSearchResults = computed(() => {
+  const rawBestSearchResults = computed(() => {
     // 粘贴图片或文件时不显示最佳搜索结果
     if (props.pastedImage || props.pastedFiles) {
       return []
@@ -152,6 +164,14 @@ export function useSearchResults(props: {
 
     return filterUnavailableWindowCommands(unifiedSearchResult.value.bestMatches)
   })
+
+  const hasMatchingSystemApps = computed(() =>
+    rawBestSearchResults.value.some((item: { isSystemApp?: boolean }) => item.isSystemApp)
+  )
+
+  const bestSearchResults = computed(() =>
+    excludeHiddenSystemApps(rawBestSearchResults.value, windowStore.showSystemApps)
+  )
 
   // 最佳匹配（匹配指令：regex/img/files 类型）
   const bestMatches = computed(() => {
@@ -292,6 +312,7 @@ export function useSearchResults(props: {
     bestSearchResults,
     bestMatches,
     recommendations,
-    allListModeResults
+    allListModeResults,
+    hasMatchingSystemApps
   }
 }

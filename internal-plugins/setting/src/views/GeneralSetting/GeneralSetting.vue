@@ -182,6 +182,7 @@ const windowPositionStrategy = ref<WindowPositionStrategy>('remember')
 const showRecentInSearch = ref(true)
 const showMatchRecommendation = ref(true)
 const localAppSearch = ref(true)
+const showSystemApps = ref(false)
 const recentRows = ref(2)
 const pinnedRows = ref(2)
 const searchMode = ref<'aggregate' | 'list'>('aggregate')
@@ -619,6 +620,16 @@ async function handleLocalAppSearchChange(): Promise<void> {
     console.log('本地应用搜索配置已更新:', localAppSearch.value)
   } catch (error) {
     console.error('保存本地应用搜索配置失败:', error)
+  }
+}
+
+async function handleShowSystemAppsChange(): Promise<void> {
+  try {
+    await saveSettings()
+    await window.ztools.internal.updateShowSystemApps(showSystemApps.value)
+    console.log('显示系统自带应用配置已更新:', showSystemApps.value)
+  } catch (error) {
+    console.error('保存显示系统自带应用配置失败:', error)
   }
 }
 
@@ -1304,6 +1315,7 @@ async function loadSettings(): Promise<void> {
       showRecentInSearch.value = data.showRecentInSearch ?? true
       showMatchRecommendation.value = data.showMatchRecommendation ?? true
       localAppSearch.value = data.localAppSearch ?? true
+      showSystemApps.value = data.showSystemApps ?? false
       recentRows.value = data.recentRows ?? 2
       pinnedRows.value = data.pinnedRows ?? 2
       theme.value = data.theme ?? 'system'
@@ -1400,6 +1412,7 @@ async function saveSettings(): Promise<void> {
       showRecentInSearch: showRecentInSearch.value,
       showMatchRecommendation: showMatchRecommendation.value,
       localAppSearch: localAppSearch.value,
+      showSystemApps: showSystemApps.value,
       recentRows: recentRows.value,
       pinnedRows: pinnedRows.value,
       searchMode: searchMode.value,
@@ -1969,6 +1982,19 @@ onUnmounted(() => {
         <div class="setting-control">
           <label class="toggle">
             <input v-model="localAppSearch" type="checkbox" @change="handleLocalAppSearchChange" />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+      </div>
+
+      <div class="setting-item">
+        <div class="setting-label">
+          <span>显示系统自带应用</span>
+          <span class="setting-desc">开启后搜索结果包含系统自带应用（如访达、计算器）</span>
+        </div>
+        <div class="setting-control">
+          <label class="toggle">
+            <input v-model="showSystemApps" type="checkbox" @change="handleShowSystemAppsChange" />
             <span class="toggle-slider"></span>
           </label>
         </div>
