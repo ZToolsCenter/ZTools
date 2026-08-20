@@ -159,15 +159,18 @@ describe('SettingsAPI hideOnPress', () => {
 
   it('launch App 后下一键是 show 不是 hide/relaunch', async () => {
     setGlobalHideOnPress(true)
-    setWindowState(true, true)
+    // AppsAPI.launch 计算器/访达后主窗已藏，ZTools 不在前台
+    setWindowState(false, false)
     await registerAndTrigger()
-    expect(mocks.hideWindow).toHaveBeenCalledTimes(1)
+    expect(mocks.showWindow).toHaveBeenCalledTimes(1)
+    expect(mocks.hideWindow).not.toHaveBeenCalled()
     expect(launchHandler).not.toHaveBeenCalled()
 
+    // 再按仍 SHOW，不能被 pending-hide 吃掉，也不能 relaunch
     setWindowState(false, false)
     await pressShortcut()
-    expect(mocks.showWindow).toHaveBeenCalledTimes(1)
-    expect(mocks.hideWindow).toHaveBeenCalledTimes(1)
+    expect(mocks.showWindow).toHaveBeenCalledTimes(2)
+    expect(mocks.hideWindow).not.toHaveBeenCalled()
     expect(launchHandler).not.toHaveBeenCalled()
   })
 

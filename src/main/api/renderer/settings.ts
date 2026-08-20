@@ -80,7 +80,8 @@ export class SettingsAPI {
   private isGlobalShortcutTriggering = false
   /**
    * hideOnPress 只负责 ZTools 自己：已在前台再按 → hideWindow（macOS 为 app.hide）。
-   * 不在前台（含刚 launch 过别的 App）→ showWindow，不 launch、不 pending-hide。
+   * 不在前台（含刚 launch 过别的 App、对方搜索框开着）→ showWindow。
+   * 不再设置 hideOnPressPendingHideShortcut：launch 后再按是 SHOW，不能被 pending-hide 吃掉，也不再 launch。
    */
 
   // 启动 native 优化快捷键监听，并把命中事件回流到既有执行链路。
