@@ -80,7 +80,7 @@ export class SettingsAPI {
   private isGlobalShortcutTriggering = false
   /**
    * hideOnPress 开启且上次启动把主窗藏掉时（第三方/系统 App 的 launch 会 hide），
-   * 记下该快捷键，再按只 hideWindow，不再 launch。
+   * 记下该快捷键，再按只走 hideWindow（macOS 内部 app.hide），不再 launch。
    */
   private hideOnPressPendingHideShortcut: string | null = null
 
@@ -649,7 +649,7 @@ export class SettingsAPI {
       console.log(`[Settings] 用户启用按下隐藏: ${hideOnPress}`)
 
       if (hideOnPress && this.shouldHideWindowOnRepeatPress(shortcut)) {
-        console.log(`[Settings] 按下隐藏并恢复上一应用: ${shortcut}`)
+        console.log(`[Settings] 按下隐藏（macOS 系统级 hide）: ${shortcut}`)
         this.hideOnPressPendingHideShortcut = null
         windowManager.hideWindow(true)
         return

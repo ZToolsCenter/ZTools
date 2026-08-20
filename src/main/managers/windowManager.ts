@@ -999,7 +999,10 @@ class WindowManager {
   }
 
   /**
-   * 隐藏窗口
+   * 隐藏窗口。
+   * macOS 且需要还焦点时走系统级 Hide Application（app.hide / 等价 Cmd+H），
+   * 不要 win.hide / minimize，也不要再叠 restorePreviousWindow。
+   * Windows / Linux 仍 hide BrowserWindow 后再 restorePreviousWindow。
    */
   public hideWindow(_restoreFocus: boolean = true): void {
     console.log('[Window] 隐藏窗口', _restoreFocus)
@@ -1007,9 +1010,13 @@ class WindowManager {
     // 记录当前的焦点状态（在隐藏之前）
     this.recordFocusState()
 
-    this.mainWindow?.hide()
-    if (_restoreFocus) {
-      this.restorePreviousWindow()
+    if (platform.isMacOS && _restoreFocus) {
+      app.hide()
+    } else {
+      this.mainWindow?.hide()
+      if (_restoreFocus) {
+        this.restorePreviousWindow()
+      }
     }
 
     // 启动自动返回搜索定时器
