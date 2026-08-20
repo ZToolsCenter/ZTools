@@ -103,10 +103,14 @@ describe('SettingsAPI hideOnPress', () => {
     setGlobalHideOnPress(false)
   })
 
-  async function registerShortcut(): Promise<void> {
+  async function registerShortcut(target = 'demo/action'): Promise<void> {
+    mocks.prepareGlobalShortcut.mockResolvedValue({
+      target,
+      shouldCaptureSelectedText: false
+    })
     const settings = new SettingsAPI()
     settings.setGlobalShortcutHandler(launchHandler)
-    const result = await settings.registerGlobalShortcut('Alt+1', 'demo/action', false, false)
+    const result = await settings.registerGlobalShortcut('Alt+1', target, false, false)
     expect(result).toEqual({ success: true })
     expect(triggerShortcut).toBeTypeOf('function')
   }
@@ -125,8 +129,8 @@ describe('SettingsAPI hideOnPress', () => {
     })
   }
 
-  async function registerAndTrigger(): Promise<void> {
-    await registerShortcut()
+  async function registerAndTrigger(target = 'demo/action'): Promise<void> {
+    await registerShortcut(target)
     await pressShortcut()
   }
 
@@ -139,39 +143,38 @@ describe('SettingsAPI hideOnPress', () => {
     expect(launchHandler).not.toHaveBeenCalled()
   })
 
-  it('ZTools 已藏时再按 show，不 hide 不 launch', async () => {
+  it('不在前台按绑了插件/App 的快捷键必须 launch', async () => {
     setGlobalHideOnPress(true)
     setWindowState(false, false)
-    await registerAndTrigger()
-    expect(mocks.showWindow).toHaveBeenCalledTimes(1)
+    await registerAndTrigger('apps/Calculator')
+    expect(launchHandler).toHaveBeenCalledWith('apps/Calculator', undefined)
     expect(mocks.hideWindow).not.toHaveBeenCalled()
-    expect(launchHandler).not.toHaveBeenCalled()
+    expect(mocks.showWindow).not.toHaveBeenCalled()
   })
 
-  it('别的 App 前台（主窗仍可见但未聚焦）再按 show，不 hide 不 launch', async () => {
+  it('别的 App 前台（主窗可见但未聚焦）再按必须 launch', async () => {
     setGlobalHideOnPress(true)
     setWindowState(true, false)
-    await registerAndTrigger()
-    expect(mocks.showWindow).toHaveBeenCalledTimes(1)
+    await registerAndTrigger('plugin/screenshot')
+    expect(launchHandler).toHaveBeenCalledWith('plugin/screenshot', undefined)
     expect(mocks.hideWindow).not.toHaveBeenCalled()
-    expect(launchHandler).not.toHaveBeenCalled()
+    expect(mocks.showWindow).not.toHaveBeenCalled()
   })
 
-  it('launch App 后下一键是 show 不是 hide/relaunch', async () => {
+  it('launch App 后再按仍 launch，不 show 首页', async () => {
     setGlobalHideOnPress(true)
-    // AppsAPI.launch 计算器/访达后主窗已藏，ZTools 不在前台
     setWindowState(false, false)
-    await registerAndTrigger()
-    expect(mocks.showWindow).toHaveBeenCalledTimes(1)
+    await registerAndTrigger('apps/Finder')
+    expect(launchHandler).toHaveBeenCalledTimes(1)
+    expect(launchHandler).toHaveBeenCalledWith('apps/Finder', undefined)
+    expect(mocks.showWindow).not.toHaveBeenCalled()
     expect(mocks.hideWindow).not.toHaveBeenCalled()
-    expect(launchHandler).not.toHaveBeenCalled()
 
-    // 再按仍 SHOW，不能被 pending-hide 吃掉，也不能 relaunch
     setWindowState(false, false)
     await pressShortcut()
-    expect(mocks.showWindow).toHaveBeenCalledTimes(2)
+    expect(launchHandler).toHaveBeenCalledTimes(2)
+    expect(mocks.showWindow).not.toHaveBeenCalled()
     expect(mocks.hideWindow).not.toHaveBeenCalled()
-    expect(launchHandler).not.toHaveBeenCalled()
   })
 
   it('未配置时默认关，窗口已显示也只唤起', async () => {

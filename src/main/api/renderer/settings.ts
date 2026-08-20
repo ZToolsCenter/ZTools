@@ -79,9 +79,9 @@ export class SettingsAPI {
   // 全局快捷键触发流程执行中时，后续触发会被忽略，避免重复复制和重复启动。
   private isGlobalShortcutTriggering = false
   /**
-   * hideOnPress 只负责 ZTools 自己：已在前台再按 → hideWindow（macOS 为 app.hide）。
-   * 不在前台（含刚 launch 过别的 App、对方搜索框开着）→ showWindow。
-   * 不再设置 hideOnPressPendingHideShortcut：launch 后再按是 SHOW，不能被 pending-hide 吃掉，也不再 launch。
+   * hideOnPress 只负责 ZTools 自己：主窗可见且自己是前台时再按 → hideWindow（macOS 为 app.hide）。
+   * 不在前台时照常 launch 绑定命令，不 show 首页。
+   * 不恢复 hideOnPressPendingHideShortcut。
    */
 
   // 启动 native 优化快捷键监听，并把命中事件回流到既有执行链路。
@@ -654,12 +654,6 @@ export class SettingsAPI {
         return
       }
 
-      if (hideOnPress) {
-        console.log(`[Settings] ZTools 不在前台，唤出主窗: ${shortcut}`)
-        windowManager.showWindow()
-        return
-      }
-
       if (preScreenshotOptimization && !skipPrime) {
         primeScreenCaptureFrame()
       }
@@ -693,12 +687,11 @@ export class SettingsAPI {
   }
 
   /**
-   * ZTools 是否在前台：主窗聚焦，或插件视图聚焦。
-   * 只看可见会把「别的 App 前台 / 刚 launch 过」误判成 hide。
+   * ZTools 是否在前台：主窗可见且聚焦，或插件视图聚焦。
    */
   private isZToolsInForeground(): boolean {
     const mainWindow = windowManager.getMainWindow() ?? this.mainWindow
-    if (mainWindow?.isFocused()) {
+    if (mainWindow?.isVisible() && mainWindow?.isFocused()) {
       return true
     }
     return this.pluginManager?.isPluginViewFocused() === true
