@@ -78,6 +78,11 @@ export class SettingsAPI {
   private globalShortcutKeyboardStateReleasers = new Map<string, () => void>()
   // 全局快捷键触发流程执行中时，后续触发会被忽略，避免重复复制和重复启动。
   private isGlobalShortcutTriggering = false
+  /**
+   * hideOnPress 开启且上次启动把主窗藏掉时（第三方/系统 App 的 launch 会 hide），
+   * 记下该快捷键，再按只 hideWindow，不再 launch。
+   */
+  private hideOnPressPendingHideShortcut: string | null = null
 
   // 启动 native 优化快捷键监听，并把命中事件回流到既有执行链路。
   private setupOptimizedShortcutListener(): void {
@@ -643,8 +648,9 @@ export class SettingsAPI {
       console.log(`[Settings] 用户启用预截图优化: ${preScreenshotOptimization}`)
       console.log(`[Settings] 用户启用按下隐藏: ${hideOnPress}`)
 
-      if (hideOnPress && this.shouldHideWindowOnRepeatPress()) {
-        console.log(`[Settings] 窗口已显示，按下隐藏并恢复上一应用: ${shortcut}`)
+      if (hideOnPress && this.shouldHideWindowOnRepeatPress(shortcut)) {
+        console.log(`[Settings] 按下隐藏并恢复上一应用: ${shortcut}`)
+        this.hideOnPressPendingHideShortcut = null
         windowManager.hideWindow(true)
         return
       }
@@ -660,6 +666,15 @@ export class SettingsAPI {
 
       const context = shouldCapture ? await this.captureSelectedTextContext() : undefined
       await this.handleGlobalShortcut(preparation.target, context)
+
+      if (hideOnPress) {
+        // 插件会把主窗留在前台；第三方/系统 App 的 launch 会 hide 主窗。
+        // 窗已被藏时记一笔，下次同快捷键只 hide、不再 launch。
+        const mainWindow = windowManager.getMainWindow() ?? this.mainWindow
+        this.hideOnPressPendingHideShortcut = mainWindow?.isVisible() ? null : shortcut
+      } else {
+        this.hideOnPressPendingHideShortcut = null
+      }
     } finally {
       this.isGlobalShortcutTriggering = false
     }
@@ -682,12 +697,16 @@ export class SettingsAPI {
   }
 
   /**
-   * 主窗已显示时，开启「按下隐藏」的快捷键再次按下应藏窗。
-   * 只看 isVisible：插件页打开时窗口也是显示的；热键到来时焦点可能已不在主窗。
+   * 开启「按下隐藏」后，再次按下应藏窗而不是再 launch。
+   * 主窗仍可见（插件页），或上次启动已把主窗藏掉（第三方/系统 App）时都成立。
+   * 只看 isVisible，不看 isFocused：插件页打开或热键到来时焦点常已离开主窗。
    */
-  private shouldHideWindowOnRepeatPress(): boolean {
+  private shouldHideWindowOnRepeatPress(shortcut: string): boolean {
     const mainWindow = windowManager.getMainWindow() ?? this.mainWindow
-    return Boolean(mainWindow?.isVisible())
+    if (mainWindow?.isVisible()) {
+      return true
+    }
+    return this.hideOnPressPendingHideShortcut === shortcut
   }
 
   /**

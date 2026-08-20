@@ -101,18 +101,28 @@ describe('SettingsAPI hideOnPress', () => {
     setGlobalHideOnPress(false)
   })
 
-  async function registerAndTrigger(): Promise<void> {
+  async function registerShortcut(): Promise<void> {
     const settings = new SettingsAPI()
     settings.setGlobalShortcutHandler(launchHandler)
     const result = await settings.registerGlobalShortcut('Alt+1', 'demo/action', false, false)
     expect(result).toEqual({ success: true })
     expect(triggerShortcut).toBeTypeOf('function')
+  }
+
+  async function pressShortcut(): Promise<void> {
+    const hideBefore = mocks.hideWindow.mock.calls.length
+    const launchBefore = launchHandler.mock.calls.length
     await triggerShortcut!()
     await vi.waitFor(() => {
       expect(mocks.hideWindow.mock.calls.length + launchHandler.mock.calls.length).toBeGreaterThan(
-        0
+        hideBefore + launchBefore
       )
     })
+  }
+
+  async function registerAndTrigger(): Promise<void> {
+    await registerShortcut()
+    await pressShortcut()
   }
 
   it('开启后窗口已显示再按会藏窗并恢复上一应用', async () => {
@@ -153,5 +163,43 @@ describe('SettingsAPI hideOnPress', () => {
     await registerAndTrigger()
     expect(mocks.hideWindow).not.toHaveBeenCalled()
     expect(launchHandler).toHaveBeenCalledWith('demo/action', undefined)
+  })
+
+  it('开启后启动应用把主窗藏掉，再按只藏窗不重复 launch', async () => {
+    setGlobalHideOnPress(true)
+    setWindowState(false, false)
+    await registerAndTrigger()
+    expect(launchHandler).toHaveBeenCalledTimes(1)
+    expect(mocks.hideWindow).not.toHaveBeenCalled()
+
+    setWindowState(false, false)
+    await pressShortcut()
+    expect(mocks.hideWindow).toHaveBeenCalledWith(true)
+    expect(launchHandler).toHaveBeenCalledTimes(1)
+  })
+
+  it('开启后启动插件主窗仍可见，再按藏窗不重复 launch', async () => {
+    setGlobalHideOnPress(true)
+    setWindowState(false, false)
+    await registerAndTrigger()
+    expect(launchHandler).toHaveBeenCalledTimes(1)
+
+    setWindowState(true, false)
+    await pressShortcut()
+    expect(mocks.hideWindow).toHaveBeenCalledWith(true)
+    expect(launchHandler).toHaveBeenCalledTimes(1)
+  })
+
+  it('藏窗后再按会重新 launch', async () => {
+    setGlobalHideOnPress(true)
+    setWindowState(false, false)
+    await registerAndTrigger()
+    setWindowState(false, false)
+    await pressShortcut()
+    expect(mocks.hideWindow).toHaveBeenCalledTimes(1)
+
+    setWindowState(false, false)
+    await pressShortcut()
+    expect(launchHandler).toHaveBeenCalledTimes(2)
   })
 })
