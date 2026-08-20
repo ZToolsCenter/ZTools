@@ -682,11 +682,12 @@ export class SettingsAPI {
   }
 
   /**
-   * 窗口已显示且聚焦时，开启「按下隐藏」的快捷键再次按下应藏窗。
+   * 主窗已显示时，开启「按下隐藏」的快捷键再次按下应藏窗。
+   * 只看 isVisible：插件页打开时窗口也是显示的；热键到来时焦点可能已不在主窗。
    */
   private shouldHideWindowOnRepeatPress(): boolean {
     const mainWindow = windowManager.getMainWindow() ?? this.mainWindow
-    return Boolean(mainWindow?.isVisible() && mainWindow.isFocused())
+    return Boolean(mainWindow?.isVisible())
   }
 
   /**

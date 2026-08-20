@@ -123,6 +123,14 @@ describe('SettingsAPI hideOnPress', () => {
     expect(launchHandler).not.toHaveBeenCalled()
   })
 
+  it('开启后窗口已显示但未聚焦也会藏窗，不重复唤起指令', async () => {
+    setGlobalHideOnPress(true)
+    setWindowState(true, false)
+    await registerAndTrigger()
+    expect(mocks.hideWindow).toHaveBeenCalledWith(true)
+    expect(launchHandler).not.toHaveBeenCalled()
+  })
+
   it('未配置时默认关，窗口已显示也只唤起', async () => {
     mocks.dbGet.mockImplementation(() => ({}))
     setWindowState(true, true)
