@@ -335,20 +335,22 @@ const api = {
     shortcut: string,
     target: string,
     autoCopy?: boolean,
-    preScreenshotOptimization?: boolean
+    preScreenshotOptimization?: boolean,
+    hideOnPress?: boolean
   ) =>
     ipcRenderer.invoke(
       'register-global-shortcut',
       shortcut,
       target,
       autoCopy,
-      preScreenshotOptimization
+      preScreenshotOptimization,
+      hideOnPress
     ),
   unregisterGlobalShortcut: (shortcut: string) =>
     ipcRenderer.invoke('unregister-global-shortcut', shortcut),
   updateGlobalShortcutConfig: (
     shortcut: string,
-    config: { autoCopy: boolean; preScreenshotOptimization: boolean }
+    config: { autoCopy: boolean; preScreenshotOptimization: boolean; hideOnPress: boolean }
   ) => ipcRenderer.invoke('update-global-shortcut-config', shortcut, config),
   // 快捷键录制（临时注册，触发后自动注销）
   startHotkeyRecording: () => ipcRenderer.invoke('start-hotkey-recording'),
@@ -717,12 +719,13 @@ declare global {
         shortcut: string,
         target: string,
         autoCopy?: boolean,
-        preScreenshotOptimization?: boolean
+        preScreenshotOptimization?: boolean,
+        hideOnPress?: boolean
       ) => Promise<{ success: boolean; error?: string }>
       unregisterGlobalShortcut: (shortcut: string) => Promise<{ success: boolean; error?: string }>
       updateGlobalShortcutConfig: (
         shortcut: string,
-        config: { autoCopy: boolean; preScreenshotOptimization: boolean }
+        config: { autoCopy: boolean; preScreenshotOptimization: boolean; hideOnPress: boolean }
       ) => Promise<{ success: boolean; error?: string }>
       // 窗口相关
       windowPaste: () => Promise<{ success: boolean; error?: string }>

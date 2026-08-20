@@ -36,6 +36,7 @@ interface GlobalShortcut {
   configKey?: BuiltInShortcutKey
   autoCopy?: boolean
   preScreenshotOptimization?: boolean
+  hideOnPress?: boolean
 }
 
 type BuiltInShortcutKey = 'search' | 'closePlugin' | 'killPlugin' | 'esc'
@@ -349,7 +350,8 @@ async function loadGlobalShortcuts(): Promise<void> {
     globalShortcuts.value = (data || []).map((shortcut: any) => ({
       ...shortcut,
       autoCopy: shortcut.autoCopy ?? false,
-      preScreenshotOptimization: shortcut.preScreenshotOptimization ?? false
+      preScreenshotOptimization: shortcut.preScreenshotOptimization ?? false,
+      hideOnPress: shortcut.hideOnPress ?? false
     }))
   } catch (err) {
     console.error('加载全局快捷键失败:', err)
@@ -750,6 +752,7 @@ async function handleSaveGlobalShortcut(
     const oldShortcut = editingShortcut.value.shortcut
     const oldTarget = editingShortcut.value.target
     const autoCopy = editingShortcut.value.autoCopy ?? false // 保留原有 autoCopy 配置
+    const hideOnPress = editingShortcut.value.hideOnPress ?? false // 保留原有按下隐藏配置
     const oldPreScreenshotOptimization = editingShortcut.value.preScreenshotOptimization ?? false
     const shouldRestorePreviousRegistration =
       oldShortcut !== recordedShortcut ||
@@ -765,7 +768,8 @@ async function handleSaveGlobalShortcut(
         recordedShortcut,
         targetCommand,
         autoCopy,
-        preScreenshotOptimization
+        preScreenshotOptimization,
+        hideOnPress
       )
 
       if (result.success) {
@@ -785,7 +789,8 @@ async function handleSaveGlobalShortcut(
             oldShortcut,
             oldTarget,
             autoCopy,
-            oldPreScreenshotOptimization
+            oldPreScreenshotOptimization,
+            hideOnPress
           )
         }
         error(`快捷键注册失败: ${result.error}`)
@@ -796,7 +801,8 @@ async function handleSaveGlobalShortcut(
           oldShortcut,
           oldTarget,
           autoCopy,
-          oldPreScreenshotOptimization
+          oldPreScreenshotOptimization,
+          hideOnPress
         )
       }
       console.error('更新快捷键失败:', err)
@@ -817,6 +823,7 @@ async function handleSaveGlobalShortcut(
     target: targetCommand,
     enabled: true,
     autoCopy: false,
+    hideOnPress: false,
     preScreenshotOptimization
   }
 
@@ -828,7 +835,8 @@ async function handleSaveGlobalShortcut(
       recordedShortcut,
       targetCommand,
       false,
-      preScreenshotOptimization
+      preScreenshotOptimization,
+      false
     )
     if (result.success) {
       success('快捷键添加成功!')
@@ -1008,6 +1016,7 @@ async function handleAutoCopyToggle(shortcut: any, event: Event): Promise<void> 
       enabled: s.enabled,
       autoCopy: s.autoCopy,
       preScreenshotOptimization: s.preScreenshotOptimization,
+      hideOnPress: s.hideOnPress,
       ...(s.configurable !== undefined && { configurable: s.configurable }),
       ...(s.configKey !== undefined && { configKey: s.configKey })
     }))
@@ -1018,11 +1027,13 @@ async function handleAutoCopyToggle(shortcut: any, event: Event): Promise<void> 
     console.log('[AutoCopy] 通知主进程更新配置:', {
       shortcut: shortcut.shortcut,
       autoCopy: newAutoCopy,
-      preScreenshotOptimization: shortcut.preScreenshotOptimization ?? false
+      preScreenshotOptimization: shortcut.preScreenshotOptimization ?? false,
+      hideOnPress: shortcut.hideOnPress ?? false
     })
     const result = await window.ztools.internal.updateGlobalShortcutConfig(shortcut.shortcut, {
       autoCopy: newAutoCopy,
-      preScreenshotOptimization: shortcut.preScreenshotOptimization ?? false
+      preScreenshotOptimization: shortcut.preScreenshotOptimization ?? false,
+      hideOnPress: shortcut.hideOnPress ?? false
     })
     console.log('[AutoCopy] 主进程配置更新结果:', result)
 
@@ -1039,6 +1050,53 @@ async function handleAutoCopyToggle(shortcut: any, event: Event): Promise<void> 
     if (index >= 0) {
       globalShortcuts.value[index].autoCopy = !newAutoCopy
       console.log('[AutoCopy] 已回滚本地数据')
+    }
+  }
+}
+
+// 处理按下隐藏开关切换
+async function handleHideOnPressToggle(shortcut: any, event: Event): Promise<void> {
+  const target = event.target as HTMLInputElement | null
+  if (!target) {
+    return
+  }
+
+  const newHideOnPress = target.checked
+
+  try {
+    const index = globalShortcuts.value.findIndex((s) => s.id === shortcut.id)
+    if (index >= 0) {
+      globalShortcuts.value[index].hideOnPress = newHideOnPress
+    }
+
+    const dataToSave = globalShortcuts.value.map((s) => ({
+      id: s.id,
+      shortcut: s.shortcut,
+      target: s.target,
+      enabled: s.enabled,
+      autoCopy: s.autoCopy,
+      preScreenshotOptimization: s.preScreenshotOptimization,
+      hideOnPress: s.hideOnPress,
+      ...(s.configurable !== undefined && { configurable: s.configurable }),
+      ...(s.configKey !== undefined && { configKey: s.configKey })
+    }))
+    await window.ztools.internal.dbPut('global-shortcuts', dataToSave)
+
+    const result = await window.ztools.internal.updateGlobalShortcutConfig(shortcut.shortcut, {
+      autoCopy: shortcut.autoCopy ?? false,
+      preScreenshotOptimization: shortcut.preScreenshotOptimization ?? false,
+      hideOnPress: newHideOnPress
+    })
+
+    if (!result.success) {
+      throw new Error(result.error || '更新配置失败')
+    }
+  } catch (err: any) {
+    console.error('[HideOnPress] 更新按下隐藏开关失败:', err)
+    target.checked = !newHideOnPress
+    const index = globalShortcuts.value.findIndex((s) => s.id === shortcut.id)
+    if (index >= 0) {
+      globalShortcuts.value[index].hideOnPress = !newHideOnPress
     }
   }
 }
@@ -1348,6 +1406,22 @@ useJumpFunction<ShortcutsSettingJumpFunction>(async (state) => {
                       type="checkbox"
                       :checked="shortcut.autoCopy ?? false"
                       @change="handleAutoCopyToggle(shortcut, $event)"
+                    />
+                    <span class="toggle-slider"></span>
+                  </label>
+                </div>
+
+                <div
+                  v-if="activeTab === 'global'"
+                  class="auto-copy-control"
+                  :title="(shortcut.hideOnPress ?? false) ? '已启用按下隐藏' : '已禁用按下隐藏'"
+                >
+                  <span class="auto-copy-label">按下隐藏</span>
+                  <label class="toggle auto-copy-toggle">
+                    <input
+                      type="checkbox"
+                      :checked="shortcut.hideOnPress ?? false"
+                      @change="handleHideOnPressToggle(shortcut, $event)"
                     />
                     <span class="toggle-slider"></span>
                   </label>

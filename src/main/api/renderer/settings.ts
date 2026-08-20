@@ -38,6 +38,12 @@ interface ShortcutLaunchContext {
   pastedText: string | null
 }
 
+interface GlobalShortcutRuntimeConfig {
+  autoCopy: boolean
+  preScreenshotOptimization: boolean
+  hideOnPress: boolean
+}
+
 /**
  * 设置管理API - 主程序专用
  * 包含主题、快捷键、开机启动等设置
@@ -65,11 +71,8 @@ export class SettingsAPI {
 
   // 临时快捷键录制相关
   private recordingShortcuts: string[] = []
-  // 全局快捷键配置映射（存储每个快捷键的 autoCopy 等配置）
-  private globalShortcutConfigs: Map<
-    string,
-    { autoCopy: boolean; preScreenshotOptimization: boolean }
-  > = new Map()
+  // 全局快捷键配置映射（存储每个快捷键的 autoCopy / hideOnPress 等配置）
+  private globalShortcutConfigs: Map<string, GlobalShortcutRuntimeConfig> = new Map()
   private globalShortcutTargets = new Map<string, string>()
   private globalShortcutPreparations = new Map<string, GlobalShortcutPreparation>()
   private nativeOptimizedShortcutSet = new Set<string>()
@@ -204,7 +207,8 @@ export class SettingsAPI {
       shortcut,
       target,
       config.autoCopy,
-      config.preScreenshotOptimization
+      config.preScreenshotOptimization,
+      config.hideOnPress
     )
   }
 
@@ -228,13 +232,15 @@ export class SettingsAPI {
         shortcut: string,
         target: string,
         autoCopy?: boolean,
-        preScreenshotOptimization?: boolean
+        preScreenshotOptimization?: boolean,
+        hideOnPress?: boolean
       ) =>
         this.registerGlobalShortcut(
           shortcut,
           target,
           autoCopy ?? false,
-          preScreenshotOptimization ?? false
+          preScreenshotOptimization ?? false,
+          hideOnPress ?? false
         )
     )
     ipcMain.handle('unregister-global-shortcut', (_event, shortcut: string) =>
@@ -242,11 +248,8 @@ export class SettingsAPI {
     )
     ipcMain.handle(
       'update-global-shortcut-config',
-      (
-        _event,
-        shortcut: string,
-        config: { autoCopy: boolean; preScreenshotOptimization: boolean }
-      ) => this.updateGlobalShortcutConfig(shortcut, config)
+      (_event, shortcut: string, config: GlobalShortcutRuntimeConfig) =>
+        this.updateGlobalShortcutConfig(shortcut, config)
     )
 
     // 应用快捷键
@@ -342,7 +345,8 @@ export class SettingsAPI {
                 shortcut.shortcut,
                 shortcut.target,
                 shortcut.autoCopy ?? false,
-                shortcut.preScreenshotOptimization ?? false
+                shortcut.preScreenshotOptimization ?? false,
+                shortcut.hideOnPress ?? false
               )
             } catch (error) {
               console.error(`注册全局快捷键失败: ${shortcut.shortcut}`, error)
@@ -439,15 +443,16 @@ export class SettingsAPI {
     shortcut: string,
     target: string,
     autoCopy: boolean = false,
-    preScreenshotOptimization: boolean = false
+    preScreenshotOptimization: boolean = false,
+    hideOnPress: boolean = false
   ): Promise<any> {
     console.log(
-      `[Settings] 注册全局快捷键: ${shortcut} -> ${target}, autoCopy: ${autoCopy}, preScreenshotOptimization: ${preScreenshotOptimization}`
+      `[Settings] 注册全局快捷键: ${shortcut} -> ${target}, autoCopy: ${autoCopy}, preScreenshotOptimization: ${preScreenshotOptimization}, hideOnPress: ${hideOnPress}`
     )
 
     try {
       // 存储快捷键配置
-      this.globalShortcutConfigs.set(shortcut, { autoCopy, preScreenshotOptimization })
+      this.globalShortcutConfigs.set(shortcut, { autoCopy, preScreenshotOptimization, hideOnPress })
       this.globalShortcutTargets.set(shortcut, target)
       console.log('[Settings] 快捷键配置已存储到 Map')
 
@@ -545,17 +550,22 @@ export class SettingsAPI {
    */
   public async updateGlobalShortcutConfig(
     shortcut: string,
-    config: { autoCopy: boolean; preScreenshotOptimization: boolean }
+    config: GlobalShortcutRuntimeConfig
   ): Promise<{ success: boolean; error?: string }> {
     const previousConfig = this.globalShortcutConfigs.get(shortcut)
     const previousTarget = this.globalShortcutTargets.get(shortcut)
     const previousPreparation = this.globalShortcutPreparations.get(shortcut)
+    const nextConfig: GlobalShortcutRuntimeConfig = {
+      autoCopy: config.autoCopy ?? false,
+      preScreenshotOptimization: config.preScreenshotOptimization ?? false,
+      hideOnPress: config.hideOnPress ?? false
+    }
 
     try {
       console.log(
-        `[Settings] 更新全局快捷键配置: ${shortcut}, autoCopy: ${config.autoCopy}, preScreenshotOptimization: ${config.preScreenshotOptimization}`
+        `[Settings] 更新全局快捷键配置: ${shortcut}, autoCopy: ${nextConfig.autoCopy}, preScreenshotOptimization: ${nextConfig.preScreenshotOptimization}, hideOnPress: ${nextConfig.hideOnPress}`
       )
-      this.globalShortcutConfigs.set(shortcut, config)
+      this.globalShortcutConfigs.set(shortcut, nextConfig)
       const rebindResult = await this.rebindGlobalShortcut(shortcut)
       if (!rebindResult.success) {
         if (previousConfig) {
@@ -632,11 +642,19 @@ export class SettingsAPI {
       const config = this.globalShortcutConfigs.get(shortcut)
       const autoCopy = config?.autoCopy ?? false
       const preScreenshotOptimization = config?.preScreenshotOptimization ?? false
+      const hideOnPress = config?.hideOnPress ?? false
 
       console.log(`[Settings] 快捷键触发: ${shortcut}`)
       console.log(`[Settings] 指令类型需要文本: ${preparation.shouldCaptureSelectedText}`)
       console.log(`[Settings] 用户启用自动复制: ${autoCopy}`)
       console.log(`[Settings] 用户启用预截图优化: ${preScreenshotOptimization}`)
+      console.log(`[Settings] 用户启用按下隐藏: ${hideOnPress}`)
+
+      if (hideOnPress && this.shouldHideWindowOnRepeatPress()) {
+        console.log(`[Settings] 窗口已显示，按下隐藏并恢复上一应用: ${shortcut}`)
+        windowManager.hideWindow(true)
+        return
+      }
 
       if (preScreenshotOptimization && !skipPrime) {
         primeScreenCaptureFrame()
@@ -660,6 +678,14 @@ export class SettingsAPI {
    */
   private shouldTriggerGlobalShortcut(_target: string): boolean {
     return !this.isGlobalShortcutTriggering
+  }
+
+  /**
+   * 窗口已显示且聚焦时，开启「按下隐藏」的快捷键再次按下应藏窗。
+   */
+  private shouldHideWindowOnRepeatPress(): boolean {
+    const mainWindow = windowManager.getMainWindow() ?? this.mainWindow
+    return Boolean(mainWindow?.isVisible() && mainWindow.isFocused())
   }
 
   /**

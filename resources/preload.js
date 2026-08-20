@@ -1014,13 +1014,20 @@ window.ztools = {
       await electron.ipcRenderer.invoke('internal:get-plugin-memory-info', pluginPath),
 
     // ==================== 全局快捷键 API ====================
-    registerGlobalShortcut: async (shortcut, target, autoCopy, preScreenshotOptimization) =>
+    registerGlobalShortcut: async (
+      shortcut,
+      target,
+      autoCopy,
+      preScreenshotOptimization,
+      hideOnPress
+    ) =>
       await electron.ipcRenderer.invoke(
         'internal:register-global-shortcut',
         shortcut,
         target,
         autoCopy,
-        preScreenshotOptimization
+        preScreenshotOptimization,
+        hideOnPress
       ),
     unregisterGlobalShortcut: async (shortcut) =>
       await electron.ipcRenderer.invoke('internal:unregister-global-shortcut', shortcut),
