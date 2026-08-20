@@ -5,6 +5,8 @@ type MockHandler = (...args: any[]) => void
 const mocks = vi.hoisted(() => {
   const appFocus = vi.fn()
   const appHide = vi.fn()
+  const appShow = vi.fn()
+  const appIsHidden = vi.fn(() => false)
   const dbGet = vi.fn()
   const clipboardGetCurrentWindow = vi.fn()
   const clipboardActivateApp = vi.fn()
@@ -64,6 +66,8 @@ const mocks = vi.hoisted(() => {
   return {
     appFocus,
     appHide,
+    appShow,
+    appIsHidden,
     dbGet,
     clipboardGetCurrentWindow,
     clipboardActivateApp,
@@ -85,6 +89,8 @@ vi.mock('electron', () => ({
     getAppPath: vi.fn(() => '/tmp/ztools'),
     focus: mocks.appFocus,
     hide: mocks.appHide,
+    show: mocks.appShow,
+    isHidden: mocks.appIsHidden,
     dock: {
       show: vi.fn(),
       hide: vi.fn()
@@ -202,6 +208,7 @@ describe('windowManager macOS activation', () => {
     mocks.dbGet.mockReturnValue(null)
     mocks.clipboardGetCurrentWindow.mockReturnValue(null)
     mocks.clipboardActivateApp.mockReturnValue(true)
+    mocks.appIsHidden.mockReturnValue(false)
     mocks.latestWindow.current = null
   })
 
@@ -267,5 +274,28 @@ describe('windowManager macOS activation', () => {
     expect(mocks.appHide).not.toHaveBeenCalled()
     expect(mocks.latestWindow.current.hide).toHaveBeenCalledTimes(1)
     expect(mocks.clipboardActivateApp).not.toHaveBeenCalled()
+  })
+
+  it('after app.hide, showWindow unhides via app.show', async () => {
+    mocks.appIsHidden.mockReturnValue(true)
+    const { default: windowManager } = await import('../../src/main/managers/windowManager')
+
+    windowManager.createWindow()
+    windowManager.hideWindow(true)
+    expect(mocks.appHide).toHaveBeenCalledTimes(1)
+
+    windowManager.showWindow()
+    expect(mocks.appShow).toHaveBeenCalledTimes(1)
+  })
+
+  it('showWindow does not call app.show when the app is not hidden', async () => {
+    mocks.appIsHidden.mockReturnValue(false)
+    const { default: windowManager } = await import('../../src/main/managers/windowManager')
+
+    windowManager.createWindow()
+    windowManager.showWindow()
+
+    expect(mocks.appShow).not.toHaveBeenCalled()
+    expect(mocks.appFocus).not.toHaveBeenCalled()
   })
 })
