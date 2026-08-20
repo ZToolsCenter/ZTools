@@ -811,8 +811,7 @@ export class InternalPluginAPI {
         shortcut: string,
         target: string,
         autoCopy?: boolean,
-        preScreenshotOptimization?: boolean,
-        hideOnPress?: boolean
+        preScreenshotOptimization?: boolean
       ) => {
         if (!requireInternalPlugin(this.pluginManager, event)) {
           throw new PermissionDeniedError('internal:register-global-shortcut')
@@ -821,8 +820,7 @@ export class InternalPluginAPI {
           shortcut,
           target,
           autoCopy ?? false,
-          preScreenshotOptimization ?? false,
-          hideOnPress ?? false
+          preScreenshotOptimization ?? false
         )
       }
     )
@@ -860,7 +858,7 @@ export class InternalPluginAPI {
       async (
         event,
         shortcut: string,
-        config: { autoCopy: boolean; preScreenshotOptimization: boolean; hideOnPress: boolean }
+        config: { autoCopy: boolean; preScreenshotOptimization: boolean }
       ) => {
         if (!requireInternalPlugin(this.pluginManager, event)) {
           throw new PermissionDeniedError('internal:update-global-shortcut-config')

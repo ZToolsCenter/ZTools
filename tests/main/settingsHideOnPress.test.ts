@@ -6,7 +6,8 @@ const mocks = vi.hoisted(() => ({
   prepareGlobalShortcut: vi.fn(),
   hideWindow: vi.fn(),
   getMainWindow: vi.fn(),
-  shouldIgnoreHotkeys: vi.fn(() => false)
+  shouldIgnoreHotkeys: vi.fn(() => false),
+  dbGet: vi.fn()
 }))
 
 vi.mock('electron', () => ({
@@ -55,7 +56,7 @@ vi.mock('../../src/main/managers/windowManager.js', () => ({
 }))
 vi.mock('../../src/main/core/screenCapture.js', () => ({ primeScreenCaptureFrame: vi.fn() }))
 vi.mock('../../src/main/api/shared/database.js', () => ({
-  default: { dbGet: vi.fn(), dbPut: vi.fn() }
+  default: { dbGet: mocks.dbGet, dbPut: vi.fn() }
 }))
 vi.mock('../../src/main/api/index.js', () => ({
   default: { prepareGlobalShortcut: mocks.prepareGlobalShortcut }
@@ -67,6 +68,15 @@ function setWindowState(visible: boolean, focused: boolean): void {
   mocks.getMainWindow.mockReturnValue({
     isVisible: () => visible,
     isFocused: () => focused
+  })
+}
+
+function setGlobalHideOnPress(enabled: boolean): void {
+  mocks.dbGet.mockImplementation((key: string) => {
+    if (key === 'settings-general') {
+      return { hideOnPress: enabled }
+    }
+    return null
   })
 }
 
@@ -88,18 +98,13 @@ describe('SettingsAPI hideOnPress', () => {
     })
     mocks.shouldIgnoreHotkeys.mockReturnValue(false)
     setWindowState(false, false)
+    setGlobalHideOnPress(false)
   })
 
-  async function registerAndTrigger(hideOnPress: boolean): Promise<void> {
+  async function registerAndTrigger(): Promise<void> {
     const settings = new SettingsAPI()
     settings.setGlobalShortcutHandler(launchHandler)
-    const result = await settings.registerGlobalShortcut(
-      'Alt+1',
-      'demo/action',
-      false,
-      false,
-      hideOnPress
-    )
+    const result = await settings.registerGlobalShortcut('Alt+1', 'demo/action', false, false)
     expect(result).toEqual({ success: true })
     expect(triggerShortcut).toBeTypeOf('function')
     await triggerShortcut!()
@@ -111,22 +116,33 @@ describe('SettingsAPI hideOnPress', () => {
   }
 
   it('开启后窗口已显示再按会藏窗并恢复上一应用', async () => {
+    setGlobalHideOnPress(true)
     setWindowState(true, true)
-    await registerAndTrigger(true)
+    await registerAndTrigger()
     expect(mocks.hideWindow).toHaveBeenCalledWith(true)
     expect(launchHandler).not.toHaveBeenCalled()
   })
 
-  it('关闭时即使窗口已显示也只唤起指令', async () => {
+  it('未配置时默认关，窗口已显示也只唤起', async () => {
+    mocks.dbGet.mockImplementation(() => ({}))
     setWindowState(true, true)
-    await registerAndTrigger(false)
+    await registerAndTrigger()
+    expect(mocks.hideWindow).not.toHaveBeenCalled()
+    expect(launchHandler).toHaveBeenCalledWith('demo/action', undefined)
+  })
+
+  it('关闭时即使窗口已显示也只唤起指令', async () => {
+    setGlobalHideOnPress(false)
+    setWindowState(true, true)
+    await registerAndTrigger()
     expect(mocks.hideWindow).not.toHaveBeenCalled()
     expect(launchHandler).toHaveBeenCalledWith('demo/action', undefined)
   })
 
   it('开启但窗口未显示时仍唤起指令', async () => {
+    setGlobalHideOnPress(true)
     setWindowState(false, false)
-    await registerAndTrigger(true)
+    await registerAndTrigger()
     expect(mocks.hideWindow).not.toHaveBeenCalled()
     expect(launchHandler).toHaveBeenCalledWith('demo/action', undefined)
   })

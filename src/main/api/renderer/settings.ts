@@ -41,7 +41,6 @@ interface ShortcutLaunchContext {
 interface GlobalShortcutRuntimeConfig {
   autoCopy: boolean
   preScreenshotOptimization: boolean
-  hideOnPress: boolean
 }
 
 /**
@@ -71,7 +70,7 @@ export class SettingsAPI {
 
   // 临时快捷键录制相关
   private recordingShortcuts: string[] = []
-  // 全局快捷键配置映射（存储每个快捷键的 autoCopy / hideOnPress 等配置）
+  // 全局快捷键配置映射（存储每个快捷键的 autoCopy 等配置）
   private globalShortcutConfigs: Map<string, GlobalShortcutRuntimeConfig> = new Map()
   private globalShortcutTargets = new Map<string, string>()
   private globalShortcutPreparations = new Map<string, GlobalShortcutPreparation>()
@@ -207,8 +206,7 @@ export class SettingsAPI {
       shortcut,
       target,
       config.autoCopy,
-      config.preScreenshotOptimization,
-      config.hideOnPress
+      config.preScreenshotOptimization
     )
   }
 
@@ -232,15 +230,13 @@ export class SettingsAPI {
         shortcut: string,
         target: string,
         autoCopy?: boolean,
-        preScreenshotOptimization?: boolean,
-        hideOnPress?: boolean
+        preScreenshotOptimization?: boolean
       ) =>
         this.registerGlobalShortcut(
           shortcut,
           target,
           autoCopy ?? false,
-          preScreenshotOptimization ?? false,
-          hideOnPress ?? false
+          preScreenshotOptimization ?? false
         )
     )
     ipcMain.handle('unregister-global-shortcut', (_event, shortcut: string) =>
@@ -345,8 +341,7 @@ export class SettingsAPI {
                 shortcut.shortcut,
                 shortcut.target,
                 shortcut.autoCopy ?? false,
-                shortcut.preScreenshotOptimization ?? false,
-                shortcut.hideOnPress ?? false
+                shortcut.preScreenshotOptimization ?? false
               )
             } catch (error) {
               console.error(`注册全局快捷键失败: ${shortcut.shortcut}`, error)
@@ -443,16 +438,15 @@ export class SettingsAPI {
     shortcut: string,
     target: string,
     autoCopy: boolean = false,
-    preScreenshotOptimization: boolean = false,
-    hideOnPress: boolean = false
+    preScreenshotOptimization: boolean = false
   ): Promise<any> {
     console.log(
-      `[Settings] 注册全局快捷键: ${shortcut} -> ${target}, autoCopy: ${autoCopy}, preScreenshotOptimization: ${preScreenshotOptimization}, hideOnPress: ${hideOnPress}`
+      `[Settings] 注册全局快捷键: ${shortcut} -> ${target}, autoCopy: ${autoCopy}, preScreenshotOptimization: ${preScreenshotOptimization}`
     )
 
     try {
       // 存储快捷键配置
-      this.globalShortcutConfigs.set(shortcut, { autoCopy, preScreenshotOptimization, hideOnPress })
+      this.globalShortcutConfigs.set(shortcut, { autoCopy, preScreenshotOptimization })
       this.globalShortcutTargets.set(shortcut, target)
       console.log('[Settings] 快捷键配置已存储到 Map')
 
@@ -557,13 +551,12 @@ export class SettingsAPI {
     const previousPreparation = this.globalShortcutPreparations.get(shortcut)
     const nextConfig: GlobalShortcutRuntimeConfig = {
       autoCopy: config.autoCopy ?? false,
-      preScreenshotOptimization: config.preScreenshotOptimization ?? false,
-      hideOnPress: config.hideOnPress ?? false
+      preScreenshotOptimization: config.preScreenshotOptimization ?? false
     }
 
     try {
       console.log(
-        `[Settings] 更新全局快捷键配置: ${shortcut}, autoCopy: ${nextConfig.autoCopy}, preScreenshotOptimization: ${nextConfig.preScreenshotOptimization}, hideOnPress: ${nextConfig.hideOnPress}`
+        `[Settings] 更新全局快捷键配置: ${shortcut}, autoCopy: ${nextConfig.autoCopy}, preScreenshotOptimization: ${nextConfig.preScreenshotOptimization}`
       )
       this.globalShortcutConfigs.set(shortcut, nextConfig)
       const rebindResult = await this.rebindGlobalShortcut(shortcut)
@@ -642,7 +635,7 @@ export class SettingsAPI {
       const config = this.globalShortcutConfigs.get(shortcut)
       const autoCopy = config?.autoCopy ?? false
       const preScreenshotOptimization = config?.preScreenshotOptimization ?? false
-      const hideOnPress = config?.hideOnPress ?? false
+      const hideOnPress = this.isGlobalHideOnPressEnabled()
 
       console.log(`[Settings] 快捷键触发: ${shortcut}`)
       console.log(`[Settings] 指令类型需要文本: ${preparation.shouldCaptureSelectedText}`)
@@ -678,6 +671,14 @@ export class SettingsAPI {
    */
   private shouldTriggerGlobalShortcut(_target: string): boolean {
     return !this.isGlobalShortcutTriggering
+  }
+
+  /**
+   * 全局「按下隐藏」开关，存在 settings-general.hideOnPress，默认关。
+   */
+  private isGlobalHideOnPressEnabled(): boolean {
+    const settings = databaseAPI.dbGet('settings-general')
+    return settings?.hideOnPress === true
   }
 
   /**
