@@ -547,6 +547,8 @@ class APIManager {
    */
   private async launchDirectCommand(command: any, context?: ShortcutLaunchContext): Promise<void> {
     console.log('[API] 通过全局快捷键启动系统应用:', command.name, command.path)
+    // 再保险：launch 前系统级隐藏，避免 ZTools 盖住第三方导致 activate 失败。
+    windowManager.hideWindow(true)
     await appsAPI.launch({
       path: command.path,
       type: 'direct',

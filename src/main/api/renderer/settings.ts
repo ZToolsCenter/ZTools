@@ -79,9 +79,8 @@ export class SettingsAPI {
   // 全局快捷键触发流程执行中时，后续触发会被忽略，避免重复复制和重复启动。
   private isGlobalShortcutTriggering = false
   /**
-   * hideOnPress 只负责 ZTools 自己：主窗可见且自己是前台时再按 → hideWindow（macOS 为 app.hide）。
-   * 不在前台时照常 launch 绑定命令，不 show 首页。
-   * 不恢复 hideOnPressPendingHideShortcut。
+   * 主窗/搜索框已出来时先系统级 hide（macOS app.hide），再 launch 绑定命令。
+   * hideOnPress 不得把这次按键吃成只 hide、不 launch。不 show 首页。
    */
 
   // 启动 native 优化快捷键监听，并把命中事件回流到既有执行链路。
@@ -648,10 +647,10 @@ export class SettingsAPI {
       console.log(`[Settings] 用户启用预截图优化: ${preScreenshotOptimization}`)
       console.log(`[Settings] 用户启用按下隐藏: ${hideOnPress}`)
 
-      if (hideOnPress && this.isZToolsInForeground()) {
-        console.log(`[Settings] ZTools 前台，按下隐藏: ${shortcut}`)
+      // 搜索框/主窗已出来：先系统级隐藏，再执行绑定命令。绝不能只 hide 不 launch。
+      if (this.isZToolsMainWindowVisible()) {
+        console.log(`[Settings] 主窗可见，先隐藏再执行绑定命令: ${shortcut}`)
         windowManager.hideWindow(true)
-        return
       }
 
       if (preScreenshotOptimization && !skipPrime) {
@@ -687,11 +686,12 @@ export class SettingsAPI {
   }
 
   /**
-   * ZTools 是否在前台：主窗可见且聚焦，或插件视图聚焦。
+   * 搜索框/主窗是否已出来。只看可见，不要求聚焦：
+   * macOS 搜索框常是 alwaysOnTop panel，焦点可能不在 ZTools。
    */
-  private isZToolsInForeground(): boolean {
+  private isZToolsMainWindowVisible(): boolean {
     const mainWindow = windowManager.getMainWindow() ?? this.mainWindow
-    if (mainWindow?.isVisible() && mainWindow?.isFocused()) {
+    if (mainWindow?.isVisible()) {
       return true
     }
     return this.pluginManager?.isPluginViewFocused() === true

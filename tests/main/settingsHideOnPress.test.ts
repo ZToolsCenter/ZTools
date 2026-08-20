@@ -134,13 +134,16 @@ describe('SettingsAPI hideOnPress', () => {
     await pressShortcut()
   }
 
-  it('ZTools 前台再按 hide，不 launch', async () => {
+  it('主窗可见时按第三方 App 热键：先 hide 再 launch，不 show 首页', async () => {
     setGlobalHideOnPress(true)
     setWindowState(true, true)
-    await registerAndTrigger()
+    await registerAndTrigger('apps/Calculator')
     expect(mocks.hideWindow).toHaveBeenCalledWith(true)
+    expect(launchHandler).toHaveBeenCalledWith('apps/Calculator', undefined)
     expect(mocks.showWindow).not.toHaveBeenCalled()
-    expect(launchHandler).not.toHaveBeenCalled()
+    expect(mocks.hideWindow.mock.invocationCallOrder[0]).toBeLessThan(
+      launchHandler.mock.invocationCallOrder[0]
+    )
   })
 
   it('不在前台按绑了插件/App 的快捷键必须 launch', async () => {
@@ -152,12 +155,23 @@ describe('SettingsAPI hideOnPress', () => {
     expect(mocks.showWindow).not.toHaveBeenCalled()
   })
 
-  it('别的 App 前台（主窗可见但未聚焦）再按必须 launch', async () => {
+  it('主窗可见但未聚焦时按第三方热键也是先 hide 再 launch', async () => {
     setGlobalHideOnPress(true)
     setWindowState(true, false)
+    await registerAndTrigger('apps/Finder')
+    expect(mocks.hideWindow).toHaveBeenCalledWith(true)
+    expect(launchHandler).toHaveBeenCalledWith('apps/Finder', undefined)
+    expect(mocks.showWindow).not.toHaveBeenCalled()
+    expect(mocks.hideWindow.mock.invocationCallOrder[0]).toBeLessThan(
+      launchHandler.mock.invocationCallOrder[0]
+    )
+  })
+
+  it('主窗可见时按插件热键仍 launch，不只回首页', async () => {
+    setGlobalHideOnPress(true)
+    setWindowState(true, true)
     await registerAndTrigger('plugin/screenshot')
     expect(launchHandler).toHaveBeenCalledWith('plugin/screenshot', undefined)
-    expect(mocks.hideWindow).not.toHaveBeenCalled()
     expect(mocks.showWindow).not.toHaveBeenCalled()
   })
 
@@ -177,21 +191,21 @@ describe('SettingsAPI hideOnPress', () => {
     expect(mocks.hideWindow).not.toHaveBeenCalled()
   })
 
-  it('未配置时默认关，窗口已显示也只唤起', async () => {
+  it('未配置时默认关，主窗可见仍先 hide 再 launch', async () => {
     mocks.dbGet.mockImplementation(() => ({}))
     setWindowState(true, true)
-    await registerAndTrigger()
-    expect(mocks.hideWindow).not.toHaveBeenCalled()
+    await registerAndTrigger('apps/Notes')
+    expect(mocks.hideWindow).toHaveBeenCalledWith(true)
+    expect(launchHandler).toHaveBeenCalledWith('apps/Notes', undefined)
     expect(mocks.showWindow).not.toHaveBeenCalled()
-    expect(launchHandler).toHaveBeenCalledWith('demo/action', undefined)
   })
 
-  it('关闭时即使窗口已显示也只唤起指令', async () => {
+  it('关闭 hideOnPress 时主窗可见也先 hide 再 launch', async () => {
     setGlobalHideOnPress(false)
     setWindowState(true, true)
-    await registerAndTrigger()
-    expect(mocks.hideWindow).not.toHaveBeenCalled()
+    await registerAndTrigger('apps/Calculator')
+    expect(mocks.hideWindow).toHaveBeenCalledWith(true)
+    expect(launchHandler).toHaveBeenCalledWith('apps/Calculator', undefined)
     expect(mocks.showWindow).not.toHaveBeenCalled()
-    expect(launchHandler).toHaveBeenCalledWith('demo/action', undefined)
   })
 })
