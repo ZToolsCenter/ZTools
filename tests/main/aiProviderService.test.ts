@@ -71,6 +71,7 @@ describe('aiProviderService', () => {
       'gpt-4o',
       'gpt-4o-mini'
     ])
+    expect(migrated.providers.every((provider) => provider.apiFormat === 'openai-chat')).toBe(true)
     expect('defaultModelRef' in migrated).toBe(false)
   })
 
@@ -133,7 +134,9 @@ describe('aiProviderService', () => {
     expect(aiProviderService.getModelChoices()[0]).toMatchObject({
       id: '新名称 - model-a',
       value: originalRef,
-      label: '新名称 - model-a'
+      label: '新名称 - model-a',
+      contextWindow: 262_144,
+      inputModalities: ['text']
     })
     expect(aiProviderService.resolveModel(oldPublicId)?.provider.name).toBe('新名称')
     expect(aiProviderService.resolveModel(originalRef)?.provider.name).toBe('新名称')
@@ -177,6 +180,93 @@ describe('aiProviderService', () => {
     expect(aiProviderService.setProviderEnabled(secondProvider.id, false).success).toBe(true)
     expect(aiProviderService.getModelChoices()).toEqual([])
     expect(aiProviderService.resolveModel()).toBeNull()
+  })
+
+  it('normalizes supported reasoning efforts and returns an isolated list to plugins', () => {
+    aiProviderService.addProvider({
+      name: '推理供应商',
+      apiUrl: 'https://reasoning.example/v1',
+      apiKey: 'secret',
+      selectedModels: [
+        {
+          modelId: 'reasoning-model',
+          reasoning: {
+            protocol: 'openai-compatible',
+            efforts: { max: 'ultra', low: 'low', medium: 'medium' },
+            defaultEffort: 'medium',
+            responseField: 'auto'
+          }
+        }
+      ]
+    })
+
+    const firstChoice = aiProviderService.getModelChoices()[0]
+    expect(firstChoice.reasoning).toEqual({
+      efforts: [
+        { id: 'low', label: '低' },
+        { id: 'medium', label: '中' },
+        { id: 'max', label: '最高' }
+      ],
+      defaultEffort: 'medium'
+    })
+
+    // 插件修改返回值不得污染宿主持久化配置或后续查询。
+    firstChoice.reasoning!.efforts.push({ id: 'xhigh', label: '极高' })
+    expect(aiProviderService.getModelChoices()[0].reasoning?.efforts).toEqual([
+      { id: 'low', label: '低' },
+      { id: 'medium', label: '中' },
+      { id: 'max', label: '最高' }
+    ])
+  })
+
+  it('does not expose a selector for unknown or explicitly unsupported reasoning', () => {
+    aiProviderService.addProvider({
+      name: '能力三态供应商',
+      apiUrl: 'https://tri-state.example/v1',
+      apiKey: 'secret',
+      selectedModels: [
+        { modelId: 'unknown-model' },
+        { modelId: 'unsupported-model', reasoning: false }
+      ]
+    })
+
+    const choices = aiProviderService.getModelChoices()
+    expect(choices).toHaveLength(2)
+    expect(choices[0]).not.toHaveProperty('reasoning')
+    expect(choices[1]).not.toHaveProperty('reasoning')
+    expect(stored!.providers[0].selectedModels[1].reasoning).toBe(false)
+  })
+
+  it('clears an existing reasoning capability through the explicit null marker', () => {
+    aiProviderService.addProvider({
+      name: '可清除推理供应商',
+      apiUrl: 'https://clear-reasoning.example/v1',
+      apiKey: 'secret',
+      selectedModels: [
+        {
+          modelId: 'reasoning-model',
+          reasoning: {
+            protocol: 'openai-compatible',
+            efforts: { high: 'high' },
+            defaultEffort: 'high',
+            responseField: 'auto'
+          }
+        }
+      ]
+    })
+    const provider = stored!.providers[0]
+
+    const result = aiProviderService.updateProvider({
+      id: provider.id,
+      name: provider.name,
+      apiUrl: provider.apiUrl,
+      apiKey: provider.apiKey,
+      selectedModels: [{ modelId: 'reasoning-model', reasoning: null }]
+    })
+
+    expect(result.success).toBe(true)
+    expect(stored!.providers[0].selectedModels[0]).not.toHaveProperty('reasoning')
+    expect(aiProviderService.getModelChoices()[0]).not.toHaveProperty('reasoning')
   })
 
   it('rejects duplicate provider names that would create ambiguous public ids', () => {
@@ -226,6 +316,7 @@ describe('aiProviderService', () => {
     ])
     expect(stored.providers[1].selectedModels[0].aliases).toEqual(['中转站 - model-a'])
     expect(stored.providers.every((provider) => provider.enabled)).toBe(true)
+    expect(stored.providers.every((provider) => provider.apiFormat === 'openai-chat')).toBe(true)
     expect('defaultModelRef' in stored).toBe(false)
     expect('label' in stored.providers[0].selectedModels[0]).toBe(false)
     expect('label' in stored.providers[1].selectedModels[0]).toBe(false)
@@ -240,5 +331,64 @@ describe('aiProviderService', () => {
     await expect(
       aiProviderService.fetchRemoteModels('https://example.com/v1/', 'secret')
     ).resolves.toEqual([{ id: 'model-a' }, { id: 'model-z' }])
+  })
+
+  it('persists the api format and defaults legacy values to OpenAI Chat Completions', () => {
+    // 未指定接口格式的新建供应商回退为默认格式。
+    expect(
+      aiProviderService.addProvider({
+        name: '默认供应商',
+        apiUrl: 'https://one.example/v1',
+        apiKey: 'key-one',
+        selectedModels: [{ modelId: 'model-a' }]
+      }).success
+    ).toBe(true)
+    expect(stored!.providers[0].apiFormat).toBe('openai-chat')
+
+    // 显式指定 Anthropic Messages 的供应商原样保存。
+    expect(
+      aiProviderService.addProvider({
+        name: 'Anthropic 供应商',
+        apiUrl: 'https://two.example/v1',
+        apiKey: 'key-two',
+        apiFormat: 'anthropic-messages',
+        selectedModels: [{ modelId: 'model-a' }]
+      }).success
+    ).toBe(true)
+    expect(stored!.providers[1].apiFormat).toBe('anthropic-messages')
+
+    // 更新时可以切换为 OpenAI Responses API。
+    const provider = stored!.providers[1]
+    expect(
+      aiProviderService.updateProvider({
+        id: provider.id,
+        name: provider.name,
+        apiUrl: provider.apiUrl,
+        apiKey: provider.apiKey,
+        apiFormat: 'openai-responses',
+        selectedModels: [{ modelId: 'model-a' }]
+      }).success
+    ).toBe(true)
+    expect(stored!.providers[1].apiFormat).toBe('openai-responses')
+
+    // 历史供应商保存了非法接口格式时，读取时回退为默认的 OpenAI Chat Completions。
+    stored = {
+      version: 2,
+      providers: [
+        {
+          id: provider.id,
+          name: provider.name,
+          apiUrl: provider.apiUrl,
+          apiKey: provider.apiKey,
+          apiFormat: 'bogus-format',
+          enabled: true,
+          selectedModels: [{ ref: 'ref-a', modelId: 'model-a' }]
+        }
+      ]
+    } as AiProviderStore
+
+    expect(aiProviderService.getModelChoices()[0].value).toBe('ref-a')
+    expect(stored!.providers[0].apiFormat).toBe('openai-chat')
+    expect(mockDbPut).toHaveBeenCalled()
   })
 })

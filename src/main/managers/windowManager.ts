@@ -941,8 +941,24 @@ class WindowManager {
     return ret
   }
 
+  /**
+   * 设置主窗口关闭后需要恢复的前台窗口。
+   * @param windowInfo 要记录的窗口信息，传入 null 时清除已有记录。
+   * @returns 无返回值。
+   */
   public setPreviousActiveWindow(windowInfo: typeof this.previousActiveWindow): void {
     this.previousActiveWindow = windowInfo
+  }
+
+  /**
+   * 捕获当前前台窗口，供不显示主窗口的启动链路保留本次操作目标。
+   * @returns 捕获到的窗口信息；无法获取时返回 null 并清除旧记录。
+   */
+  public captureCurrentActiveWindow(): typeof this.previousActiveWindow {
+    // 即使本次捕获失败也要清除旧值，避免后续 API 误用上一次启动留下的窗口。
+    const currentWindow = clipboardManager.getCurrentWindow()
+    this.previousActiveWindow = currentWindow
+    return currentWindow
   }
 
   /**
@@ -1181,17 +1197,23 @@ class WindowManager {
   }
 
   /**
-   * 隐藏窗口
+   * 隐藏主窗口，并按需恢复隐藏前的前台窗口。
+   * @param _restoreFocus 是否恢复隐藏前的前台窗口。
+   * @returns 无返回值。
    */
   public hideWindow(_restoreFocus: boolean = true): void {
     console.log('[Window] 隐藏窗口', _restoreFocus)
 
-    // 记录当前的焦点状态（在隐藏之前）
-    this.recordFocusState()
+    const wasMainWindowVisible = this.mainWindow?.isVisible() === true
+
+    // 只有主窗口实际显示过，才记录并恢复其隐藏前的焦点状态。
+    if (wasMainWindowVisible) {
+      this.recordFocusState()
+    }
 
     this.mainWindow?.hide()
-    if (_restoreFocus) {
-      this.restorePreviousWindow()
+    if (_restoreFocus && wasMainWindowVisible) {
+      void this.restorePreviousWindow()
     }
 
     // 启动自动返回搜索定时器

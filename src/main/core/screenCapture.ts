@@ -3,14 +3,16 @@ import { exec, execSync, ChildProcess } from 'child_process'
 import fs from 'fs'
 import path from 'path'
 import os from 'os'
-import { ScreenCapture } from './native'
+import { ScreenCapture, ScreenCaptureOptions } from './native'
 import windowManager from '../managers/windowManager'
 
 // 截图方法windows
 export const screenWindow = (
-  cb: (image: string, bounds?: { x: number; y: number; width: number; height: number }) => void
+  cb: (image: string, bounds?: { x: number; y: number; width: number; height: number }) => void,
+  options?: ScreenCaptureOptions
 ): void => {
-  ScreenCapture.start((result) => {
+  // 透传 autoConfirm 选项；旧签名仅传 callback 时走默认 true 自动出图
+  ScreenCapture.start(options ?? {}, (result) => {
     if (result.success) {
       const image = clipboard.readImage()
       const bounds = {
@@ -186,7 +188,8 @@ export const primeScreenCaptureFrame = (): boolean => {
 
 export const screenCapture = (
   mainWindow?: BrowserWindow,
-  restoreShowWindow: boolean = true
+  restoreShowWindow: boolean = true,
+  options?: ScreenCaptureOptions
 ): Promise<{ image: string; bounds?: { x: number; y: number; width: number; height: number } }> => {
   return new Promise((resolve) => {
     // 隐藏主窗口
@@ -209,10 +212,11 @@ export const screenCapture = (
         resolve({ image, bounds })
       })
     } else if (process.platform === 'win32') {
+      // Windows 透传 autoConfirm 选项，false 时进入编辑态由用户标注后再出图
       screenWindow((image, bounds) => {
         restoreWindow()
         resolve({ image, bounds })
-      })
+      }, options)
     } else {
       // Linux
       handleLinuxScreenShot((image) => {

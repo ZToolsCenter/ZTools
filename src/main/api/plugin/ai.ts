@@ -1,9 +1,22 @@
 import { ipcMain } from 'electron'
 import type { PluginManager } from '../../managers/pluginManager'
-import OpenAI from 'openai'
 import detachedWindowManager from '../../core/detachedWindowManager'
 import aiProviderService, { type ResolvedAiModel } from '../../core/aiProviderService.js'
-import type { AiModelChoice, AiProvider } from '../../../shared/aiProviderShared.js'
+import { createAdapter } from './aiProtocol/adapters'
+import {
+  normalizeAiModelCapabilities,
+  type AiModelChoice
+} from '../../../shared/aiProviderShared.js'
+import {
+  normalizeAiChatFailure,
+  streamSingleAiProtocolChat,
+  type AiChatEvent,
+  type AiChatOption,
+  type AiChatResult
+} from '../../core/aiChatTransport.js'
+import { createAiChatEventBatcher } from '../../core/aiChatEventBatcher.js'
+import aiRequestStatusTracker from '../../core/aiRequestStatusTracker.js'
+import type { AiRequestStatus, AiRequestStatusChange } from '../../../shared/aiRequestStatus.js'
 
 /**
  * AI 选项
@@ -82,12 +95,22 @@ class PluginAiAPI {
   private mainWindow: Electron.BrowserWindow | null = null
   private abortControllers: Map<string, AbortController> = new Map()
 
+  /**
+   * 绑定主窗口和插件管理器，并注册插件侧 AI IPC。
+   * @param mainWindow ZTools 主窗口
+   * @param pluginManager 插件运行时管理器
+   * @returns 无返回值
+   */
   public init(mainWindow: Electron.BrowserWindow, pluginManager: PluginManager): void {
     this.mainWindow = mainWindow
     this.pluginManager = pluginManager
     this.setupIPC()
   }
 
+  /**
+   * 注册模型调用、停止、模型发现和工具回调相关 IPC 通道。
+   * @returns 无返回值
+   */
   private setupIPC(): void {
     // 非流式调用 AI
     ipcMain.handle('plugin:ai-call', async (event, requestId: string, option: AiOption) => {
@@ -99,7 +122,7 @@ class PluginAiAPI {
         return await this.callAI(option, requestId, event.sender)
       } catch (error: unknown) {
         console.error('[AI] AI 调用失败:', error)
-        this.notifyAiStatus('idle', event.sender)
+        this.notifyAiStatus('idle', event.sender, requestId)
         return { success: false, error: error instanceof Error ? error.message : '未知错误' }
       }
     })
@@ -117,8 +140,36 @@ class PluginAiAPI {
         return { success: true }
       } catch (error: unknown) {
         console.error('[AI] AI 流式调用失败:', error)
-        this.notifyAiStatus('idle', event.sender)
+        this.notifyAiStatus('idle', event.sender, requestId)
         return { success: false, error: error instanceof Error ? error.message : '未知错误' }
+      }
+    })
+    // 单轮流式调用只负责协议传输，不执行模型生成的工具。
+    ipcMain.handle('plugin:ai-chat', async (event, requestId: string, option: AiChatOption) => {
+      const eventName = `plugin:ai-chat-event-${requestId}`
+      const eventBatcher = createAiChatEventBatcher(option?.streamBatchIntervalMs, (chatEvent) => {
+        if (!event.sender.isDestroyed()) event.sender.send(eventName, chatEvent)
+      })
+      try {
+        const pluginInfo = this.pluginManager?.getPluginInfoByWebContents(event.sender)
+        if (!pluginInfo) {
+          return {
+            success: false,
+            error: { code: 'INVALID_REQUEST', message: '无法获取插件信息' }
+          }
+        }
+        return await this.callSingleAIChat(option, requestId, event.sender, eventBatcher.push)
+      } catch (error: unknown) {
+        console.error('[AI] AI 单轮调用失败:', error)
+        this.notifyAiStatus('idle', event.sender, requestId)
+        return { success: false, error: normalizeAiChatFailure(error) }
+      } finally {
+        // 请求结束、异常和主动中止都先发布尾部增量，再发送投递完成哨兵。
+        eventBatcher.flush()
+        // invoke 结果可能先于普通 send 事件抵达；哨兵用于插件侧等待流事件全部入队。
+        if (!event.sender.isDestroyed()) {
+          event.sender.send(eventName, { type: '__ztools_ai_chat_delivery_end__' })
+        }
       }
     })
     // 中止 AI 调用
@@ -167,24 +218,40 @@ class PluginAiAPI {
       }
     })
   }
+  /**
+   * 更新请求状态，并把带插件身份的聚合状态发送给可展示该插件的窗口。
+   * @param status 当前请求状态
+   * @param webContents 发起请求的插件页面
+   * @param requestId 当前 AI 请求标识
+   * @returns 无返回值
+   */
   private notifyAiStatus(
-    status: 'idle' | 'sending' | 'receiving',
-    webContents: Electron.WebContents
+    status: AiRequestStatus,
+    webContents: Electron.WebContents,
+    requestId: string
   ): void {
     const pluginInfo = this.pluginManager?.getPluginInfoByWebContents(webContents)
     if (!pluginInfo) return
+
+    const change: AiRequestStatusChange = {
+      pluginName: pluginInfo.name,
+      pluginPath: pluginInfo.path,
+      status: aiRequestStatusTracker.update(webContents.id, requestId, status)
+    }
+
+    // 主窗口保存所有缓存插件的状态，由渲染层按当前插件路径选择展示。
+    if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+      this.mainWindow.webContents.send('ai-status-changed', change)
+    }
 
     const detachedWindows = detachedWindowManager.getAllWindows()
     for (const windowInfo of detachedWindows) {
       if (windowInfo.view.webContents === webContents) {
         if (windowInfo.window && !windowInfo.window.isDestroyed()) {
-          windowInfo.window.webContents.send('ai-status-changed', status)
+          windowInfo.window.webContents.send('ai-status-changed', change)
         }
         return
       }
-    }
-    if (this.mainWindow && !this.mainWindow.isDestroyed()) {
-      this.mainWindow.webContents.send('ai-status-changed', status)
     }
   }
 
@@ -204,70 +271,6 @@ class PluginAiAPI {
    */
   private async getModelConfig(modelRef?: string): Promise<ResolvedAiModel | null> {
     return aiProviderService.resolveModel(modelRef)
-  }
-
-  /**
-   * 使用供应商凭据创建 OpenAI 兼容客户端。
-   * @param provider 已解析的供应商连接配置
-   * @returns OpenAI SDK 客户端
-   */
-  private createClient(provider: AiProvider): OpenAI {
-    return new OpenAI({
-      apiKey: provider.apiKey,
-      baseURL: provider.apiUrl
-    })
-  }
-  /**
-   * 将 Message[] 转为 OpenAI SDK 格式
-   * 关键：保留 assistant 消息的 reasoning_content，解决 DeepSeek thinking mode 报错
-   */
-  private convertMessages(messages: Message[]): OpenAI.ChatCompletionMessageParam[] {
-    return messages.map((msg) => {
-      if (msg.role === 'assistant') {
-        const assistantMsg: Record<string, unknown> = {
-          role: 'assistant',
-          content: msg.content || ''
-        }
-        if (msg.reasoning_content) {
-          assistantMsg.reasoning_content = msg.reasoning_content
-        }
-        if (msg.tool_calls?.length) {
-          assistantMsg.tool_calls = msg.tool_calls
-        }
-        return assistantMsg as unknown as OpenAI.ChatCompletionMessageParam
-      }
-      if (msg.role === 'tool') {
-        return {
-          role: 'tool' as const,
-          content: (typeof msg.content === 'string' ? msg.content : '') || '',
-          tool_call_id: msg.tool_call_id || ''
-        }
-      }
-      // user 消息：支持字符串或内容块数组（多模态）
-      if (msg.role === 'user' && Array.isArray(msg.content)) {
-        return {
-          role: 'user' as const,
-          content: msg.content as OpenAI.ChatCompletionContentPart[]
-        }
-      }
-      return {
-        role: msg.role as 'system' | 'user',
-        content: (typeof msg.content === 'string' ? msg.content : '') || ''
-      }
-    })
-  }
-
-  private convertTools(tools: Tool[]): OpenAI.ChatCompletionTool[] {
-    return tools
-      .filter((t) => t.function)
-      .map((t) => ({
-        type: 'function' as const,
-        function: {
-          name: t.function!.name,
-          description: t.function!.description,
-          parameters: t.function!.parameters as OpenAI.FunctionParameters
-        }
-      }))
   }
 
   private async executeToolCall(
@@ -316,83 +319,166 @@ class PluginAiAPI {
     this.abortControllers.set(requestId, abortController)
 
     try {
-      this.notifyAiStatus('sending', webContents)
-      const client = this.createClient(resolvedModel.provider)
-      const openaiTools = option.tools?.length ? this.convertTools(option.tools) : undefined
+      this.notifyAiStatus('sending', webContents, requestId)
+      // 按供应商配置的接口格式选择适配器，统一工具调用循环。
+      const adapter = createAdapter(resolvedModel.provider)
+      const tools = option.tools?.length ? option.tools : undefined
       const messages = [...option.messages]
 
       for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-        this.notifyAiStatus(round === 0 ? 'sending' : 'receiving', webContents)
+        this.notifyAiStatus(round === 0 ? 'sending' : 'receiving', webContents, requestId)
 
-        const response = await client.chat.completions.create(
-          {
-            model: resolvedModel.model.modelId,
-            messages: this.convertMessages(messages),
-            ...(openaiTools?.length ? { tools: openaiTools } : {})
-          },
-          { signal: abortController.signal }
+        const turn = await adapter.complete(
+          { model: resolvedModel.model.modelId, messages, tools },
+          abortController.signal
         )
 
-        const choice = response.choices[0]
-        if (!choice) {
-          this.notifyAiStatus('idle', webContents)
-          return { success: true, data: { role: 'assistant', content: '' } }
-        }
-
-        const assistantMsg = choice.message
-        // 提取 reasoning_content（DeepSeek 等模型的非标准字段）
-        const reasoningContent = (assistantMsg as unknown as Record<string, unknown>)
-          .reasoning_content as string | undefined
-
-        // 没有工具调用，直接返回结果
-        if (!assistantMsg.tool_calls?.length) {
-          this.notifyAiStatus('idle', webContents)
+        // 没有工具调用，直接返回结果。
+        if (turn.toolCalls.length === 0) {
+          this.notifyAiStatus('idle', webContents, requestId)
           return {
             success: true,
             data: {
               role: 'assistant',
-              content: assistantMsg.content || '',
-              reasoning_content: reasoningContent
+              content: turn.content,
+              reasoning_content: turn.reasoningContent
             }
           }
         }
-        // 有工具调用：提取 function 类型的工具调用
-        const fnToolCalls = assistantMsg.tool_calls
-          .filter(
-            (tc): tc is OpenAI.ChatCompletionMessageToolCall & { type: 'function' } =>
-              tc.type === 'function'
-          )
-          .map((tc) => ({
-            id: tc.id,
-            type: 'function' as const,
-            function: { name: tc.function.name, arguments: tc.function.arguments }
-          }))
 
+        // 记录助手回复（含 reasoning_content 与工具调用）后执行工具。
         messages.push({
           role: 'assistant',
-          content: assistantMsg.content || '',
-          reasoning_content: reasoningContent,
-          tool_calls: fnToolCalls
+          content: turn.content,
+          reasoning_content: turn.reasoningContent,
+          tool_calls: turn.toolCalls
         })
 
-        // 执行所有工具调用并追加结果
-        for (const tc of fnToolCalls) {
-          const result = await this.executeToolCall(tc, webContents)
-          messages.push({ role: 'tool', content: result, tool_call_id: tc.id })
+        for (const toolCall of turn.toolCalls) {
+          const result = await this.executeToolCall(toolCall, webContents)
+          messages.push({ role: 'tool', content: result, tool_call_id: toolCall.id })
         }
       }
 
       // 超过最大轮次
-      this.notifyAiStatus('idle', webContents)
+      this.notifyAiStatus('idle', webContents, requestId)
       return { success: false, error: '工具调用轮次超过限制' }
     } catch (error: unknown) {
-      this.notifyAiStatus('idle', webContents)
+      this.notifyAiStatus('idle', webContents, requestId)
       if (error instanceof Error && error.name === 'AbortError') {
         return { success: false, error: 'AI 调用已中止' }
       }
       return { success: false, error: error instanceof Error ? error.message : '未知错误' }
     } finally {
       this.abortControllers.delete(requestId)
+    }
+  }
+
+  /**
+   * 执行一次由插件管理工具循环的流式请求。
+   * @param option 单轮消息、工具和生成参数
+   * @param requestId 当前请求唯一标识
+   * @param webContents 发起请求的插件页面
+   * @param onEvent 单轮流式事件接收器
+   * @returns 成功时返回完整助手响应，失败时返回结构化错误
+   */
+  private async callSingleAIChat(
+    option: AiChatOption,
+    requestId: string,
+    webContents: Electron.WebContents,
+    onEvent: (event: AiChatEvent) => void
+  ): Promise<
+    | { success: true; data: AiChatResult }
+    | { success: false; error: ReturnType<typeof normalizeAiChatFailure> }
+  > {
+    // 在解析供应商前拒绝空请求，确保插件始终收到可路由的稳定错误码。
+    if (!option || !Array.isArray(option.messages) || option.messages.length === 0) {
+      return {
+        success: false,
+        error: {
+          name: 'Error',
+          code: 'INVALID_REQUEST',
+          message: 'AI 消息列表不能为空'
+        }
+      }
+    }
+    if (!requestId || this.abortControllers.has(requestId)) {
+      return {
+        success: false,
+        error: {
+          name: 'Error',
+          code: 'INVALID_REQUEST',
+          message: requestId ? 'AI 请求标识已在使用中' : 'AI 请求标识不能为空'
+        }
+      }
+    }
+
+    const resolvedModel = await this.getModelConfig(option.model)
+    if (!resolvedModel) {
+      return {
+        success: false,
+        error: {
+          name: 'Error',
+          code: 'NOT_FOUND',
+          message: '未找到 AI 模型配置，请先在设置中添加模型'
+        }
+      }
+    }
+
+    const abortController = new AbortController()
+    this.abortControllers.set(requestId, abortController)
+    const timeout = Math.min(
+      300_000,
+      Math.max(5_000, Math.round(Number(option.timeout) || 120_000))
+    )
+    const capabilities = normalizeAiModelCapabilities(resolvedModel.model)
+    let timedOut = false
+    const timeoutHandle = setTimeout(() => {
+      timedOut = true
+      abortController.abort()
+    }, timeout)
+    try {
+      // 请求标识先于网络调用发布，确保插件可以立即停止。
+      this.notifyAiStatus('sending', webContents, requestId)
+      onEvent({ type: 'request', requestId })
+      const requestOption: AiChatOption = {
+        ...option,
+        // 能力与协议映射只能来自宿主模型配置，插件仅可选择公开的档位 ID。
+        modelReasoning: capabilities.reasoning,
+        reasoningEffort: option.reasoningEffort ?? option.reasoning?.effort
+      }
+      /**
+       * 将协议传输事件转发给插件并同步宿主接收状态。
+       * @param event 当前协议产生的统一流式事件
+       * @returns 无返回值
+       */
+      const emitEvent = (event: AiChatEvent): void => {
+        this.notifyAiStatus('receiving', webContents, requestId)
+        onEvent(event)
+      }
+      // 三种协议均通过统一 adapter 传输，保证请求字段与流式事件语义一致。
+      const result = await streamSingleAiProtocolChat(
+        createAdapter(resolvedModel.provider, timeout),
+        resolvedModel.model.modelId,
+        requestOption,
+        abortController.signal,
+        emitEvent
+      )
+      return { success: true, data: result }
+    } catch (error: unknown) {
+      if (timedOut) {
+        const timeoutError = new Error(`AI 请求在 ${timeout}ms 后超时`) as Error & {
+          normalizedCode?: string
+        }
+        timeoutError.normalizedCode = 'TIMEOUT'
+        return { success: false, error: normalizeAiChatFailure(timeoutError) }
+      }
+      return { success: false, error: normalizeAiChatFailure(error) }
+    } finally {
+      // 只清理本次请求，其他会话的并发请求继续运行。
+      clearTimeout(timeoutHandle)
+      this.abortControllers.delete(requestId)
+      this.notifyAiStatus('idle', webContents, requestId)
     }
   }
   /**
@@ -420,96 +506,57 @@ class PluginAiAPI {
     this.abortControllers.set(requestId, abortController)
 
     try {
-      this.notifyAiStatus('sending', webContents)
-      const client = this.createClient(resolvedModel.provider)
-      const openaiTools = option.tools?.length ? this.convertTools(option.tools) : undefined
+      this.notifyAiStatus('sending', webContents, requestId)
+      // 按供应商配置的接口格式选择适配器，统一工具调用循环。
+      const adapter = createAdapter(resolvedModel.provider)
+      const tools = option.tools?.length ? option.tools : undefined
       const messages = [...option.messages]
 
       for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-        this.notifyAiStatus(round === 0 ? 'sending' : 'receiving', webContents)
+        this.notifyAiStatus(round === 0 ? 'sending' : 'receiving', webContents, requestId)
 
-        const stream = await client.chat.completions.create(
-          {
-            model: resolvedModel.model.modelId,
-            messages: this.convertMessages(messages),
-            stream: true,
-            ...(openaiTools?.length ? { tools: openaiTools } : {})
-          },
-          { signal: abortController.signal }
-        )
-
-        let fullContent = ''
-        let fullReasoning = ''
-        const toolCalls: Map<number, { id: string; name: string; arguments: string }> = new Map()
-
-        this.notifyAiStatus('receiving', webContents)
-
-        for await (const chunk of stream) {
-          const delta = chunk.choices[0]?.delta
-          if (!delta) continue
-          // 处理 reasoning_content（DeepSeek thinking mode 流式片段）
-          const deltaAny = delta as Record<string, unknown>
-          const reasoningDelta = deltaAny.reasoning_content as string | undefined
-
-          // 处理文本内容
-          const contentDelta = delta.content || ''
-
-          if (contentDelta || reasoningDelta) {
-            fullContent += contentDelta
-            fullReasoning += reasoningDelta || ''
+        // 首个增量到达时切换为接收状态，与既有 UX 保持一致。
+        let receivingNotified = false
+        const turn = await adapter.stream(
+          { model: resolvedModel.model.modelId, messages, tools },
+          abortController.signal,
+          (delta) => {
+            if (!receivingNotified) {
+              receivingNotified = true
+              this.notifyAiStatus('receiving', webContents, requestId)
+            }
             onChunk({
               role: 'assistant',
-              content: contentDelta,
-              reasoning_content: reasoningDelta
+              content: delta.content ?? '',
+              reasoning_content: delta.reasoningContent
             })
           }
+        )
 
-          // 累积工具调用片段
-          if (delta.tool_calls) {
-            for (const tc of delta.tool_calls) {
-              const existing = toolCalls.get(tc.index)
-              if (existing) {
-                existing.arguments += tc.function?.arguments || ''
-              } else {
-                toolCalls.set(tc.index, {
-                  id: tc.id || '',
-                  name: tc.function?.name || '',
-                  arguments: tc.function?.arguments || ''
-                })
-              }
-            }
-          }
-        }
-
-        // 流结束，检查是否有工具调用
-        if (toolCalls.size === 0) {
-          this.notifyAiStatus('idle', webContents)
+        // 流结束且无工具调用，本轮直接结束。
+        if (turn.toolCalls.length === 0) {
+          this.notifyAiStatus('idle', webContents, requestId)
           return
         }
-        // 有工具调用：将 assistant 消息（含 reasoning_content）加入历史
-        const tcArray = Array.from(toolCalls.values()).map((tc) => ({
-          id: tc.id,
-          type: 'function' as const,
-          function: { name: tc.name, arguments: tc.arguments }
-        }))
+
+        // 将助手回复（含 reasoning_content）加入历史后执行工具调用。
         messages.push({
           role: 'assistant',
-          content: fullContent,
-          reasoning_content: fullReasoning || undefined,
-          tool_calls: tcArray
+          content: turn.content,
+          reasoning_content: turn.reasoningContent,
+          tool_calls: turn.toolCalls
         })
 
-        // 执行所有工具调用并追加结果
-        for (const tc of tcArray) {
-          const result = await this.executeToolCall(tc, webContents)
-          messages.push({ role: 'tool', content: result, tool_call_id: tc.id })
+        for (const toolCall of turn.toolCalls) {
+          const result = await this.executeToolCall(toolCall, webContents)
+          messages.push({ role: 'tool', content: result, tool_call_id: toolCall.id })
         }
       }
 
-      this.notifyAiStatus('idle', webContents)
+      this.notifyAiStatus('idle', webContents, requestId)
       throw new Error('工具调用轮次超过限制')
     } catch (error: unknown) {
-      this.notifyAiStatus('idle', webContents)
+      this.notifyAiStatus('idle', webContents, requestId)
       if (error instanceof Error && error.name === 'AbortError') {
         throw new Error('AI 调用已中止')
       }

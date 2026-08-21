@@ -16,6 +16,28 @@ English | [简体中文](./README.md)
 
 </div>
 
+## ❤️ Sponsors
+
+> [Want to appear here?](mailto:8589561@qq.com)
+
+<details open>
+<summary>Click to collapse</summary>
+
+<table>
+  <tr>
+    <td width="240" align="center">
+      <a href="https://go.apimart.ai/gh-ztools">
+        <img src="./.github/assets/sponsors/apimart.png" alt="APIMart" width="220">
+      </a>
+    </td>
+    <td>
+      Thanks to <a href="https://go.apimart.ai/gh-ztools">APIMart</a> for sponsoring this project! APIMart is a low-cost API platform for AI image &amp; video generation — GPT-Image-2 from $0.006/image, 160+ images per dollar. One async API covers both image and video: submit a task, get an ID, fetch results via polling or callback. Batch tens of thousands of images without timeouts, switch models without changing code. Pay-as-you-go with no monthly fee — <a href="https://go.apimart.ai/gh-ztools">sign up here</a> to get started.
+    </td>
+  </tr>
+</table>
+
+</details>
+
 ---
 
 ## ✨ Features
@@ -29,28 +51,6 @@ English | [简体中文](./README.md)
 - 🔒 **Data Isolation** - Independent plugin data storage, secure and reliable
 - 🛠️ **Developer Friendly** - Complete TypeScript type support, hot reload development
 - ⚙️ **Modern Tech Stack** - Electron 41 + Node 24.15 + Chrome 146
-
-## ❤️ Sponsors
-
-> [Want to appear here?](mailto:8589561@qq.com)
-
-<details open>
-<summary>Click to collapse</summary>
-
-<table>
-  <tr>
-    <td width="240" align="center">
-      <a href="https://ztest.ai/?from=ztools">
-        <img src="./.github/assets/sponsors/ztest.png" alt="Ztest" width="220">
-      </a>
-    </td>
-    <td>
-      Thanks to <a href="https://ztest.ai/?from=ztools">Ztest</a> for sponsoring this project! Ztest.ai is a model verification platform for AI API relay services that makes all test result data publicly available. Its 23 probes cover six dimensions: protocol, identity, capability, content integrity, security, and performance. By cross-validating results, it identifies model spoofing and degradation. As an independent third-party verification platform, Ztest monitors the model authenticity, response quality, and service availability of AI API relay services in real time.
-    </td>
-  </tr>
-</table>
-
-</details>
 
 ## 📸 Preview
 
@@ -285,7 +285,13 @@ This project is licensed under the [MIT License](./LICENSE).
 
 ## ⭐ Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=lzx8589561/ZTools&type=Date)](https://star-history.com/#lzx8589561/ZTools&Date)
+<a href="https://www.star-history.com/?repos=lzx8589561%2FZTools%2CZT+o+o+l+s%2FZT+o+o+l+s%2CZToolsCenter%2FZTools&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=lzx8589561/ZTools%2CZT o o l s/ZT o o l s%2CZToolsCenter/ZTools&type=date&theme=dark&legend=top-left&sealed_token=8lwZs-1zJ6pF0LHgiIcQXna7H9Bs2glgI5AFB360X1hZgyZRlaTNTDMxhxfB6Vzsb7dYXVq9EP0McDNxUTk4hC4IRQRjBgKiDrcCVWFVykNy_y4x4Zi4DQ" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=lzx8589561/ZTools%2CZT o o l s/ZT o o l s%2CZToolsCenter/ZTools&type=date&legend=top-left&sealed_token=8lwZs-1zJ6pF0LHgiIcQXna7H9Bs2glgI5AFB360X1hZgyZRlaTNTDMxhxfB6Vzsb7dYXVq9EP0McDNxUTk4hC4IRQRjBgKiDrcCVWFVykNy_y4x4Zi4DQ" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=lzx8589561/ZTools%2CZT o o l s/ZT o o l s%2CZToolsCenter/ZTools&type=date&legend=top-left&sealed_token=8lwZs-1zJ6pF0LHgiIcQXna7H9Bs2glgI5AFB360X1hZgyZRlaTNTDMxhxfB6Vzsb7dYXVq9EP0McDNxUTk4hC4IRQRjBgKiDrcCVWFVykNy_y4x4Zi4DQ" />
+ </picture>
+</a>
 
 ---
 

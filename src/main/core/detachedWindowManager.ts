@@ -11,6 +11,7 @@ import { registerExternalLinkInterceptor } from '../managers/pluginManager'
 import pluginWindowManager from './pluginWindowManager'
 import { getDetachedWindowSizeKey } from '../../shared/pluginRuntimeNamespace'
 import { getPreloadPath, getRendererPath } from '../utils/appBundlePath'
+import type { AiRequestStatus } from '../../shared/aiRequestStatus'
 
 export const DETACHED_TITLEBAR_HEIGHT = 52
 const MIN_WINDOW_WIDTH = 400
@@ -124,7 +125,12 @@ class DetachedWindowManager {
   }
 
   /**
-   * 创建分离的插件窗口（带自定义标题栏）
+   * 创建承载指定插件视图的独立窗口，并初始化自定义标题栏状态。
+   * @param pluginPath 插件物理路径
+   * @param pluginName 插件运行时名称
+   * @param pluginView 待迁移的插件 WebContentsView
+   * @param options 独立窗口尺寸、标题栏和焦点配置
+   * @returns 创建成功的独立窗口；创建失败时返回 null
    */
   public createDetachedWindow(
     pluginPath: string,
@@ -139,6 +145,7 @@ class DetachedWindowManager {
       searchPlaceholder?: string // 搜索框占位符
       subInputVisible?: boolean // 子输入框是否可见
       autoFocusSubInput?: boolean // 是否自动聚焦子输入框
+      aiRequestStatus?: AiRequestStatus // 分离前该插件已有的 AI 请求状态
     }
   ): BrowserWindow | null {
     try {
@@ -224,7 +231,8 @@ class DetachedWindowManager {
           title: options.title, // 窗口标题
           searchQuery: options.searchQuery || '', // 搜索框初始值
           searchPlaceholder: options.searchPlaceholder || '搜索...', // 搜索框占位符
-          subInputVisible: options.subInputVisible !== undefined ? options.subInputVisible : true // 子输入框可见性
+          subInputVisible: options.subInputVisible !== undefined ? options.subInputVisible : true, // 子输入框可见性
+          aiRequestStatus: options.aiRequestStatus ?? 'idle'
         })
 
         // 注入全局滚动条样式到独立窗口的标题栏

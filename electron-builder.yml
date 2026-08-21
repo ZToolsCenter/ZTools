@@ -61,7 +61,7 @@ nsis:
   perMachine: false
   deleteAppDataOnUninstall: false
 mac:
-  compression: maximum
+  # compression: maximum
   # The Developer ID identity is selected by CSC_NAME in CI. Leaving this
   # unset keeps local builds compatible with machines that have no certificate.
   entitlements: build/entitlements.mac.plist

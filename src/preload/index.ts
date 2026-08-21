@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { SearchWallpaperConfig } from '@shared/searchWallpaper'
+import type { AiRequestStatusChange } from '@shared/aiRequestStatus'
 
 export interface Command {
   name: string
@@ -50,6 +51,7 @@ const api = {
     name?: string
     cmdType?: string
     confirmDialog?: any
+    launchSource?: 'search' | 'global-shortcut' | 'super-panel'
   }) => ipcRenderer.invoke('launch', options),
   launchAsAdmin: (appPath: string, name?: string) =>
     ipcRenderer.invoke('launch-as-admin', appPath, name),
@@ -256,8 +258,13 @@ const api = {
       ipcRenderer.removeListener('update-search-wallpaper', handler)
     }
   },
-  onAiStatusChanged: (callback: (status: 'idle' | 'sending' | 'receiving') => void) => {
-    ipcRenderer.on('ai-status-changed', (_event, status) => callback(status))
+  /**
+   * 监听带插件身份的 AI 请求状态变化。
+   * @param callback 接收插件级状态变化的回调
+   * @returns 无返回值
+   */
+  onAiStatusChanged: (callback: (change: AiRequestStatusChange) => void): void => {
+    ipcRenderer.on('ai-status-changed', (_event, change) => callback(change))
   },
   onUpdateAutoPaste: (callback: (autoPaste: string) => void) => {
     ipcRenderer.on('update-auto-paste', (_event, autoPaste) => callback(autoPaste))
@@ -578,6 +585,7 @@ declare global {
         name?: string
         cmdType?: string
         confirmDialog?: any
+        launchSource?: 'search' | 'global-shortcut' | 'super-panel'
       }) => Promise<void>
       hideWindow: () => void
       resizeWindow: (height: number) => void

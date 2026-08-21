@@ -397,6 +397,55 @@ export class SyncAPI {
       }
     })
 
+    ipcMain.handle(
+      'account:change-password',
+      async (
+        _event,
+        params: { currentPassword: string; newPassword: string }
+      ): Promise<{ success: boolean; error?: string }> => {
+        try {
+          let config = await this.loadOfficialConfig()
+          if (!config?.serverUrl || !config.token) return { success: false, error: '未登录' }
+          if (!params.currentPassword || !params.newPassword) {
+            return { success: false, error: '请输入当前密码和新密码' }
+          }
+
+          if (process.env.ZTOOLS_E2E !== '1') {
+            // 先提交密码修改请求，服务端会在事务中校验旧密码并撤销全部会话。
+            const send = (activeConfig: SyncConfig): Promise<Response> =>
+              fetch(`${this.syncServerUrlToHttp(activeConfig.serverUrl)}/api/account/password`, {
+                method: 'PUT',
+                headers: {
+                  'Content-Type': 'application/json',
+                  Authorization: `Bearer ${activeConfig.token}`
+                },
+                body: JSON.stringify(params)
+              })
+            let response = await send(config)
+            if (response.status === 401 && config.refreshToken) {
+              // 仅在刷新结果仍属于原账号时重试，避免账号切换期间误操作。
+              const refreshed = await this.refreshOfficialToken(config)
+              if (refreshed) {
+                config = refreshed
+                response = await send(config)
+              }
+            }
+            const data = await response.json()
+            if (!response.ok) return { success: false, error: data.error || '修改密码失败' }
+          }
+
+          // 密码变更会使当前 token 失效，退出同步但保留本地账户 LMDB 数据。
+          this.syncClient?.stop()
+          await clearOfficialAccountSession()
+          storageManager.switchAccount(null)
+          activityHeartbeatService.runNow()
+          return { success: true }
+        } catch (error: any) {
+          return { success: false, error: error.message || '修改密码失败' }
+        }
+      }
+    )
+
     ipcMain.handle('account:delete', async () => {
       try {
         let config = await this.loadOfficialConfig()

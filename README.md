@@ -16,6 +16,28 @@ _uTools 的开源实现 | 支持 macOS 和 Windows_
 
 </div>
 
+## ❤️ 赞助商
+
+> [想出现在这里？](mailto:8589561@qq.com)
+
+<details open>
+<summary>点击折叠</summary>
+
+<table>
+  <tr>
+    <td width="240" align="center">
+      <a href="https://go.apimart.ai/gh-ztools">
+        <img src="./.github/assets/sponsors/apimart.png" alt="APIMart" width="220">
+      </a>
+    </td>
+    <td>
+      感谢 <a href="https://go.apimart.ai/gh-ztools">APIMart</a>  赞助了本项目！APIMart 是专注 AI 图片/视频生成的低价 API 平台，GPT-Image-2 低至 $0.006/张，1 美元可出图 160+ 张。图片、视频一套异步 API 通吃，提交任务拿 ID、回调取结果，跑批万张不超时、换模型不改代码。按量付费、无月费，通过此<a href="https://go.apimart.ai/gh-ztools">注册链接</a>注册即可开用。
+    </td>
+  </tr>
+</table>
+
+</details>
+
 ---
 
 ## ✨ 特性
@@ -29,28 +51,6 @@ _uTools 的开源实现 | 支持 macOS 和 Windows_
 - 🔒 **数据隔离** - 插件数据独立存储，安全可靠
 - 🛠️ **开发友好** - 完整的 TypeScript 类型支持，热重载开发
 - ⚙️ **最新技术栈** - Electron 41 + Node 24.15 + Chrome 146
-
-## ❤️ 赞助商
-
-> [想出现在这里？](mailto:8589561@qq.com)
-
-<details open>
-<summary>点击折叠</summary>
-
-<table>
-  <tr>
-    <td width="240" align="center">
-      <a href="https://ztest.ai/?from=ztools">
-        <img src="./.github/assets/sponsors/ztest.png" alt="真测 Ztest" width="220">
-      </a>
-    </td>
-    <td>
-      感谢 <a href="https://ztest.ai/?from=ztools">真测 Ztest</a> 赞助了本项目！真测 ztest.ai 是一个 AI 中转站模型检测平台，检测结果数据全公开，23 项探针覆盖协议、身份、能力、内容完整性、安全性、性能六大维度，交叉印证识别伪造与降级。作为独立第三方验证平台，实时监测 AI 中转站的模型真实性、响应质量与服务可用性。
-    </td>
-  </tr>
-</table>
-
-</details>
 
 ## 📸 预览
 
@@ -297,7 +297,13 @@ pnpm ztools             # 唤起已运行的实例（或启动应用）
 
 ## ⭐ Star 历史
 
-[![Star History Chart](https://api.star-history.com/svg?repos=lzx8589561/ZTools&type=Date)](https://star-history.com/#lzx8589561/ZTools&Date)
+<a href="https://www.star-history.com/?repos=lzx8589561%2FZTools%2CZT+o+o+l+s%2FZT+o+o+l+s%2CZToolsCenter%2FZTools&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=lzx8589561/ZTools%2CZT o o l s/ZT o o l s%2CZToolsCenter/ZTools&type=date&theme=dark&legend=top-left&sealed_token=8lwZs-1zJ6pF0LHgiIcQXna7H9Bs2glgI5AFB360X1hZgyZRlaTNTDMxhxfB6Vzsb7dYXVq9EP0McDNxUTk4hC4IRQRjBgKiDrcCVWFVykNy_y4x4Zi4DQ" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=lzx8589561/ZTools%2CZT o o l s/ZT o o l s%2CZToolsCenter/ZTools&type=date&legend=top-left&sealed_token=8lwZs-1zJ6pF0LHgiIcQXna7H9Bs2glgI5AFB360X1hZgyZRlaTNTDMxhxfB6Vzsb7dYXVq9EP0McDNxUTk4hC4IRQRjBgKiDrcCVWFVykNy_y4x4Zi4DQ" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=lzx8589561/ZTools%2CZT o o l s/ZT o o l s%2CZToolsCenter/ZTools&type=date&legend=top-left&sealed_token=8lwZs-1zJ6pF0LHgiIcQXna7H9Bs2glgI5AFB360X1hZgyZRlaTNTDMxhxfB6Vzsb7dYXVq9EP0McDNxUTk4hC4IRQRjBgKiDrcCVWFVykNy_y4x4Zi4DQ" />
+ </picture>
+</a>
 
 ---
 

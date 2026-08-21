@@ -86,6 +86,7 @@ export class UpdaterAPI {
     ipcMain.handle('updater:get-download-status', () => this.getDownloadStatus())
 
     ipcMain.on('updater:quit-and-install', () => void this.installDownloadedUpdate())
+    ipcMain.on('updater:minimize-window', () => this.minimizeUpdateWindow())
     ipcMain.on('updater:close-window', () => this.closeUpdateWindow())
     ipcMain.on('updater:window-ready', () => {
       const info = this.availableUpdateInfo ?? this.downloadedUpdateInfo
@@ -344,7 +345,7 @@ export class UpdaterAPI {
       frame: false,
       resizable: false,
       maximizable: false,
-      minimizable: false,
+      minimizable: true,
       alwaysOnTop: true,
       hasShadow: true,
       type: 'panel',
@@ -379,6 +380,14 @@ export class UpdaterAPI {
 
   private closeUpdateWindow(): void {
     if (this.updateWindow && !this.updateWindow.isDestroyed()) this.updateWindow.close()
+  }
+
+  /**
+   * 最小化当前更新窗口，让更新流程在后台继续运行。
+   * @returns 无返回值。
+   */
+  private minimizeUpdateWindow(): void {
+    if (this.updateWindow && !this.updateWindow.isDestroyed()) this.updateWindow.minimize()
   }
 }
 

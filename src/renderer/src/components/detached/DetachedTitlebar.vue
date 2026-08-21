@@ -4,7 +4,7 @@
 
     <!-- 插件图标和名称 -->
     <div class="plugin-info" @dblclick="handleDblClick">
-      <div class="logo-container">
+      <div :class="['logo-container', { 'ai-active': aiRequestStatus !== 'idle' }]">
         <!-- AI 状态动画层 -->
         <div v-if="aiRequestStatus !== 'idle'" class="ai-animation-layer">
           <!-- 蒙版层 -->
@@ -176,6 +176,7 @@ import {
 } from '../../composables/useMainPushSetting'
 import AdaptiveIcon from '../common/AdaptiveIcon.vue'
 import { CommonKeyboardModifier, readModifiers } from '@renderer/utils/convertKeyboardEvent'
+import type { AiRequestStatus, AiRequestStatusChange } from '@shared/aiRequestStatus'
 
 const platform = ref<'darwin' | 'win32'>('darwin')
 const pluginName = ref('Plugin')
@@ -188,7 +189,7 @@ const isPinned = ref(false)
 const searchInputRef = ref<HTMLInputElement | null>(null)
 const acrylicLightOpacity = ref(78) // 亚克力明亮模式透明度（默认 78%）
 const acrylicDarkOpacity = ref(50) // 亚克力暗黑模式透明度（默认 50%）
-const aiRequestStatus = ref<'idle' | 'sending' | 'receiving'>('idle') // AI 请求状态
+const aiRequestStatus = ref<AiRequestStatus>('idle') // AI 请求状态
 const primaryColor = ref('green')
 const customColor = ref('#db2777')
 
@@ -523,6 +524,7 @@ onMounted(async () => {
     pluginId.value = data.pluginName // 保存实际的插件 name，用于数据库读写
     pluginPath.value = data.pluginPath || ''
     pluginLogo.value = data.pluginLogo
+    aiRequestStatus.value = data.aiRequestStatus || 'idle'
 
     // 初始化信息到达后再检查版本，确保请求携带真实插件名和路径。
     void checkCurrentPluginUpdate()
@@ -590,8 +592,11 @@ onMounted(async () => {
 
   // 监听 AI 状态变化
   if (window.ztools?.onAiStatusChanged) {
-    window.ztools.onAiStatusChanged((status: 'idle' | 'sending' | 'receiving') => {
-      aiRequestStatus.value = status
+    window.ztools.onAiStatusChanged((change: AiRequestStatusChange) => {
+      // 独立标题栏只消费自身插件的状态，避免其他窗口请求串扰。
+      if (change.pluginPath === pluginPath.value) {
+        aiRequestStatus.value = change.status
+      }
     })
   }
 })
@@ -853,6 +858,12 @@ body {
   object-fit: contain;
   flex-shrink: 0;
   z-index: 0;
+  transition: border-radius 0.24s ease;
+}
+
+/* AI 调用期间将插件图标裁成圆形，避免圆形状态层外露出矩形四角。 */
+.logo-container.ai-active .plugin-logo {
+  border-radius: 50%;
 }
 
 /* AI 动画层 */

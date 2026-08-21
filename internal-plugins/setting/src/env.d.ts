@@ -520,6 +520,10 @@ declare global {
           refreshToken?: string
         }) => Promise<{ success: boolean; error?: string }>
         accountLogout: () => Promise<{ success: boolean; error?: string }>
+        accountChangePassword: (params: {
+          currentPassword: string
+          newPassword: string
+        }) => Promise<{ success: boolean; error?: string }>
         accountDelete: () => Promise<{ success: boolean; error?: string }>
         syncGetConfig: () => Promise<{
           success: boolean

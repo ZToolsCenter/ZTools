@@ -5,6 +5,7 @@ import { weightedSearch } from '@/utils'
 import { AiProviderEditor } from './components'
 import { useZtoolsSubInput } from '@/composables'
 import type { AiProvider, AiProviderInput, AiProviderStore } from '@shared/aiProviderShared'
+import { AI_API_FORMAT_OPTIONS } from '@shared/aiProviderShared'
 
 const { success, error, confirm } = useToast()
 const store = ref<AiProviderStore>({ version: 2, providers: [] })
@@ -176,6 +177,18 @@ function maskApiKey(apiKey: string): string {
   return `${apiKey.slice(0, 4)}****${apiKey.slice(-4)}`
 }
 
+/**
+ * 将接口格式枚举值转换为展示用标签。
+ * @param apiFormat 供应商接口格式
+ * @returns 格式标签
+ */
+function formatLabel(apiFormat: AiProvider['apiFormat']): string {
+  return (
+    AI_API_FORMAT_OPTIONS.find((option) => option.value === apiFormat)?.label ||
+    'OpenAI Chat Completions'
+  )
+}
+
 onMounted(loadProviders)
 </script>
 
@@ -247,6 +260,7 @@ onMounted(loadProviders)
 
             <div class="provider-meta">
               <span>{{ provider.selectedModels.length }} 个模型</span>
+              <span>{{ formatLabel(provider.apiFormat) }}</span>
               <span>{{ maskApiKey(provider.apiKey) }}</span>
             </div>
 

@@ -7,6 +7,15 @@
         <div class="title">发现新版本 {{ version }}</div>
         <div class="subtitle">ZTools</div>
       </div>
+      <button
+        type="button"
+        class="window-control minimize-button"
+        aria-label="最小化更新窗口"
+        title="最小化"
+        @click="minimizeWindow"
+      >
+        <span aria-hidden="true"></span>
+      </button>
     </div>
 
     <!-- 更新内容 -->
@@ -275,6 +284,14 @@ const closeWindow = (): void => {
 }
 
 /**
+ * 请求主进程最小化更新窗口，同时保留当前更新状态。
+ * @returns 无返回值。
+ */
+const minimizeWindow = (): void => {
+  window.electron?.ipcRenderer.send('updater:minimize-window')
+}
+
+/**
  * 处理更新窗口键盘操作，下载期间按 Escape 时取消下载。
  * @param e 键盘事件。
  * @returns 无返回值。
@@ -490,6 +507,54 @@ body,
 
 .header-info {
   flex: 1;
+  min-width: 0;
+}
+
+.window-control {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 6px;
+  padding: 0;
+  background: transparent;
+  color: #666;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
+}
+
+.window-control:hover {
+  background: rgba(0, 0, 0, 0.08);
+  color: #222;
+}
+
+.window-control:focus-visible {
+  outline: 2px solid rgba(59, 130, 246, 0.55);
+  outline-offset: 1px;
+}
+
+.minimize-button span {
+  width: 12px;
+  height: 1.5px;
+  border-radius: 1px;
+  background: currentColor;
+}
+
+@media (prefers-color-scheme: dark) {
+  .window-control {
+    color: #aaa;
+  }
+
+  .window-control:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: #fff;
+  }
 }
 
 .title {

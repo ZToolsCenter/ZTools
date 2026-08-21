@@ -634,6 +634,10 @@ export class SettingsAPI {
   /**
    * 处理全局快捷键的统一触发入口。
    * 仅在目标命令需要文本上下文时才会执行复制取词，避免无关快捷键产生副作用。
+   * @param shortcut 触发的快捷键文本。
+   * @param preparation 注册快捷键时生成的目标与取词配置。
+   * @param skipPrime 是否跳过预截图优化。
+   * @returns 快捷键启动流程结束后的 Promise。
    */
   private async triggerGlobalShortcut(
     shortcut: string,
@@ -649,6 +653,9 @@ export class SettingsAPI {
     this.isGlobalShortcutTriggering = true
 
     try {
+      // 在取词或插件启动前捕获前台窗口，确保 mainHide 启动使用本次快捷键的操作目标。
+      windowManager.captureCurrentActiveWindow()
+
       // 读取该快捷键的 autoCopy 配置，默认 false
       const config = this.globalShortcutConfigs.get(shortcut)
       const autoCopy = config?.autoCopy ?? false

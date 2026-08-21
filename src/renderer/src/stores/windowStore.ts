@@ -2,6 +2,11 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import defaultAvatar from '../assets/image/default.png'
 import { normalizeSearchWallpaperConfig, type SearchWallpaperConfig } from '@shared/searchWallpaper'
+import {
+  resolveVisibleAiRequestStatus,
+  type AiRequestStatus,
+  type AiRequestStatusChange
+} from '@shared/aiRequestStatus'
 
 interface WindowInfo {
   title?: string
@@ -49,9 +54,6 @@ interface AvailableUpdateInfo {
   changelog?: string
 }
 
-// AI 请求状态
-export type AiRequestStatus = 'idle' | 'sending' | 'receiving'
-
 export const useWindowStore = defineStore('window', () => {
   // 当前激活窗口信息
   const currentWindow = ref<WindowInfo | null>(null)
@@ -82,7 +84,10 @@ export const useWindowStore = defineStore('window', () => {
   const pluginLoading = ref(false)
 
   // AI 请求状态（用于显示 AI 调用动画）
-  const aiRequestStatus = ref<AiRequestStatus>('idle')
+  const aiRequestStatusesByPluginPath = ref<Record<string, AiRequestStatus>>({})
+  const aiRequestStatus = computed(() =>
+    resolveVisibleAiRequestStatus(aiRequestStatusesByPluginPath.value, currentPlugin.value?.path)
+  )
 
   // 子输入框配置 (插件模式下使用)
   const subInputPlaceholder = ref('搜索')
@@ -593,9 +598,19 @@ export const useWindowStore = defineStore('window', () => {
     }
   }
 
-  // 更新 AI 请求状态
-  function setAiRequestStatus(status: AiRequestStatus): void {
-    aiRequestStatus.value = status
+  /**
+   * 更新指定插件的 AI 请求状态，idle 时释放已完成条目。
+   * @param change 主进程发送的插件级 AI 状态变化
+   * @returns 无返回值
+   */
+  function setAiRequestStatus(change: AiRequestStatusChange): void {
+    const nextStatuses = { ...aiRequestStatusesByPluginPath.value }
+    if (change.status === 'idle') {
+      delete nextStatuses[change.pluginPath]
+    } else {
+      nextStatuses[change.pluginPath] = change.status
+    }
+    aiRequestStatusesByPluginPath.value = nextStatuses
   }
 
   /**

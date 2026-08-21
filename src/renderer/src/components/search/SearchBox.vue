@@ -209,6 +209,7 @@
         :class="{
           loading: isPluginLoading,
           'is-default': isDefaultAvatar,
+          'ai-active': windowStore.aiRequestStatus !== 'idle',
           'ai-sending': windowStore.aiRequestStatus === 'sending',
           'ai-receiving': windowStore.aiRequestStatus === 'receiving'
         }"
@@ -1079,8 +1080,8 @@ onMounted(() => {
   })
 
   // 监听 AI 状态变化
-  window.ztools.onAiStatusChanged?.((status: 'idle' | 'sending' | 'receiving') => {
-    windowStore.setAiRequestStatus(status)
+  window.ztools.onAiStatusChanged?.((change) => {
+    windowStore.setAiRequestStatus(change)
   })
 
   // 升级进度只监听当前主窗口发起的市场安装任务。
@@ -1926,7 +1927,10 @@ defineExpose({
   border-radius: 50%;
   object-fit: cover;
   cursor: pointer;
-  transition: all 0.2s;
+  transition:
+    transform 0.2s,
+    box-shadow 0.2s,
+    border-radius 0.24s ease;
   -webkit-app-region: no-drag;
   /* 按钮不可拖动 */
   border: none;
@@ -1939,6 +1943,11 @@ defineExpose({
 .search-btn.plugin-logo {
   border-radius: 6px;
   object-fit: contain;
+}
+
+/* AI 调用期间将插件图标裁成圆形，避免圆形状态层外露出矩形四角。 */
+.avatar-wrapper.ai-active .search-btn.plugin-logo {
+  border-radius: 50%;
 }
 
 .search-btn:not(.plugin-logo):hover {

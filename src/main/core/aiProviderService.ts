@@ -4,8 +4,12 @@ import databaseAPI from '../api/shared/database.js'
 import { HOST_STORAGE_KEYS } from '../../shared/storageKeys.js'
 import {
   AI_PROVIDER_STORE_VERSION,
+  DEFAULT_AI_API_FORMAT,
   isAiProviderStore,
+  normalizeAiApiFormat,
+  normalizeAiModelCapabilities,
   normalizeAiApiUrl,
+  toAiModelReasoningInfo,
   type AiModelChoice,
   type AiProvider,
   type AiProviderInput,
@@ -82,6 +86,7 @@ export function migrateLegacyAiModels(
         name: sequence === 1 ? baseName : `${baseName} ${sequence}`,
         apiUrl,
         apiKey,
+        apiFormat: DEFAULT_AI_API_FORMAT,
         enabled: true,
         selectedModels: []
       }
@@ -166,6 +171,7 @@ class AiProviderService {
       name: input.name.trim(),
       apiUrl: normalizeAiApiUrl(input.apiUrl),
       apiKey: input.apiKey.trim(),
+      apiFormat: normalizeAiApiFormat(input.apiFormat),
       enabled: true,
       selectedModels: this.buildSelectedModels(input, [])
     }
@@ -216,6 +222,7 @@ class AiProviderService {
       name: nextName,
       apiUrl: normalizeAiApiUrl(input.apiUrl),
       apiKey: input.apiKey.trim(),
+      apiFormat: normalizeAiApiFormat(input.apiFormat),
       enabled: previous.enabled,
       selectedModels: nextModels
     }
@@ -297,17 +304,25 @@ class AiProviderService {
     return store.providers
       .filter((provider) => provider.enabled)
       .flatMap((provider) =>
-        provider.selectedModels.map((model) => ({
-          id: buildAiModelPublicId(provider.name, model.modelId),
-          value: model.ref,
-          label: buildAiModelPublicId(provider.name, model.modelId),
-          providerId: provider.id,
-          providerLabel: provider.name,
-          modelId: model.modelId,
-          description: model.description || '',
-          icon: model.icon || '',
-          cost: model.cost || 0
-        }))
+        provider.selectedModels.map((model) => {
+          const capabilities = normalizeAiModelCapabilities(model)
+          const reasoning = toAiModelReasoningInfo(capabilities.reasoning)
+          return {
+            id: buildAiModelPublicId(provider.name, model.modelId),
+            value: model.ref,
+            label: buildAiModelPublicId(provider.name, model.modelId),
+            providerId: provider.id,
+            providerLabel: provider.name,
+            modelId: model.modelId,
+            description: model.description || '',
+            icon: model.icon || '',
+            cost: model.cost || 0,
+            contextWindow: capabilities.contextWindow,
+            inputModalities: [...capabilities.inputModalities],
+            // 协议映射由宿主持有，插件只获得当前模型可选择的标准档位。
+            ...(reasoning === undefined ? {} : { reasoning })
+          }
+        })
       )
   }
 
@@ -401,13 +416,20 @@ class AiProviderService {
       seen.add(modelId)
 
       const previous = previousByModelId.get(modelId)
+      const merged = { ...previous, ...candidate }
+      if (!Object.prototype.hasOwnProperty.call(candidate, 'reasoning')) {
+        // 完整模型表单省略字段仍兼容为恢复默认；显式 null 会由能力规范化统一清除。
+        delete merged.reasoning
+      }
+      const capabilities = normalizeAiModelCapabilities(merged)
       selectedModels.push({
         ref: previous?.ref || randomUUID(),
         aliases: previous?.aliases ? [...previous.aliases] : undefined,
         modelId,
         description: candidate.description ?? previous?.description,
         icon: candidate.icon ?? previous?.icon,
-        cost: candidate.cost ?? previous?.cost
+        cost: candidate.cost ?? previous?.cost,
+        ...capabilities
       })
     }
     return selectedModels
@@ -457,6 +479,13 @@ class AiProviderService {
         changed = true
       }
 
+      // 历史供应商未保存接口格式，升级时回退为默认的 OpenAI Chat Completions。
+      const normalizedFormat = normalizeAiApiFormat(provider.apiFormat)
+      if (provider.apiFormat !== normalizedFormat) {
+        provider.apiFormat = normalizedFormat
+        changed = true
+      }
+
       const originalName = provider.name?.trim() || 'AI 供应商'
       let nextName = originalName
       let sequence = 2
@@ -472,6 +501,20 @@ class AiProviderService {
         if (!('label' in legacyModel)) continue
         delete legacyModel.label
         changed = true
+      }
+
+      // 能力元数据只规范化已经声明的字段，未知推理能力保持缺省而不猜测 high。
+      for (const model of provider.selectedModels) {
+        const capabilities = normalizeAiModelCapabilities(model)
+        if (
+          model.contextWindow !== capabilities.contextWindow ||
+          JSON.stringify(model.inputModalities) !== JSON.stringify(capabilities.inputModalities) ||
+          JSON.stringify(model.reasoning) !== JSON.stringify(capabilities.reasoning)
+        ) {
+          Object.assign(model, capabilities)
+          if (capabilities.reasoning === undefined) delete model.reasoning
+          changed = true
+        }
       }
 
       if (provider.name === nextName) continue

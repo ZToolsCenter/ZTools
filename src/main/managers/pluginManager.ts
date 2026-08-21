@@ -36,6 +36,7 @@ import {
   getPluginDataPrefix,
   getPluginSessionPartition
 } from '../../shared/pluginRuntimeNamespace'
+import aiRequestStatusTracker from '../core/aiRequestStatusTracker'
 
 console.log('[Plugin] mainPreload', mainPreload)
 
@@ -167,6 +168,16 @@ export class PluginManager {
     } catch {
       return false
     }
+  }
+
+  /**
+   * 判断启动指定 feature 时是否应保持主窗口隐藏。
+   * @param pluginPath 插件目录路径。
+   * @param featureCode 要启动的 feature code。
+   * @returns feature 设置了 `mainHide: true` 时返回 true，否则返回 false。
+   */
+  public shouldKeepMainWindowHidden(pluginPath: string, featureCode: string): boolean {
+    return this.isFeatureMainHide(pluginPath, featureCode)
   }
 
   /**
@@ -1969,8 +1980,8 @@ export class PluginManager {
   }
 
   /**
-   * 分离当前插件到独立窗口
-   * 将当前在主窗口中运行的插件分离到一个独立的窗口中
+   * 将当前在主窗口中运行的插件视图迁移到独立窗口。
+   * @returns 分离是否成功以及可选错误信息
    */
   public async detachCurrentPlugin(): Promise<{ success: boolean; error?: string }> {
     if (!this.mainWindow || !this.pluginView || !this.currentPluginPath) {
@@ -2030,7 +2041,9 @@ export class PluginManager {
           searchQuery: cached.subInputValue || '',
           searchPlaceholder: cached.subInputPlaceholder || '搜索...',
           subInputVisible: cached.subInputVisible !== undefined ? cached.subInputVisible : true,
-          autoFocusSubInput: shouldAutoFocusSubInput // 只有主窗口输入框聚焦时才自动聚焦
+          autoFocusSubInput: shouldAutoFocusSubInput, // 只有主窗口输入框聚焦时才自动聚焦
+          // 独立标题栏可能晚于请求开始加载，因此初始化时同步当前聚合状态。
+          aiRequestStatus: aiRequestStatusTracker.get(cached.view.webContents.id)
         }
       )
 

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import defaultAvatar from '@/assets/image/default.png'
-import { useToast } from '@/components'
+import { BaseDialog, useToast } from '@/components'
 import { notifyAccountChanged } from '@/composables/useZToolsAccount'
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
@@ -24,6 +24,11 @@ const editingNickname = ref(false)
 const nicknameInput = ref('')
 const updatingNickname = ref(false)
 const deletingAccount = ref(false)
+const changingPassword = ref(false)
+const showPasswordDialog = ref(false)
+const currentPassword = ref('')
+const newPassword = ref('')
+const confirmPassword = ref('')
 const stats = ref<{
   documentCount: number
   attachmentCount: number
@@ -259,6 +264,76 @@ async function deleteAccount(): Promise<void> {
 }
 
 /**
+ * 打开修改密码弹窗并清空上一次输入，避免密码残留在界面状态中。
+ * @returns 无返回值
+ */
+function openPasswordDialog(): void {
+  currentPassword.value = ''
+  newPassword.value = ''
+  confirmPassword.value = ''
+  showPasswordDialog.value = true
+}
+
+/**
+ * 关闭修改密码弹窗并清理敏感输入。
+ * @returns 无返回值
+ */
+function closePasswordDialog(): void {
+  if (changingPassword.value) return
+  showPasswordDialog.value = false
+  currentPassword.value = ''
+  newPassword.value = ''
+  confirmPassword.value = ''
+}
+
+/**
+ * 校验并提交新密码，成功后退出当前登录但保留本地账号数据。
+ * @returns 修改密码流程完成后结束的 Promise
+ */
+async function changePassword(): Promise<void> {
+  const current = currentPassword.value
+  const next = newPassword.value
+  if (!current || !next || !confirmPassword.value) {
+    warning('请完整填写密码')
+    return
+  }
+  const passwordBytes = new TextEncoder().encode(next).length
+  if (passwordBytes < 6 || passwordBytes > 72) {
+    warning('新密码长度应为 6-72 字节')
+    return
+  }
+  if (next !== confirmPassword.value) {
+    warning('两次输入的新密码不一致')
+    return
+  }
+  if (current === next) {
+    warning('新密码不能与当前密码相同')
+    return
+  }
+
+  try {
+    changingPassword.value = true
+    // 主进程负责请求服务端、撤销 token，并切回默认登录数据空间。
+    const result = await window.ztools.internal.accountChangePassword({
+      currentPassword: current,
+      newPassword: next
+    })
+    if (!result.success) throw new Error(result.error || '修改密码失败')
+    showPasswordDialog.value = false
+    currentPassword.value = ''
+    newPassword.value = ''
+    confirmPassword.value = ''
+    notifyAccountChanged()
+    success('密码已修改，请使用新密码重新登录')
+    await router.replace({ name: 'GeneralSetting' })
+  } catch (err: unknown) {
+    error(err instanceof Error ? err.message : '修改密码失败')
+  } finally {
+    changingPassword.value = false
+  }
+}
+
+/**
  * 进入昵称编辑状态并填充当前昵称。
  * @returns 无返回值
  */
@@ -397,6 +472,23 @@ function formatBytes(value?: number): string {
         </div>
       </section>
 
+      <section class="security-section" aria-label="账号安全">
+        <div class="security-row">
+          <div>
+            <span class="info-label">密码</span>
+            <span class="security-hint">定期修改密码可保护账号安全</span>
+          </div>
+          <button
+            type="button"
+            class="btn-link"
+            data-testid="change-password"
+            @click="openPasswordDialog"
+          >
+            修改密码
+          </button>
+        </div>
+      </section>
+
       <section class="usage-section">
         <h2>云同步用量</h2>
         <div class="stats-grid">
@@ -440,6 +532,62 @@ function formatBytes(value?: number): string {
       </footer>
     </div>
   </div>
+
+  <BaseDialog
+    v-model:visible="showPasswordDialog"
+    title="修改密码"
+    subtitle="修改成功后，所有设备都会退出登录。"
+    :close-on-overlay="!changingPassword"
+    @close="closePasswordDialog"
+  >
+    <form class="password-form" @submit.prevent="changePassword">
+      <label class="password-field">
+        <span>当前密码</span>
+        <input
+          v-model="currentPassword"
+          data-testid="current-password"
+          type="password"
+          autocomplete="current-password"
+        />
+      </label>
+      <label class="password-field">
+        <span>新密码</span>
+        <input
+          v-model="newPassword"
+          data-testid="new-password"
+          type="password"
+          autocomplete="new-password"
+        />
+      </label>
+      <label class="password-field">
+        <span>确认新密码</span>
+        <input
+          v-model="confirmPassword"
+          data-testid="confirm-password"
+          type="password"
+          autocomplete="new-password"
+        />
+      </label>
+      <div class="password-actions">
+        <button
+          type="button"
+          class="btn-secondary btn-action"
+          :disabled="changingPassword"
+          @click="closePasswordDialog"
+        >
+          取消
+        </button>
+        <button
+          type="submit"
+          class="btn-primary btn-action"
+          data-testid="submit-password-change"
+          :disabled="changingPassword"
+        >
+          {{ changingPassword ? '提交中...' : '确认修改' }}
+        </button>
+      </div>
+    </form>
+  </BaseDialog>
 </template>
 
 <style scoped>
@@ -607,6 +755,64 @@ function formatBytes(value?: number): string {
   padding: 28px 0;
 }
 
+.security-section {
+  border-top: 1px solid var(--divider-color);
+}
+
+.security-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  min-height: 66px;
+  border-bottom: 1px solid var(--divider-color);
+}
+
+.security-row > div {
+  display: grid;
+  gap: 5px;
+}
+
+.security-hint {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.password-form {
+  display: grid;
+  gap: 16px;
+}
+
+.password-field {
+  display: grid;
+  gap: 7px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.password-field input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--divider-color);
+  border-radius: 6px;
+  outline: none;
+  padding: 9px 10px;
+  background: var(--control-bg);
+  color: var(--text-color);
+  font-size: 14px;
+}
+
+.password-field input:focus {
+  border-color: var(--primary-color);
+}
+
+.password-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding-top: 4px;
+}
+
 .usage-section h2 {
   margin: 0 0 14px;
   color: var(--primary-color);
@@ -674,6 +880,14 @@ function formatBytes(value?: number): string {
   .profile-actions {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .security-row {
+    align-items: flex-start;
+    flex-direction: column;
+    justify-content: center;
+    gap: 8px;
+    padding: 12px 0;
   }
 }
 </style>

@@ -3,6 +3,44 @@ const electron = require('electron')
 // ── plugin.api 统一 IPC 公共方法（与 utools 写法一致）──
 
 /**
+ * 将响应式或跨上下文对象递归转换为 Electron IPC 可克隆的普通数据。
+ * @param {unknown} value 待转换的数据
+ * @param {WeakSet<object>} ancestors 当前递归路径中的对象集合
+ * @returns {unknown} 仅包含普通对象、数组和基础类型的等价值
+ * @throws {Error} 数据包含循环引用或不可传输类型时抛出
+ */
+function toIpcCloneable(value, ancestors = new WeakSet()) {
+  if (value === null || ['string', 'boolean'].includes(typeof value)) return value
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null
+  if (typeof value === 'undefined') return undefined
+  if (typeof value !== 'object') {
+    throw new Error(`IPC 参数包含不可传输的数据类型：${typeof value}`)
+  }
+  if (ancestors.has(value)) throw new Error('IPC 参数包含循环引用，无法发送到主进程')
+
+  // 只保留当前递归路径，允许不同字段复用同一份源数据。
+  ancestors.add(value)
+  try {
+    if (Array.isArray(value)) {
+      return value.map((item) => {
+        const cloned = toIpcCloneable(item, ancestors)
+        return typeof cloned === 'undefined' ? null : cloned
+      })
+    }
+
+    const result = {}
+    for (const [key, item] of Object.entries(value)) {
+      const cloned = toIpcCloneable(item, ancestors)
+      if (typeof cloned !== 'undefined') result[key] = cloned
+    }
+    return result
+  } finally {
+    // 无论转换成功或失败都清理路径标记，避免后续字段被误判为循环引用。
+    ancestors.delete(value)
+  }
+}
+
+/**
  * 同步 IPC 调用 - 通过 plugin.api 通道发送同步消息
  * 如果主进程返回 Error 实例，自动抛出异常
  */
@@ -850,6 +888,58 @@ window.ztools = {
     }
   },
 
+  /**
+   * 发起一次不会自动执行工具的流式 AI 请求。
+   * @param {Record<string, unknown>} option 模型、消息、工具和生成选项
+   * @param {(event: Record<string, unknown>) => void} eventCallback 流式协议事件回调
+   * @returns {Promise<Record<string, unknown>> & {abort: () => void}} 可中止的完整响应 Promise
+   */
+  aiChat: (option, eventCallback) => {
+    const requestId = Math.random().toString(36).slice(2, 11)
+    const eventName = `plugin:ai-chat-event-${requestId}`
+    let finishEventDelivery
+    let deliveryTimer
+    const eventDelivery = new Promise((resolve) => {
+      finishEventDelivery = resolve
+      // 宿主异常退出时不能让插件请求永久挂起，超时仅作为旧宿主兼容兜底。
+      deliveryTimer = setTimeout(resolve, 1_000)
+    })
+    const listener = (_event, payload) => {
+      if (payload?.type === '__ztools_ai_chat_delivery_end__') {
+        clearTimeout(deliveryTimer)
+        finishEventDelivery()
+        return
+      }
+      if (typeof eventCallback === 'function') eventCallback(payload)
+    }
+    electron.ipcRenderer.on(eventName, listener)
+
+    // IPC 只传递普通对象；在插件侧恢复带稳定字段的 Error。
+    const promise = electron.ipcRenderer
+      .invoke('plugin:ai-chat', requestId, option)
+      .then(async (result) => {
+        // 等待普通流事件通道的结束哨兵，保证 await 返回时增量回调已经完整执行。
+        await eventDelivery
+        if (result?.success) return result.data
+        const failure =
+          result?.error && typeof result.error === 'object'
+            ? result.error
+            : { message: result?.error || 'AI 调用失败', code: 'UNKNOWN' }
+        const error = new Error(failure.message || 'AI 调用失败')
+        Object.assign(error, failure, { failure })
+        throw error
+      })
+      .finally(() => {
+        // 成功、失败和取消都必须释放本请求的事件监听器。
+        clearTimeout(deliveryTimer)
+        electron.ipcRenderer.removeListener(eventName, listener)
+      })
+    promise.abort = () => {
+      electron.ipcRenderer.invoke('plugin:ai-abort', requestId)
+    }
+    return promise
+  },
+
   // 获取所有可用 AI 模型
   allAiModels: async () => {
     const result = await electron.ipcRenderer.invoke('plugin:ai-all-models')
@@ -1183,6 +1273,13 @@ window.ztools = {
       await electron.ipcRenderer.invoke('account:save-session', params),
     accountLogout: async () => await electron.ipcRenderer.invoke('account:logout'),
     /**
+     * 修改当前官方账号密码，并在成功后退出本地登录。
+     * @param {{currentPassword: string, newPassword: string}} params 密码修改参数
+     * @returns {Promise<{success: boolean, error?: string}>} 修改结果
+     */
+    accountChangePassword: async (params) =>
+      await electron.ipcRenderer.invoke('account:change-password', params),
+    /**
      * 永久删除当前官方账号及其服务端数据。
      * @returns {Promise<{success: boolean, error?: string}>} 删除账号和本地退出结果
      */
@@ -1330,17 +1427,19 @@ window.ztools = {
       /**
        * 添加 AI 供应商。
        * @param {object} provider 供应商连接信息和已选模型
-       * @returns 供应商新增结果
+       * @returns {Promise<unknown>} 供应商新增结果
+       * @throws {Error} 供应商配置包含 IPC 不可传输数据时抛出
        */
       add: async (provider) =>
-        await electron.ipcRenderer.invoke('internal:ai-providers-add', provider),
+        await electron.ipcRenderer.invoke('internal:ai-providers-add', toIpcCloneable(provider)),
       /**
        * 更新 AI 供应商。
        * @param {object} provider 带内部 ID 的供应商配置
-       * @returns 供应商更新结果
+       * @returns {Promise<unknown>} 供应商更新结果
+       * @throws {Error} 供应商配置包含 IPC 不可传输数据时抛出
        */
       update: async (provider) =>
-        await electron.ipcRenderer.invoke('internal:ai-providers-update', provider),
+        await electron.ipcRenderer.invoke('internal:ai-providers-update', toIpcCloneable(provider)),
       /**
        * 删除 AI 供应商。
        * @param {string} providerId 供应商内部 ID

@@ -4,8 +4,12 @@ type MockHandler = (...args: any[]) => void
 
 const mocks = vi.hoisted(() => {
   const appFocus = vi.fn()
+  const appHide = vi.fn()
+  const appShow = vi.fn()
+  const appIsHidden = vi.fn(() => false)
   const dbGet = vi.fn()
   const clipboardGetCurrentWindow = vi.fn()
+  const clipboardActivateApp = vi.fn()
   const globalInputOn = vi.fn()
   const globalInputAcquire = vi.fn()
   const globalInputRelease = vi.fn()
@@ -42,6 +46,7 @@ const mocks = vi.hoisted(() => {
       show: vi.fn(() => emit('show')),
       emit,
       hide: vi.fn(),
+      minimize: vi.fn(),
       blur: vi.fn(),
       focus: vi.fn(),
       loadFile: vi.fn(),
@@ -60,8 +65,12 @@ const mocks = vi.hoisted(() => {
 
   return {
     appFocus,
+    appHide,
+    appShow,
+    appIsHidden,
     dbGet,
     clipboardGetCurrentWindow,
+    clipboardActivateApp,
     globalInputOn,
     globalInputAcquire,
     globalInputRelease,
@@ -79,6 +88,9 @@ vi.mock('electron', () => ({
   app: {
     getAppPath: vi.fn(() => '/tmp/ztools'),
     focus: mocks.appFocus,
+    hide: mocks.appHide,
+    show: mocks.appShow,
+    isHidden: mocks.appIsHidden,
     dock: {
       show: vi.fn(),
       hide: vi.fn()
@@ -154,7 +166,8 @@ vi.mock('../../src/main/core/native/index.js', () => ({
 
 vi.mock('../../src/main/managers/clipboardManager', () => ({
   default: {
-    getCurrentWindow: mocks.clipboardGetCurrentWindow
+    getCurrentWindow: mocks.clipboardGetCurrentWindow,
+    activateApp: mocks.clipboardActivateApp
   }
 }))
 
@@ -194,6 +207,8 @@ describe('windowManager macOS activation', () => {
     vi.clearAllMocks()
     mocks.dbGet.mockReturnValue(null)
     mocks.clipboardGetCurrentWindow.mockReturnValue(null)
+    mocks.clipboardActivateApp.mockReturnValue(true)
+    mocks.appIsHidden.mockReturnValue(false)
     mocks.latestWindow.current = null
   })
 
@@ -226,5 +241,35 @@ describe('windowManager macOS activation', () => {
     vi.advanceTimersByTime(201)
     mocks.latestWindow.current.emit('blur')
     expect(mocks.latestWindow.current.hide).toHaveBeenCalledTimes(1)
+  })
+  it('does not restore focus when a hidden main window receives a hide request', async () => {
+    const { default: windowManager } = await import('../../src/main/managers/windowManager')
+
+    windowManager.createWindow()
+    mocks.latestWindow.current.isVisible.mockReturnValue(false)
+    windowManager.setPreviousActiveWindow({
+      app: 'Previously Focused App',
+      bundleId: 'com.example.previous'
+    } as any)
+
+    windowManager.hideWindow(true)
+
+    expect(mocks.appHide).not.toHaveBeenCalled()
+    expect(mocks.clipboardActivateApp).not.toHaveBeenCalled()
+  })
+
+  it('captures the current active window and clears stale state when capture fails', async () => {
+    const { default: windowManager } = await import('../../src/main/managers/windowManager')
+    const currentWindow = {
+      app: 'Current App',
+      bundleId: 'com.example.current'
+    }
+
+    mocks.clipboardGetCurrentWindow.mockReturnValueOnce(currentWindow).mockReturnValueOnce(null)
+
+    expect(windowManager.captureCurrentActiveWindow()).toEqual(currentWindow)
+    expect(windowManager.getPreviousActiveWindow()).toEqual(currentWindow)
+    expect(windowManager.captureCurrentActiveWindow()).toBeNull()
+    expect(windowManager.getPreviousActiveWindow()).toBeNull()
   })
 })

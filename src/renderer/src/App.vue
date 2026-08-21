@@ -1031,7 +1031,12 @@ onMounted(async () => {
 
   // 监听超级面板启动事件（由主进程从超级面板转发）
   window.ztools.onSuperPanelLaunch(
-    async (data: { command: any; clipboardContent?: any; windowInfo?: any }) => {
+    async (data: {
+      command: any
+      launchSource?: 'search' | 'global-shortcut' | 'super-panel'
+      clipboardContent?: any
+      windowInfo?: any
+    }) => {
       console.log(
         '[超级面板启动] 收到启动事件:',
         data.command?.name,
@@ -1076,6 +1081,7 @@ onMounted(async () => {
           featureCode: cmd.featureCode,
           name: cmd.name,
           cmdType: cmd.cmdType || type,
+          launchSource: data.launchSource || 'super-panel',
           param: {
             payload,
             type,

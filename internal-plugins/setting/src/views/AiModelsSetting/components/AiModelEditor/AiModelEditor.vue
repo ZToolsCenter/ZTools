@@ -1,11 +1,21 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { BaseDialog, DetailPanel } from '@/components'
-import type {
-  AiProvider,
-  AiProviderInput,
-  AiProviderModelInput,
-  AiRemoteModel
+import { BaseDialog, DetailPanel, Select, type SelectModelValue } from '@/components'
+import {
+  AI_API_FORMAT_OPTIONS,
+  AI_REASONING_EFFORTS,
+  DEFAULT_AI_API_FORMAT,
+  type AiApiFormat,
+  type AiReasoningConfig,
+  type AiReasoningEffort,
+  type AiReasoningProtocol,
+  type AiReasoningResponseField,
+  type AiProvider,
+  type AiProviderInput,
+  type AiProviderModelInput,
+  type AiRemoteModel,
+  normalizeAiApiFormat,
+  normalizeAiModelCapabilities
 } from '@shared/aiProviderShared'
 
 interface Props {
@@ -22,19 +32,43 @@ const isEditing = computed(() => props.editingProvider !== null)
 const showPassword = ref(false)
 const fetching = ref(false)
 const fetchError = ref('')
+const saveError = ref('')
 const modelQuery = ref('')
 const remoteModelQuery = ref('')
 const manualModelId = ref('')
 const fetchedModels = ref<AiRemoteModel[]>([])
 const selectedModelIds = ref<Set<string>>(new Set())
+const selectedModelConfigs = ref<Record<string, AiProviderModelInput>>({})
 const pendingModelIds = ref<Set<string>>(new Set())
 const showModelDialog = ref(false)
 const formData = ref({
   name: '',
   apiUrl: '',
-  apiKey: ''
+  apiKey: '',
+  apiFormat: DEFAULT_AI_API_FORMAT as AiApiFormat
 })
 
+/**
+ * Select 的 v-model 代理：Select 发出的值类型宽于窄字面量 AiApiFormat，
+ * 经 normalizeAiApiFormat 归一化后写回表单，保证类型与取值合法。
+ * @returns 可读写的 AiApiFormat 代理
+ */
+const apiFormatProxy = computed<SelectModelValue>({
+  get: () => formData.value.apiFormat,
+  set: (value) => {
+    formData.value.apiFormat = normalizeAiApiFormat(value)
+  }
+})
+
+const reasoningEffortLabels: Record<AiReasoningEffort, string> = {
+  off: '关闭',
+  minimal: '最小',
+  low: '低',
+  medium: '中',
+  high: '高',
+  xhigh: '极高',
+  max: '最高'
+}
 const filteredSelectedModelIds = computed(() => {
   const query = modelQuery.value.trim().toLowerCase()
   const modelIds = Array.from(selectedModelIds.value)
@@ -57,15 +91,23 @@ function resetEditor(provider: AiProvider | null): void {
   formData.value = {
     name: provider?.name || '',
     apiUrl: provider?.apiUrl || '',
-    apiKey: provider?.apiKey || ''
+    apiKey: provider?.apiKey || '',
+    apiFormat: provider?.apiFormat ?? DEFAULT_AI_API_FORMAT
   }
   fetchedModels.value = []
   selectedModelIds.value = new Set(provider?.selectedModels.map((model) => model.modelId) || [])
+  selectedModelConfigs.value = Object.fromEntries(
+    (provider?.selectedModels || []).map((model) => [
+      model.modelId,
+      { modelId: model.modelId, ...normalizeAiModelCapabilities(model) }
+    ])
+  )
   pendingModelIds.value = new Set()
   modelQuery.value = ''
   remoteModelQuery.value = ''
   manualModelId.value = ''
   fetchError.value = ''
+  saveError.value = ''
   showModelDialog.value = false
   showPassword.value = false
 }
@@ -125,6 +167,7 @@ function togglePendingModel(modelId: string): void {
  * @returns 无返回值
  */
 function confirmFetchedModels(): void {
+  for (const modelId of pendingModelIds.value) ensureModelConfig(modelId)
   selectedModelIds.value = new Set([...selectedModelIds.value, ...pendingModelIds.value])
   closeModelDialog()
 }
@@ -148,6 +191,7 @@ function removeSelectedModel(modelId: string): void {
   const next = new Set(selectedModelIds.value)
   next.delete(modelId)
   selectedModelIds.value = next
+  delete selectedModelConfigs.value[modelId]
 }
 
 /**
@@ -158,8 +202,185 @@ function addManualModel(): void {
   const modelId = manualModelId.value.trim()
   if (!modelId) return
 
+  ensureModelConfig(modelId)
   selectedModelIds.value = new Set([...selectedModelIds.value, modelId])
   manualModelId.value = ''
+}
+
+/**
+ * 为新加入的模型补齐宿主统一管理的能力配置。
+ * @param modelId 远端模型 ID
+ * @returns 当前模型的可编辑配置
+ */
+function ensureModelConfig(modelId: string): AiProviderModelInput {
+  if (!selectedModelConfigs.value[modelId]) {
+    selectedModelConfigs.value[modelId] = {
+      modelId,
+      ...normalizeAiModelCapabilities({ modelId })
+    }
+  }
+  return selectedModelConfigs.value[modelId]
+}
+
+type ReasoningCapabilityMode = 'provider-default' | 'unsupported' | 'custom'
+
+/**
+ * 判断模型当前采用的推理能力声明模式。
+ * @param modelId 正在编辑的远端模型 ID
+ * @returns 供应商默认、明确不支持或自定义能力
+ */
+function reasoningCapabilityMode(modelId: string): ReasoningCapabilityMode {
+  const reasoning = ensureModelConfig(modelId).reasoning
+  if (reasoning === false) return 'unsupported'
+  return reasoning && typeof reasoning === 'object' ? 'custom' : 'provider-default'
+}
+
+/**
+ * 获取模型已声明的推理配置。
+ * @param modelId 正在编辑的远端模型 ID
+ * @returns 自定义推理配置；其他模式返回 null
+ */
+function reasoningConfig(modelId: string): AiReasoningConfig | null {
+  const reasoning = ensureModelConfig(modelId).reasoning
+  return reasoning && typeof reasoning === 'object' ? reasoning : null
+}
+
+/**
+ * 切换模型推理能力声明模式。
+ * @param modelId 正在编辑的远端模型 ID
+ * @param mode 新的能力声明模式
+ * @returns 无返回值
+ */
+function setReasoningCapabilityMode(modelId: string, mode: ReasoningCapabilityMode): void {
+  const config = ensureModelConfig(modelId)
+  if (mode === 'provider-default') {
+    // 使用显式清除标记覆盖宿主旧配置，避免字段缺失被合并逻辑理解为沿用旧值。
+    config.reasoning = null
+    return
+  }
+  if (mode === 'unsupported') {
+    config.reasoning = false
+    return
+  }
+  if (!config.reasoning || typeof config.reasoning !== 'object') {
+    config.reasoning = {
+      protocol: 'auto',
+      efforts: { high: 'high' },
+      responseField: 'auto'
+    }
+  }
+}
+
+/**
+ * 更新自定义推理配置的协议字段。
+ * @param modelId 正在编辑的远端模型 ID
+ * @param protocol 新的推理请求协议
+ * @returns 无返回值
+ */
+function setReasoningProtocol(modelId: string, protocol: AiReasoningProtocol): void {
+  const reasoning = reasoningConfig(modelId)
+  if (reasoning) reasoning.protocol = protocol
+}
+
+/**
+ * 更新自定义推理配置的响应字段。
+ * @param modelId 正在编辑的远端模型 ID
+ * @param responseField 新的推理响应字段
+ * @returns 无返回值
+ */
+function setReasoningResponseField(modelId: string, responseField: AiReasoningResponseField): void {
+  const reasoning = reasoningConfig(modelId)
+  if (reasoning) reasoning.responseField = responseField
+}
+
+/**
+ * 更新模型未被调用方覆盖时使用的推理档位。
+ * @param modelId 正在编辑的远端模型 ID
+ * @param effort 默认档位；空字符串表示供应商默认
+ * @returns 无返回值
+ */
+function setDefaultReasoningEffort(modelId: string, effort: string): void {
+  const reasoning = reasoningConfig(modelId)
+  if (!reasoning) return
+  if (!effort) {
+    delete reasoning.defaultEffort
+    return
+  }
+  if (Object.prototype.hasOwnProperty.call(reasoning.efforts, effort)) {
+    reasoning.defaultEffort = effort as AiReasoningEffort
+  }
+}
+
+/**
+ * 更新模型支持的推理强度，同时禁止移除当前默认值。
+ * @param modelId 正在编辑的远端模型 ID
+ * @param effort 要切换的推理强度
+ * @param enabled 是否声明模型支持该强度
+ * @returns 无返回值
+ */
+function toggleSupportedReasoningEffort(
+  modelId: string,
+  effort: AiReasoningEffort,
+  enabled: boolean
+): void {
+  const reasoning = reasoningConfig(modelId)
+  if (!reasoning) return
+
+  // 使用新对象触发 Vue 更新，并让未声明档位保持真正缺席。
+  const efforts = { ...reasoning.efforts }
+  if (enabled) efforts[effort] = effort === 'off' ? null : effort
+  else delete efforts[effort]
+  reasoning.efforts = efforts
+  if (!enabled && reasoning.defaultEffort === effort) delete reasoning.defaultEffort
+}
+
+/**
+ * 更新单个推理档位发送给供应商的协议值。
+ * @param modelId 正在编辑的远端模型 ID
+ * @param effort 标准推理档位
+ * @param wireValue 用户填写的供应商协议值
+ * @returns 无返回值
+ */
+function setReasoningWireValue(
+  modelId: string,
+  effort: AiReasoningEffort,
+  wireValue: string
+): void {
+  const reasoning = reasoningConfig(modelId)
+  if (!reasoning || !Object.prototype.hasOwnProperty.call(reasoning.efforts, effort)) return
+  reasoning.efforts = {
+    ...reasoning.efforts,
+    [effort]: effort === 'off' && !wireValue.trim() ? null : wireValue
+  }
+}
+
+/**
+ * 校验所有自定义推理能力是否能稳定映射到供应商协议。
+ * @returns 首个配置错误；全部有效时返回空字符串
+ */
+function validateReasoningConfigs(): string {
+  for (const modelId of selectedModelIds.value) {
+    const reasoning = reasoningConfig(modelId)
+    if (!reasoning) continue
+
+    const enabledEfforts = Object.entries(reasoning.efforts)
+    if (enabledEfforts.length === 0) {
+      return `模型 ${modelId} 至少需要选择一个推理强度`
+    }
+    for (const [effort, wireValue] of enabledEfforts) {
+      // “关闭”允许以 null 表示不发送参数，其余档位必须具备实际协议值。
+      if (effort !== 'off' && (typeof wireValue !== 'string' || !wireValue.trim())) {
+        return `模型 ${modelId} 的“${reasoningEffortLabels[effort as AiReasoningEffort]}”缺少供应商协议值`
+      }
+    }
+    if (
+      reasoning.defaultEffort &&
+      !Object.prototype.hasOwnProperty.call(reasoning.efforts, reasoning.defaultEffort)
+    ) {
+      return `模型 ${modelId} 的默认推理强度不在支持列表中`
+    }
+  }
+  return ''
 }
 
 /**
@@ -167,8 +388,12 @@ function addManualModel(): void {
  * @returns 无返回值
  */
 function handleSave(): void {
+  // 保存前阻止不完整映射进入宿主持久化层，避免配置被静默降级。
+  saveError.value = validateReasoningConfigs()
+  if (saveError.value) return
+
   const selectedModels: AiProviderModelInput[] = Array.from(selectedModelIds.value).map(
-    (modelId) => ({ modelId })
+    (modelId) => ({ ...ensureModelConfig(modelId), modelId })
   )
 
   emit('save', {
@@ -176,6 +401,7 @@ function handleSave(): void {
     name: formData.value.name,
     apiUrl: formData.value.apiUrl,
     apiKey: formData.value.apiKey,
+    apiFormat: formData.value.apiFormat,
     selectedModels
   })
 }
@@ -192,6 +418,17 @@ function handleSave(): void {
           </div>
 
           <div class="form-group">
+            <label class="form-label">API 格式 *</label>
+            <Select
+              v-model="apiFormatProxy"
+              :options="AI_API_FORMAT_OPTIONS"
+              size="medium"
+              placeholder="选择 API 格式"
+              style="width: 100%"
+            />
+          </div>
+
+          <div class="form-group full-width-field">
             <label class="form-label">API 地址 *</label>
             <input
               v-model="formData.apiUrl"
@@ -201,7 +438,7 @@ function handleSave(): void {
             />
           </div>
 
-          <div class="form-group">
+          <div class="form-group full-width-field">
             <label class="form-label">API 密钥 *</label>
             <div class="input-wrapper">
               <input
@@ -303,16 +540,176 @@ function handleSave(): void {
               :key="modelId"
               class="selected-model-row"
             >
-              <span>{{ modelId }}</span>
-              <button
-                type="button"
-                class="icon-btn selected-model-delete"
-                :title="`移除 ${modelId}`"
-                :aria-label="`移除 ${modelId}`"
-                @click="removeSelectedModel(modelId)"
-              >
-                <div class="i-z-trash font-size-14px" />
-              </button>
+              <div class="selected-model-heading">
+                <strong>{{ modelId }}</strong>
+                <button
+                  type="button"
+                  class="icon-btn selected-model-delete"
+                  :title="`移除 ${modelId}`"
+                  :aria-label="`移除 ${modelId}`"
+                  @click="removeSelectedModel(modelId)"
+                >
+                  <div class="i-z-trash font-size-14px" />
+                </button>
+              </div>
+              <div v-if="selectedModelConfigs[modelId]" class="model-capability-grid">
+                <label>
+                  <span>上下文</span>
+                  <input
+                    v-model.number="selectedModelConfigs[modelId].contextWindow"
+                    class="input"
+                    type="number"
+                    min="4096"
+                    max="2000000"
+                    step="1024"
+                  />
+                </label>
+                <label>
+                  <span>推理能力</span>
+                  <select
+                    class="input"
+                    :value="reasoningCapabilityMode(modelId)"
+                    @change="
+                      setReasoningCapabilityMode(
+                        modelId,
+                        ($event.target as HTMLSelectElement).value as ReasoningCapabilityMode
+                      )
+                    "
+                  >
+                    <option value="provider-default">供应商默认</option>
+                    <option value="unsupported">不支持推理</option>
+                    <option value="custom">自定义推理能力</option>
+                  </select>
+                </label>
+                <label class="image-capability-toggle"
+                  ><input
+                    type="checkbox"
+                    :checked="selectedModelConfigs[modelId].inputModalities?.includes('image')"
+                    @change="
+                      selectedModelConfigs[modelId].inputModalities = (
+                        $event.target as HTMLInputElement
+                      ).checked
+                        ? ['text', 'image']
+                        : ['text']
+                    "
+                  /><span>支持图片</span></label
+                >
+              </div>
+              <template v-if="reasoningCapabilityMode(modelId) === 'custom'">
+                <div class="reasoning-settings-grid">
+                  <label>
+                    <span>推理协议</span>
+                    <select
+                      class="input"
+                      :value="reasoningConfig(modelId)?.protocol"
+                      @change="
+                        setReasoningProtocol(
+                          modelId,
+                          ($event.target as HTMLSelectElement).value as AiReasoningProtocol
+                        )
+                      "
+                    >
+                      <option value="auto">自动</option>
+                      <option value="passthrough">不发送参数</option>
+                      <option value="openai-compatible">OpenAI 兼容</option>
+                      <option value="deepseek">DeepSeek</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>默认强度</span>
+                    <select
+                      class="input"
+                      :value="reasoningConfig(modelId)?.defaultEffort || ''"
+                      @change="
+                        setDefaultReasoningEffort(
+                          modelId,
+                          ($event.target as HTMLSelectElement).value
+                        )
+                      "
+                    >
+                      <option value="">供应商默认</option>
+                      <option
+                        v-for="effort in AI_REASONING_EFFORTS.filter((item) =>
+                          Object.prototype.hasOwnProperty.call(
+                            reasoningConfig(modelId)?.efforts || {},
+                            item
+                          )
+                        )"
+                        :key="effort"
+                        :value="effort"
+                      >
+                        {{ reasoningEffortLabels[effort] }}
+                      </option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>响应字段</span>
+                    <select
+                      class="input"
+                      :value="reasoningConfig(modelId)?.responseField"
+                      @change="
+                        setReasoningResponseField(
+                          modelId,
+                          ($event.target as HTMLSelectElement).value as AiReasoningResponseField
+                        )
+                      "
+                    >
+                      <option value="auto">自动</option>
+                      <option value="reasoning_content">reasoning_content</option>
+                      <option value="reasoning">reasoning</option>
+                      <option value="reasoning_text">reasoning_text</option>
+                      <option value="reasoning_details">reasoning_details</option>
+                    </select>
+                  </label>
+                </div>
+                <fieldset class="reasoning-efforts-field">
+                  <legend>支持的推理强度与供应商协议值</legend>
+                  <div
+                    v-for="effort in AI_REASONING_EFFORTS"
+                    :key="effort"
+                    class="reasoning-effort-row"
+                  >
+                    <label>
+                      <input
+                        type="checkbox"
+                        :checked="
+                          Object.prototype.hasOwnProperty.call(
+                            reasoningConfig(modelId)?.efforts || {},
+                            effort
+                          )
+                        "
+                        @change="
+                          toggleSupportedReasoningEffort(
+                            modelId,
+                            effort,
+                            ($event.target as HTMLInputElement).checked
+                          )
+                        "
+                      />
+                      <span>{{ reasoningEffortLabels[effort] }}</span>
+                    </label>
+                    <input
+                      class="input reasoning-wire-input"
+                      type="text"
+                      :disabled="
+                        !Object.prototype.hasOwnProperty.call(
+                          reasoningConfig(modelId)?.efforts || {},
+                          effort
+                        )
+                      "
+                      :placeholder="effort === 'off' ? '留空表示不发送参数' : effort"
+                      :value="reasoningConfig(modelId)?.efforts[effort] ?? ''"
+                      @input="
+                        setReasoningWireValue(
+                          modelId,
+                          effort,
+                          ($event.target as HTMLInputElement).value
+                        )
+                      "
+                    />
+                  </div>
+                </fieldset>
+              </template>
             </div>
             <div v-if="selectedModelIds.size === 0" class="model-empty">暂未添加模型</div>
             <div v-else-if="filteredSelectedModelIds.length === 0" class="model-empty">
@@ -323,6 +720,7 @@ function handleSave(): void {
       </div>
 
       <div class="editor-footer">
+        <span v-if="saveError" class="save-error">{{ saveError }}</span>
         <button class="btn" @click="$emit('back')">取消</button>
         <button
           class="btn btn-solid"
@@ -404,7 +802,7 @@ function handleSave(): void {
   gap: 18px;
 }
 
-.connection-fields .form-group:last-child {
+.full-width-field {
   grid-column: 1 / -1;
 }
 
@@ -498,19 +896,15 @@ function handleSave(): void {
 
 .selected-model-list {
   min-height: 120px;
-  max-height: 280px;
-  overflow-y: auto;
   border: 1px solid var(--divider-color);
   border-radius: 6px;
 }
 
 .selected-model-row {
   display: flex;
-  min-height: 42px;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 6px 8px 6px 12px;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 12px 12px;
   border-bottom: 1px solid var(--divider-color);
   color: var(--text-color);
   font-size: 13px;
@@ -520,9 +914,118 @@ function handleSave(): void {
   border-bottom: 0;
 }
 
-.selected-model-row > span {
+.selected-model-heading {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.selected-model-heading > strong {
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.model-capability-grid {
+  display: grid;
+  width: 100%;
+  grid-template-columns: minmax(110px, 0.8fr) minmax(180px, 1.2fr) auto;
+  gap: 8px;
+  align-items: end;
+}
+
+.model-capability-grid label {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.model-capability-grid .input {
+  min-width: 0;
+  height: 32px;
+  padding: 4px 7px;
+  font-size: 12px;
+}
+
+.image-capability-toggle {
+  display: flex !important;
+  min-height: 32px;
+  align-items: center;
+  grid-template-columns: auto auto;
+  white-space: nowrap;
+}
+
+.reasoning-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(140px, 1fr));
+  gap: 8px;
+}
+
+.reasoning-settings-grid label {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.reasoning-settings-grid .input {
+  min-width: 0;
+  height: 32px;
+  padding: 4px 7px;
+  font-size: 12px;
+}
+
+.reasoning-efforts-field {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px 12px;
+  margin: 0;
+  padding: 7px 9px;
+  border: 1px solid var(--divider-color);
+  border-radius: 6px;
+}
+
+.reasoning-efforts-field legend {
+  padding: 0 4px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.reasoning-effort-row {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 58px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.reasoning-effort-row label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-color);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.reasoning-efforts-field input[type='checkbox'] {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--primary-color);
+}
+
+.reasoning-wire-input {
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  padding: 4px 7px;
+  font-size: 12px;
 }
 
 .selected-model-delete {
@@ -615,10 +1118,19 @@ function handleSave(): void {
 
 .editor-footer {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
   gap: 12px;
   padding: 16px 24px;
   border-top: 1px solid var(--divider-color);
+}
+
+.save-error {
+  min-width: 0;
+  margin-right: auto;
+  color: var(--danger-color);
+  font-size: 12px;
+  overflow-wrap: anywhere;
 }
 
 .spinning {
@@ -633,11 +1145,13 @@ function handleSave(): void {
 
 @media (max-width: 700px) {
   .connection-fields,
-  .model-tools {
+  .model-tools,
+  .reasoning-settings-grid,
+  .reasoning-efforts-field {
     grid-template-columns: 1fr;
   }
 
-  .connection-fields .form-group:last-child {
+  .connection-fields .full-width-field {
     grid-column: auto;
   }
 

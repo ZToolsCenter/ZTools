@@ -220,15 +220,23 @@ async function handleTemplateSearch(
   return { success: false, error: '缺少搜索关键词' }
 }
 
+/**
+ * 执行截图：autoConfirm=false 进入编辑态由用户标注后再出图；
+ * 仍保留写入剪贴板 + 通知的行为，并在返回值中携带 image/bounds 供工具调用链消费。
+ * @param ctx 系统指令上下文
+ * @returns 截图结果，包含 dataURL 与区域信息
+ */
 async function handleScreenshot(ctx: SystemCommandContext): Promise<any> {
-  console.log('[SystemCmd] 执行截图')
+  console.log('[SystemCmd] 执行截图（编辑态）')
 
   try {
-    const result = await screenCapture(ctx.mainWindow || undefined, false)
+    // autoConfirm=false：选区确定后进入编辑态，由用户标注/确认后再出图
+    const result = await screenCapture(ctx.mainWindow || undefined, false, { autoConfirm: false })
     if (!result.image) {
       return { success: false, error: '未获取到截图内容' }
     }
 
+    // 保留旧行为：写入剪贴板并通知用户
     clipboard.writeImage(nativeImage.createFromDataURL(result.image))
 
     new Notification({
@@ -236,7 +244,8 @@ async function handleScreenshot(ctx: SystemCommandContext): Promise<any> {
       body: '截图已复制到剪贴板'
     }).show()
 
-    return { success: true }
+    // 附带 image/bounds，供后续工具调用链使用
+    return { success: true, image: result.image, bounds: result.bounds }
   } catch (error) {
     console.error('[SystemCmd] 截图失败:', error)
     return { success: false, error: String(error) }

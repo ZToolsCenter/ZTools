@@ -1,4 +1,5 @@
 export * from './Dropdown'
+export * from './Select'
 export * from './HotkeyInput'
 export * from './Slider'
 export * from './Toast'

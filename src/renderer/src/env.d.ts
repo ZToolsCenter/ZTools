@@ -4,6 +4,7 @@
 
 import type { CommonKeyboardModifier } from '@renderer/utils/convertKeyboardEvent'
 import type { SearchWallpaperConfig } from '@shared/searchWallpaper'
+import type { AiRequestStatusChange } from '@shared/aiRequestStatus'
 
 /**
  * 上次匹配状态接口
@@ -82,6 +83,7 @@ declare global {
         name?: string
         cmdType?: string // cmd 类型（用于判断是否添加历史记录）
         confirmDialog?: any // 确认对话框配置
+        launchSource?: 'search' | 'global-shortcut' | 'super-panel'
       }) => Promise<any>
       launchAsAdmin: (appPath: string, name?: string) => Promise<void>
       hideWindow: () => void
@@ -284,7 +286,7 @@ declare global {
       onUpdateSearchWallpaper: (
         callback: (wallpaper: SearchWallpaperConfig | null) => void
       ) => () => void
-      onAiStatusChanged: (callback: (status: 'idle' | 'sending' | 'receiving') => void) => void
+      onAiStatusChanged: (callback: (change: AiRequestStatusChange) => void) => void
       onUpdateAutoPaste: (callback: (autoPaste: string) => void) => void
       onUpdateAutoClear: (callback: (autoClear: string) => void) => void
       onUpdateShowRecentInSearch: (callback: (showRecentInSearch: boolean) => void) => void

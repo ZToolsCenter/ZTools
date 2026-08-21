@@ -14,6 +14,7 @@ import pluginsAPI from './plugins'
 import { executeSystemCommand } from './systemCommands'
 import { findCommandIndex, filterOutCommand, hasCommand } from './commandMatchers'
 import { systemSettingsAPI } from './systemSettings'
+import { shouldKeepMainWindowHiddenForLaunch, type PluginLaunchSource } from '@shared/pluginLaunch'
 
 /**
  * 上次匹配状态接口
@@ -308,20 +309,25 @@ export class AppsAPI {
   }
 
   /**
-   * 纯启动编排：负责管理插件载入前的主窗口占位、自动分离、复用已分离窗口等逻辑
+   * 纯启动编排：负责管理插件载入前的主窗口占位、自动分离、复用已分离窗口等逻辑。
+   * @param options 插件路径、功能代码、显示名称和启动来源。
+   * @param pluginConfig 已读取的插件配置。
+   * @returns 插件启动结果。
+   * @throws 插件视图创建或独立窗口启动失败时抛出错误。
    */
   private async preparePluginLaunch(
     options: {
       path: string
       featureCode: string
       name?: string
+      launchSource?: PluginLaunchSource
     },
     pluginConfig: any
   ): Promise<{ success: boolean; error?: string }> {
     if (!this.pluginManager) {
       return { success: false, error: 'Plugin Manager 未初始化' }
     }
-    const { path: appPath, featureCode, name } = options
+    const { path: appPath, featureCode, name, launchSource } = options
     const plugin = this.getPluginsFromDB().find((p: any) => p.path === appPath)
     const effectiveName = plugin?.name
     // 检查是否配置为自动分离
@@ -371,8 +377,15 @@ export class AppsAPI {
       // 必须在 show() 之前发送，否则 show() 触发的 focus-search 事件
       // 会在渲染进程中因 currentView 仍为 Search 而调用 hidePlugin()
       this.notifyRenderer('show-plugin-placeholder')
+
+      // 全局快捷键和超级面板触发 mainHide feature 时，保持主窗口隐藏，避免先显示搜索窗口再收起插件区域。
+      const shouldKeepMainWindowHidden = shouldKeepMainWindowHiddenForLaunch(
+        launchSource,
+        this.pluginManager.shouldKeepMainWindowHidden(appPath, featureCode)
+      )
+
       // 检查主窗口是否可见
-      if (!this.mainWindow?.isVisible()) {
+      if (!shouldKeepMainWindowHidden && !this.mainWindow?.isVisible()) {
         // 使用注入的回调（会跟随光标所在屏幕），降级到直接 show()
         if (this.showWindowCallback) {
           this.showWindowCallback()
@@ -389,7 +402,10 @@ export class AppsAPI {
   }
 
   /**
-   * 启动应用或插件（统一接口）
+   * 启动应用或插件（统一接口）。
+   * @param options 启动目标及可选的插件功能、参数和启动来源。
+   * @returns 启动结果或底层启动器返回值。
+   * @throws 底层应用或插件启动失败时抛出错误。
    */
   public async launch(options: {
     path: string
@@ -399,8 +415,9 @@ export class AppsAPI {
     name?: string // cmd 名称（用于历史记录显示）
     cmdType?: string // cmd 类型（用于判断是否添加历史记录）
     confirmDialog?: ConfirmDialogOptions // 确认对话框配置
+    launchSource?: PluginLaunchSource
   }): Promise<any> {
-    const { path: appPath, type, param, name, cmdType, confirmDialog } = options
+    const { path: appPath, type, param, name, cmdType, confirmDialog, launchSource } = options
     let { featureCode } = options
     this.launchParam = param || {}
 
@@ -496,7 +513,8 @@ export class AppsAPI {
           {
             path: appPath,
             featureCode: featureCode || '',
-            name
+            name,
+            launchSource
           },
           pluginConfig
         )
