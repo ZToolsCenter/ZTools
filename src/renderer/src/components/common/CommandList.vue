@@ -16,6 +16,8 @@
           :ref="(el) => setItemRef(el, index)"
           class="app-item"
           :class="{ selected: index === selectedIndex }"
+          role="option"
+          :aria-selected="index === selectedIndex"
           :title="getTitleText(app)"
           @click="$emit('select', app)"
           @contextmenu.prevent="$emit('contextmenu', app)"
@@ -52,13 +54,15 @@
       </template>
     </Draggable>
     <!-- 普通列表 -->
-    <div v-if="!props.draggable" class="app-grid">
+    <div v-if="!props.draggable" class="app-grid" role="listbox" aria-label="搜索结果列表">
       <div
         v-for="(app, index) in apps"
         :key="`${app.path}-${app.featureCode || ''}-${app.name}`"
         :ref="(el) => setItemRef(el, index)"
         class="app-item"
         :class="{ selected: index === selectedIndex }"
+        role="option"
+        :aria-selected="index === selectedIndex"
         draggable="false"
         :title="getTitleText(app)"
         @click="$emit('select', app)"

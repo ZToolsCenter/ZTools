@@ -49,6 +49,26 @@ export interface UseMainPushResultsProps {
   pastedText?: string | null
 }
 
+const MAIN_PUSH_QUERY_TIMEOUT_MS = 2500
+
+/**
+ * 为插件查询增加有限等待时间，避免失去响应的插件阻塞整个结果区域。
+ * @param promise 插件查询 Promise
+ * @param timeoutMs 最大等待时长
+ * @returns 原查询结果或超时拒绝的 Promise
+ * @throws 查询失败或超时时抛出错误
+ */
+function withQueryTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error('plugin query timed out')), timeoutMs)
+  })
+
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) clearTimeout(timer)
+  })
+}
+
 /**
  * mainPush 查询 composable
  * 监听搜索输入，自动查询匹配的 mainPush 插件获取动态结果
@@ -104,10 +124,9 @@ export function useMainPushResults(props: UseMainPushResultsProps): {
             type: feature.matchedCmdType,
             payload: searchText
           }
-          const items = await window.ztools.queryMainPush(
-            feature.pluginPath,
-            feature.featureCode,
-            queryData
+          const items = await withQueryTimeout(
+            window.ztools.queryMainPush(feature.pluginPath, feature.featureCode, queryData),
+            MAIN_PUSH_QUERY_TIMEOUT_MS
           )
           return { feature, items: Array.isArray(items) ? items : [] }
         } catch (error) {
@@ -147,6 +166,8 @@ export function useMainPushResults(props: UseMainPushResultsProps): {
       () => props.pastedFiles
     ],
     () => {
+      // 立即失效正在返回的查询，后续结果只能由最新输入提交。
+      queryVersion++
       if (queryTimer) {
         clearTimeout(queryTimer)
       }

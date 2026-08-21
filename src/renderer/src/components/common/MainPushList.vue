@@ -12,12 +12,14 @@
       </div>
       <div class="section-action">进入应用 ›</div>
     </div>
-    <div class="push-list">
+    <div class="push-list" role="listbox" :aria-label="title">
       <div
         v-for="(item, index) in items"
         :key="index"
         class="push-item list-item"
         :class="{ selected: index === selectedIndex }"
+        role="option"
+        :aria-selected="index === selectedIndex"
         @click="$emit('select', item, index)"
       >
         <div class="item-icon">

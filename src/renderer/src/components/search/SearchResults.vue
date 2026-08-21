@@ -1,8 +1,28 @@
 <template>
-  <div ref="scrollContainerRef" class="scrollable-content" @click="handleContainerClick">
+  <div
+    ref="scrollContainerRef"
+    class="scrollable-content"
+    role="region"
+    aria-label="搜索结果"
+    aria-live="polite"
+    :aria-busy="isLoading"
+    @click="handleContainerClick"
+  >
+    <div v-if="isLoading" class="palette-state" role="status">
+      <span class="state-spinner" aria-hidden="true"></span>
+      <span>正在加载搜索结果</span>
+    </div>
+    <div v-else-if="loadError" class="palette-state palette-state-error" role="alert">
+      <p>{{ loadError }}</p>
+      <button type="button" class="state-action" @click="retryLoading">重试</button>
+    </div>
+    <div v-else-if="showEmptyState" class="palette-state" role="status">
+      <strong>{{ emptyStateTitle }}</strong>
+      <span>{{ emptyStateDescription }}</span>
+    </div>
     <!-- 聚合模式 -->
     <AggregateView
-      v-if="searchMode === 'aggregate'"
+      v-if="!isLoading && !loadError && !showEmptyState && searchMode === 'aggregate'"
       v-model:recent-expanded="isRecentExpanded"
       v-model:pinned-expanded="isPinnedExpanded"
       v-model:search-results-expanded="isSearchResultsExpanded"
@@ -38,7 +58,12 @@
     />
 
     <!-- 列表模式 -->
-    <div v-if="searchMode === 'list' && hasSearchContent" class="list-mode-results">
+    <div
+      v-if="
+        !isLoading && !loadError && !showEmptyState && searchMode === 'list' && hasSearchContent
+      "
+      class="list-mode-results"
+    >
       <VerticalList
         :apps="allListModeResults"
         :selected-index="listModeSelectedIndex"
@@ -108,7 +133,8 @@ const emit = defineEmits<{
 
 // 使用 store
 const commandDataStore = useCommandDataStore()
-const { loading } = storeToRefs(commandDataStore)
+const { loading, loadError } = storeToRefs(commandDataStore)
+const isLoading = computed(() => loading.value || !commandDataStore.isInitialized)
 const {
   getRecentCommands,
   removeFromHistory,
@@ -178,6 +204,23 @@ function parsePluginPayload(raw: string): PluginPayload | null {
 const hasSearchContent = computed(() => {
   return !!(props.searchQuery.trim() || props.pastedImage || props.pastedText || props.pastedFiles)
 })
+
+const hasResults = computed(
+  () => navigationGrid.value.length > 0 || allListModeResults.value.length > 0
+)
+const showEmptyState = computed(() => commandDataStore.isInitialized && !hasResults.value)
+const emptyStateTitle = computed(() => (hasSearchContent.value ? '没有匹配结果' : '开始输入'))
+const emptyStateDescription = computed(() =>
+  hasSearchContent.value ? '尝试更短的关键词，或检查输入内容。' : '搜索应用、设置或插件功能。'
+)
+
+/**
+ * 重新加载搜索索引并恢复可用的结果视图。
+ * @returns 加载完成后结束的 Promise
+ */
+async function retryLoading(): Promise<void> {
+  await commandDataStore.loadCommands()
+}
 
 // 窗口匹配的操作列表（基于 feature 动态匹配）
 const windowMatchedActions = computed(() => {
@@ -1103,6 +1146,62 @@ defineExpose({
   user-select: none;
   padding: 0 0 2px 0;
   border-radius: 0;
+}
+
+.palette-state {
+  min-height: 96px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px 16px;
+  color: var(--text-secondary);
+  text-align: center;
+  font-size: 13px;
+}
+
+.palette-state strong {
+  color: var(--text-color);
+  font-size: 14px;
+}
+
+.palette-state-error p {
+  margin: 0;
+  color: var(--highlight-color);
+}
+
+.state-action {
+  min-height: 30px;
+  padding: 0 14px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--control-bg);
+  color: var(--text-color);
+  cursor: pointer;
+  font: inherit;
+}
+
+.state-action:hover,
+.state-action:focus-visible {
+  border-color: var(--primary-color);
+  outline: 2px solid color-mix(in srgb, var(--primary-color), transparent 70%);
+  outline-offset: 1px;
+}
+
+.state-spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--border-color);
+  border-top-color: var(--primary-color);
+  border-radius: 50%;
+  animation: palette-spin 0.8s linear infinite;
+}
+
+@keyframes palette-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .list-mode-results {

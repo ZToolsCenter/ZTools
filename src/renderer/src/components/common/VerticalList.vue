@@ -1,10 +1,12 @@
 <template>
-  <div v-if="apps.length > 0" class="vertical-list">
+  <div v-if="apps.length > 0" class="vertical-list" role="listbox" aria-label="搜索结果列表">
     <div
       v-for="(app, index) in apps"
       :key="app.name + '|' + app.path + (app.featureCode || '')"
       class="list-item"
       :class="{ selected: index === selectedIndex }"
+      role="option"
+      :aria-selected="index === selectedIndex"
       @click="$emit('select', app)"
       @contextmenu.prevent="$emit('contextmenu', app)"
     >

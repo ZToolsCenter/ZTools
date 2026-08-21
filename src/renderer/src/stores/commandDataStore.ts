@@ -276,6 +276,7 @@ export const useCommandDataStore = defineStore('commandData', () => {
   // 存原始本地启动项数据（保留 name/alias），由 buildLocalShortcutCommandItems 映射为搜索指令
   const localShortcutCommandsCache = ref<any[]>([])
   const loading = ref(false)
+  const loadError = ref<string | null>(null)
   const fuse = ref<Fuse<Command> | null>(null)
   let loadCommandsRequestId = 0
   // 是否已初始化
@@ -1258,6 +1259,7 @@ export const useCommandDataStore = defineStore('commandData', () => {
   async function loadCommands(): Promise<void> {
     const requestId = ++loadCommandsRequestId
     loading.value = true
+    loadError.value = null
     try {
       const [rawApps, plugins, disabledPlugins, enabledMainPushPlugins, commandAliases] =
         await Promise.all([
@@ -1318,6 +1320,7 @@ export const useCommandDataStore = defineStore('commandData', () => {
       rebuildCommandCollections(commandAliases)
     } catch (error) {
       console.error('加载指令失败:', error)
+      loadError.value = '搜索数据加载失败，请重试。'
     } finally {
       if (requestId === loadCommandsRequestId) {
         loading.value = false
@@ -1846,6 +1849,7 @@ export const useCommandDataStore = defineStore('commandData', () => {
     regexCommands,
     mainPushFeatures,
     loading,
+    loadError,
     isInitialized,
 
     // 初始化
