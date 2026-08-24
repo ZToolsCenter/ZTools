@@ -86,13 +86,22 @@ export function getDownloadUrl(isDev, version) {
   }
 }
 
-// 生成下载链接的 Markdown
+/**
+ * 生成当前版本各平台、各架构发布产物的下载链接。
+ * @param {string} downloadUrl GitHub Release 下载目录。
+ * @param {string} version 不带 v 前缀的发布版本号。
+ * @returns {string} 可追加到 changelog 的 Markdown 下载链接。
+ */
 export function generateDownloadLinksMarkdown(downloadUrl, version) {
   let links = '\n\n---\n\n### 下载地址：\n\n'
 
   links += '#### Windows 10/11 (x64)：\n\n'
   links += `- 安装版：[ZTools-${version}-win-x64-setup.exe](${downloadUrl}/ZTools-${version}-win-x64-setup.exe)\n`
   links += `- 便携版：[ZTools-${version}-win-x64.zip](${downloadUrl}/ZTools-${version}-win-x64.zip)\n\n`
+
+  links += '#### Windows 10/11 (ARM64)：\n\n'
+  links += `- 安装版：[ZTools-${version}-win-arm64-setup.exe](${downloadUrl}/ZTools-${version}-win-arm64-setup.exe)\n`
+  links += `- 便携版：[ZTools-${version}-win-arm64.zip](${downloadUrl}/ZTools-${version}-win-arm64.zip)\n\n`
 
   links += '#### macOS 11+ (Apple Silicon)：\n\n'
   links += `- DMG：[ZTools-${version}-mac-arm64.dmg](${downloadUrl}/ZTools-${version}-mac-arm64.dmg)\n`

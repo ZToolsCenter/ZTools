@@ -25,13 +25,20 @@ interface ServerDownloadsResponse {
 
 /**
  * 返回服务端更新目录使用的系统类型。
+ * @param platform 待匹配的平台，默认使用当前 Electron 运行平台。
+ * @param arch 待匹配的架构，默认使用当前 Electron 运行架构。
  * @returns 当前 Electron 运行平台与架构对应的系统类型。
  */
-export function getUpdateSystemType(): string {
-  if (process.platform === 'win32') return 'windows-x64-installer'
-  if (process.platform === 'darwin') return process.arch === 'arm64' ? 'macos-arm64' : 'macos-x64'
-  if (process.platform === 'linux') return process.arch === 'arm64' ? 'linux-arm64' : 'linux-x64'
-  return `${process.platform}-${process.arch}`
+export function getUpdateSystemType(
+  platform: NodeJS.Platform = process.platform,
+  arch: string = process.arch
+): string {
+  if (platform === 'win32') {
+    return arch === 'arm64' ? 'windows-arm64-installer' : 'windows-x64-installer'
+  }
+  if (platform === 'darwin') return arch === 'arm64' ? 'macos-arm64' : 'macos-x64'
+  if (platform === 'linux') return arch === 'arm64' ? 'linux-arm64' : 'linux-x64'
+  return `${platform}-${arch}`
 }
 
 /**

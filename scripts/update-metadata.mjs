@@ -65,6 +65,51 @@ export function mergeMacUpdateMetadata(x64Metadata, arm64Metadata, releaseNotes)
 }
 
 /**
+ * 从单架构 Windows 元数据中选择标准 NSIS 安装包。
+ * @param {Record<string, any>} metadata 单架构 Windows 更新元数据。
+ * @param {'x64' | 'arm64'} arch 目标架构。
+ * @returns {Record<string, any>} 对应架构的 NSIS 安装包文件信息。
+ * @throws {Error} 找不到唯一且带 SHA-512 的架构安装包时抛出错误。
+ */
+export function selectWindowsInstaller(metadata, arch) {
+  const files = Array.isArray(metadata.files) ? metadata.files : []
+  const suffix = `-${arch}-setup.exe`
+  const matches = files.filter((file) => String(file?.url || '').endsWith(suffix))
+
+  if (matches.length !== 1) {
+    throw new Error(`Windows ${arch} 元数据必须包含且仅包含一个 ${suffix} 安装包`)
+  }
+  if (!matches[0].sha512) throw new Error(`Windows ${arch} 安装包缺少 SHA-512`)
+  return { ...matches[0] }
+}
+
+/**
+ * 合并两个架构的 Windows 元数据，供 electron-updater 按运行架构选择安装包。
+ * @param {Record<string, any>} x64Metadata Windows x64 更新元数据。
+ * @param {Record<string, any>} arm64Metadata Windows ARM64 更新元数据。
+ * @param {string} releaseNotes 发布说明。
+ * @returns {Record<string, any>} 合并后的 latest.yml 元数据。
+ * @throws {Error} 版本不一致或任一架构安装包无效时抛出错误。
+ */
+export function mergeWindowsUpdateMetadata(x64Metadata, arm64Metadata, releaseNotes) {
+  if (!x64Metadata.version || x64Metadata.version !== arm64Metadata.version) {
+    throw new Error('Windows x64 与 arm64 更新元数据版本不一致')
+  }
+
+  // 保持 x64 在前并保留顶层兼容字段，旧客户端仍会下载 x64 安装包。
+  const x64Installer = selectWindowsInstaller(x64Metadata, 'x64')
+  const arm64Installer = selectWindowsInstaller(arm64Metadata, 'arm64')
+
+  return {
+    ...x64Metadata,
+    files: [x64Installer, arm64Installer],
+    path: x64Installer.url,
+    sha512: x64Installer.sha512,
+    releaseNotes
+  }
+}
+
+/**
  * 为平台更新元数据补充统一发布说明。
  * @param {Record<string, any>} metadata 原始更新元数据。
  * @param {string} releaseNotes 发布说明。

@@ -66,8 +66,8 @@ importers:
         specifier: ^7.2.2
         version: 7.2.2
       uiohook-napi:
-        specifier: ^1.5.4
-        version: 1.5.4
+        specifier: ^1.5.5
+        version: 1.5.5
       uuid:
         specifier: ^13.0.0
         version: 13.0.0
@@ -3001,8 +3001,8 @@ packages:
     engines: {node: '>=14.17'}
     hasBin: true
 
-  uiohook-napi@1.5.4:
-    resolution: {integrity: sha512-7vPVDNwgb6MwTgviA/dnF2MrW0X5xm76fAqaOAC3cEKkswqAZOPw1USu14Sr6383s5qhXegcJaR63CpJOPCNAg==}
+  uiohook-napi@1.5.5:
+    resolution: {integrity: sha512-oSlTdnECw2GBfsJPTbBQBeE4v/EXP0EZmX6BJq5nzH/JgFaBE8JpFwEA/kLhiEP7HxQw28FViWiYgdIZzWuuJQ==}
     engines: {node: '>= 16'}
 
   undici-types@6.21.0:
@@ -6243,7 +6243,7 @@ snapshots:
 
   typescript@5.9.3: {}
 
-  uiohook-napi@1.5.4:
+  uiohook-napi@1.5.5:
     dependencies:
       node-gyp-build: 4.8.4
 

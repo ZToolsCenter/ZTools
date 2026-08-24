@@ -1,6 +1,6 @@
 import { readFileSync } from 'fs'
 import path from 'path'
-import { readUpdateMetadata } from './update-metadata.mjs'
+import { readUpdateMetadata, selectWindowsInstaller } from './update-metadata.mjs'
 
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 
@@ -107,10 +107,8 @@ async function main() {
     process.env.MAC_UPDATE_METADATA || 'dist/release/latest-mac.yml'
   )
   const release = await fetchGitHubRelease(repository, tag, githubToken)
-  const windowsFile = (windowsMetadata.files || []).find((file) =>
-    String(file?.url || '').endsWith('-setup.exe')
-  )
-  if (!windowsFile) throw new Error('Windows 更新元数据缺少 NSIS 安装包')
+  const windowsX64Installer = selectWindowsInstaller(windowsMetadata, 'x64')
+  const windowsArm64Installer = selectWindowsInstaller(windowsMetadata, 'arm64')
 
   const payload = {
     providerReleaseId: release.id,
@@ -121,7 +119,8 @@ async function main() {
     publishedAt: release.published_at,
     prerelease: Boolean(release.prerelease),
     artifacts: [
-      toArtifact(release, windowsFile, 'windows-x64-installer'),
+      toArtifact(release, windowsX64Installer, 'windows-x64-installer'),
+      toArtifact(release, windowsArm64Installer, 'windows-arm64-installer'),
       toArtifact(release, selectMetadataFile(macMetadata, '-x64.zip'), 'macos-x64'),
       toArtifact(release, selectMetadataFile(macMetadata, '-arm64.zip'), 'macos-arm64')
     ]
