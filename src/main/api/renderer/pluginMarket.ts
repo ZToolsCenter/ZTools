@@ -73,7 +73,7 @@ type PluginMarketStorefrontSection =
         description?: string
         icon?: string
         showDescription: boolean
-        pluginCount: number
+        pluginCount?: number
       }>
     }
   | {
@@ -112,6 +112,15 @@ type MarketPluginsResponse = {
   categories?: MarketCategoryResponse[]
   latest?: PluginMarketPlugin[]
 }
+
+type PluginMarketRankingType = 'popular' | 'recent'
+
+type PluginMarketRankingResponse = {
+  type?: PluginMarketRankingType
+  items?: PluginMarketPlugin[]
+}
+
+type PluginMarketRankings = Record<PluginMarketRankingType, PluginMarketPlugin[]>
 
 type PluginMarketCommentItem = {
   id: number
@@ -182,6 +191,7 @@ const PLUGIN_MARKET_STOREFRONT_CACHE_KEY = 'plugin-market-storefront'
 /** storefront 指纹在 LMDB 中的缓存键，用于判断缓存是否失效 */
 const PLUGIN_MARKET_STOREFRONT_FINGERPRINT_CACHE_KEY = 'plugin-market-storefront-fingerprint'
 const PLUGIN_MARKET_RECOMMEND_LIMIT = 12
+const PLUGIN_MARKET_RANKING_LIMIT = 50
 const PLUGIN_MARKET_LATEST_CACHE_MS = 5 * 60 * 1000
 const PLUGIN_MARKET_LATEST_UNAVAILABLE_CACHE_MS = 60 * 1000
 
@@ -233,19 +243,31 @@ export class PluginMarketAPI {
 
       console.log('[Plugins] 从 ZTools 插件市场获取列表...', marketApiBase)
 
-      const [marketResponse, recommendations] = await Promise.all([
+      const [marketResponse, recommendations, popularRanking, recentRanking] = await Promise.all([
         httpGet(
           `${marketApiBase}/plugins?limit=${PLUGIN_MARKET_RECOMMEND_LIMIT}&platform=${encodeURIComponent(platform)}&t=${timestamp}`
         ),
         this.fetchPluginMarketRecommendations(PLUGIN_MARKET_RECOMMEND_LIMIT).catch((error) => {
           console.warn('[Plugins] 获取推荐插件失败，将仅使用市场聚合数据:', error)
           return []
+        }),
+        this.fetchPluginMarketRanking('popular', platform).catch((error) => {
+          console.warn('[Plugins] 获取最受欢迎排行榜失败:', error)
+          return []
+        }),
+        this.fetchPluginMarketRanking('recent', platform).catch((error) => {
+          console.warn('[Plugins] 获取最近更新排行榜失败:', error)
+          return []
         })
       ])
 
       const marketData = this.parseMarketPluginsResponse(marketResponse.data)
-      const plugins = this.collectPlugins(marketData)
-      const storefront = this.buildPluginMarketStorefront(marketData, recommendations)
+      const rankings: PluginMarketRankings = {
+        popular: popularRanking,
+        recent: recentRanking
+      }
+      const plugins = this.collectPlugins(marketData, rankings)
+      const storefront = this.buildPluginMarketStorefront(marketData, recommendations, rankings)
       const pluginMarketFingerprint = this.getPluginMarketFingerprint(plugins)
 
       databaseAPI.dbPut('plugin-market-version', String(timestamp))
@@ -351,6 +373,36 @@ export class PluginMarketAPI {
     const data = typeof response.data === 'string' ? JSON.parse(response.data) : response.data
     const items = Array.isArray(data?.items) ? data.items : []
     return items.filter((plugin: PluginMarketPlugin) => !!plugin?.name)
+  }
+
+  /**
+   * 获取指定类型的插件排行榜，并校验服务端响应与请求类型一致。
+   * @param type 排行榜类型。
+   * @param platform 目标运行平台。
+   * @returns 排行榜中的有效插件列表，最多五十项。
+   * @throws 当请求失败或响应类型无效时抛出错误。
+   */
+  private async fetchPluginMarketRanking(
+    type: PluginMarketRankingType,
+    platform: string
+  ): Promise<PluginMarketPlugin[]> {
+    const query = new URLSearchParams({
+      type,
+      platform,
+      t: String(Date.now())
+    })
+    const response = await httpGet(
+      `${getPluginMarketApiBase()}/plugins/rankings?${query.toString()}`
+    )
+    const data = (
+      typeof response.data === 'string' ? JSON.parse(response.data) : response.data
+    ) as PluginMarketRankingResponse
+    if (data?.type !== type || !Array.isArray(data.items)) {
+      throw new Error(`插件排行榜响应无效: ${type}`)
+    }
+    return data.items
+      .filter((plugin: PluginMarketPlugin) => !!plugin?.name)
+      .slice(0, PLUGIN_MARKET_RANKING_LIMIT)
   }
 
   /**
@@ -527,7 +579,16 @@ export class PluginMarketAPI {
     return { success: false, error: error instanceof Error ? error.message : fallback }
   }
 
-  private collectPlugins(marketData: MarketPluginsResponse): PluginMarketPlugin[] {
+  /**
+   * 合并市场分类和排行榜中的插件，并按插件名称去重。
+   * @param marketData 市场聚合接口数据。
+   * @param rankings 两类排行榜数据。
+   * @returns 可用于安装状态映射的插件列表。
+   */
+  private collectPlugins(
+    marketData: MarketPluginsResponse,
+    rankings: PluginMarketRankings
+  ): PluginMarketPlugin[] {
     const byName = new Map<string, PluginMarketPlugin>()
     const pushPlugin = (plugin?: PluginMarketPlugin): void => {
       if (!plugin?.name) return
@@ -540,16 +601,25 @@ export class PluginMarketAPI {
       }
     }
 
+    for (const plugin of [...rankings.popular, ...rankings.recent]) {
+      pushPlugin(plugin)
+    }
+
     return [...byName.values()]
   }
 
   /**
    * 构建插件市场首页的 storefront 视图数据。
    * 将线上聚合 API 的 banners/categories/latest/recommendations 转换为渲染端可直接使用的首页结构。
+   * @param marketData 市场聚合接口数据。
+   * @param recommendations 随机推荐插件列表。
+   * @param rankings 最受欢迎和最近更新排行榜数据。
+   * @returns 渲染端可直接使用的市场首页和分类详情数据。
    */
   private buildPluginMarketStorefront(
     marketData: MarketPluginsResponse,
-    recommendations: PluginMarketPlugin[]
+    recommendations: PluginMarketPlugin[],
+    rankings: PluginMarketRankings
   ): PluginMarketStorefront {
     const categoriesList = Array.isArray(marketData.categories) ? marketData.categories : []
     const latest = Array.isArray(marketData.latest) ? marketData.latest : []
@@ -605,6 +675,40 @@ export class PluginMarketAPI {
         categories: navigationCategories
       })
     }
+
+    const rankingCategories = [
+      {
+        key: 'ranking-popular',
+        title: '最受欢迎',
+        description: '下载量最高的热门插件',
+        plugins: rankings.popular
+      },
+      {
+        key: 'ranking-recent',
+        title: '最近更新',
+        description: '近期发布新版本的插件',
+        plugins: rankings.recent
+      }
+    ]
+    for (const ranking of rankingCategories) {
+      categories[ranking.key] = {
+        key: ranking.key,
+        title: ranking.title,
+        description: ranking.description,
+        plugins: ranking.plugins
+      }
+    }
+    sections.push({
+      type: 'navigation',
+      key: 'rankings-0',
+      title: '排行榜',
+      categories: rankingCategories.map((ranking) => ({
+        key: ranking.key,
+        title: ranking.title,
+        description: ranking.description,
+        showDescription: true
+      }))
+    })
 
     if (latest.length > 0) {
       sections.push({

@@ -4,11 +4,13 @@ import type {
   AiChatMessage,
   AiChatProtocolDelta,
   AiChatProtocolInput,
+  AiChatReplayState,
   AiChatTool,
   AiToolCall
 } from '../../../core/aiChatTransport.js'
 import {
   extractAiReasoningDelta,
+  isCompatibleAiChatReplayState,
   normalizeAiTokenUsage,
   resolveAiReasoningPolicy
 } from '../../../core/aiChatTransport.js'
@@ -20,6 +22,7 @@ import {
   toAnthropicTools,
   toResponsesInput,
   toResponsesTools,
+  type AiReplayContext,
   type AssistantTurn
 } from './converters'
 
@@ -63,9 +66,9 @@ export interface AiProtocolAdapter {
 export function createAdapter(provider: AiProvider, timeout?: number): AiProtocolAdapter {
   switch (provider.apiFormat) {
     case 'openai-chat':
-      return new OpenAiChatAdapter(createOpenAiClient(provider, timeout))
+      return new OpenAiChatAdapter(provider, createOpenAiClient(provider, timeout))
     case 'openai-responses':
-      return new OpenAiResponsesAdapter(createOpenAiClient(provider, timeout))
+      return new OpenAiResponsesAdapter(provider, createOpenAiClient(provider, timeout))
     case 'anthropic-messages':
       return new AnthropicMessagesAdapter(provider)
     default:
@@ -112,12 +115,179 @@ function normalizeMaxTokens(value: number | undefined, fallback?: number): numbe
   return Math.min(32_768, Math.max(1, Math.round(maxTokens)))
 }
 
+const CHAT_REASONING_FIELDS = new Set([
+  'reasoning_content',
+  'reasoning',
+  'reasoning_text',
+  'reasoning_details'
+])
+
+/**
+ * 构造适配器用于创建和校验回放状态的身份。
+ * @param provider 当前供应商
+ * @param model 当前远端模型 ID
+ * @returns 当前请求的稳定回放身份
+ */
+function createReplayContext(provider: AiProvider, model: string): AiReplayContext {
+  return { apiFormat: provider.apiFormat, providerId: provider.id, model }
+}
+
+/**
+ * 从 Chat 助手消息恢复供应商原始推理字段。
+ * @param message 待转换的标准助手消息
+ * @param provider 当前供应商
+ * @param model 当前远端模型 ID
+ * @returns 可合并进 Chat assistant message 的原生推理字段
+ */
+function readChatReasoningReplay(
+  message: AiChatMessage,
+  provider: AiProvider,
+  model: string
+): Record<string, unknown> {
+  if (!isCompatibleAiChatReplayState(message.replay_state, 'openai-chat', provider.id, model)) {
+    return {}
+  }
+  const result: Record<string, unknown> = {}
+  for (const block of message.replay_state.blocks ?? []) {
+    const field = typeof block.field === 'string' ? block.field : ''
+    if (block.type !== 'reasoning' || !CHAT_REASONING_FIELDS.has(field)) continue
+    const value = block.value
+    const previous = result[field]
+    if (typeof previous === 'string' && typeof value === 'string') {
+      result[field] = previous + value
+    } else if (Array.isArray(previous) && Array.isArray(value)) {
+      result[field] = [...previous, ...value]
+    } else if (value !== undefined) {
+      result[field] = value
+    }
+  }
+  return result
+}
+
+/**
+ * 采集 Chat 响应中的原始推理字段，保留字段身份和结构。
+ * @param source Chat 完整消息或流式 delta
+ * @returns 可序列化的推理回放块
+ */
+function collectChatReasoningReplayBlocks(source: unknown): Array<Record<string, unknown>> {
+  if (!source || typeof source !== 'object' || Array.isArray(source)) return []
+  const record = source as Record<string, unknown>
+  const blocks: Array<Record<string, unknown>> = []
+  for (const field of CHAT_REASONING_FIELDS) {
+    if (record[field] === undefined) continue
+    const value = toJsonValue(record[field])
+    if (value !== undefined) blocks.push({ type: 'reasoning', field, value })
+  }
+  return blocks
+}
+
+/**
+ * 将 SDK 值复制为不含原型或不可序列化成员的 JSON 值。
+ * @param value 待保存的供应商原始值
+ * @returns 可安全跨 IPC 传递的副本；无法序列化时返回 undefined
+ */
+function toJsonValue(value: unknown): unknown {
+  try {
+    return JSON.parse(JSON.stringify(value)) as unknown
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * 创建 Chat Completions 的版本化回放状态。
+ * @param provider 当前供应商
+ * @param model 当前远端模型 ID
+ * @param blocks 原始推理字段块
+ * @param responseId 可选的 Chat 响应 ID
+ * @returns 可附加到统一助手结果的回放状态
+ */
+function createChatReplayState(
+  provider: AiProvider,
+  model: string,
+  blocks: Array<Record<string, unknown>>,
+  responseId?: string
+): AiChatReplayState {
+  return {
+    version: 1,
+    apiFormat: 'openai-chat',
+    providerId: provider.id,
+    model,
+    ...(responseId ? { response: { id: responseId } } : {}),
+    blocks
+  }
+}
+
+/**
+ * 将标准推理档位映射为 Responses API 的 reasoning 和 include 参数。
+ * @param input 当前单轮请求
+ * @returns 可合并进 Responses 请求体的推理参数
+ */
+function buildResponsesReasoning(input: AdapterInput): Record<string, unknown> {
+  const policy = resolveAiReasoningPolicy(input.model, input.modelReasoning, input.reasoningEffort)
+  if (!policy.effort) return {}
+  if (policy.effort === 'off') {
+    const disabledEffort = typeof policy.wireValue === 'string' ? policy.wireValue : 'none'
+    return { reasoning: { effort: disabledEffort } }
+  }
+  const effort = typeof policy.wireValue === 'string' ? policy.wireValue : policy.effort
+  return {
+    reasoning: { effort, summary: 'auto' },
+    include: ['reasoning.encrypted_content']
+  }
+}
+
+const ANTHROPIC_THINKING_BUDGETS: Record<string, number> = {
+  minimal: 1024,
+  low: 2048,
+  medium: 4096,
+  high: 8192,
+  xhigh: 16_384,
+  max: 32_768
+}
+
+/**
+ * 将标准推理档位映射为 Anthropic extended thinking 预算。
+ * @param input 当前单轮请求
+ * @param maxTokens 已规范化的最大输出 token 数
+ * @returns Anthropic thinking 参数；未启用推理时返回 undefined
+ * @throws 输出上限无法容纳 Anthropic 最低 thinking 预算时抛出 INVALID_REQUEST
+ */
+function buildAnthropicThinking(
+  input: AdapterInput,
+  maxTokens: number
+): Record<string, unknown> | undefined {
+  const policy = resolveAiReasoningPolicy(input.model, input.modelReasoning, input.reasoningEffort)
+  if (!policy.effort || policy.effort === 'off') return undefined
+  if (maxTokens < 2048) {
+    const error = new Error('Anthropic extended thinking 要求 maxTokens 至少为 2048') as Error & {
+      normalizedCode?: string
+    }
+    error.normalizedCode = 'INVALID_REQUEST'
+    throw error
+  }
+  const numericWireValue = Number(policy.wireValue)
+  const requestedBudget =
+    typeof policy.wireValue === 'string' && Number.isFinite(numericWireValue)
+      ? Math.round(numericWireValue)
+      : ANTHROPIC_THINKING_BUDGETS[policy.effort] || 1024
+  // 至少为正文保留 1024 token，并满足 Anthropic 的最低 thinking 预算。
+  const budgetTokens = Math.max(1024, Math.min(requestedBudget, maxTokens - 1024))
+  return { type: 'enabled', budget_tokens: budgetTokens }
+}
+
 /**
  * 将插件消息转为 OpenAI Chat Completions 的消息参数。
  * @param messages 标准消息历史
+ * @param provider 当前供应商
+ * @param model 当前远端模型 ID
  * @returns OpenAI SDK 消息参数数组
  */
-function convertMessages(messages: AiChatMessage[]): OpenAI.ChatCompletionMessageParam[] {
+function convertMessages(
+  messages: AiChatMessage[],
+  provider: AiProvider,
+  model: string
+): OpenAI.ChatCompletionMessageParam[] {
   return messages.map((msg) => {
     // 助手消息保留 reasoning_content 与 tool_calls，解决 DeepSeek thinking mode 透传。
     if (msg.role === 'assistant') {
@@ -125,7 +295,11 @@ function convertMessages(messages: AiChatMessage[]): OpenAI.ChatCompletionMessag
         role: 'assistant',
         content: msg.content || ''
       }
-      if (msg.reasoning_content) {
+      const replayedReasoning = readChatReasoningReplay(msg, provider, model)
+      if (Object.keys(replayedReasoning).length) {
+        Object.assign(assistantMsg, replayedReasoning)
+      } else if (msg.reasoning_content) {
+        // 旧历史没有匹配的 replay state 时继续使用兼容性最好的 reasoning_content。
         assistantMsg.reasoning_content = msg.reasoning_content
       }
       if (msg.tool_calls?.length) {
@@ -198,7 +372,10 @@ function extractChatToolCalls(toolCalls?: OpenAI.ChatCompletionMessageToolCall[]
  * OpenAI Chat Completions 适配器，沿用既有调用与透传逻辑。
  */
 class OpenAiChatAdapter implements AiProtocolAdapter {
-  constructor(private readonly client: OpenAI) {}
+  constructor(
+    private readonly provider: AiProvider,
+    private readonly client: OpenAI
+  ) {}
 
   /**
    * 通过 Chat Completions 执行非流式单轮请求。
@@ -218,7 +395,7 @@ class OpenAiChatAdapter implements AiProtocolAdapter {
     const response = await this.client.chat.completions.create(
       {
         model: input.model,
-        messages: convertMessages(input.messages),
+        messages: convertMessages(input.messages, this.provider, input.model),
         ...(tools.length ? { tools, tool_choice: input.toolChoice || 'auto' } : {}),
         ...(temperature === undefined ? {} : { temperature }),
         ...(maxTokens === undefined ? {} : { max_tokens: maxTokens }),
@@ -232,12 +409,14 @@ class OpenAiChatAdapter implements AiProtocolAdapter {
     const assistantMsg = choice.message
     // 按模型配置提取供应商返回的非标准推理字段。
     const reasoningContent = extractAiReasoningDelta(assistantMsg, reasoning.responseFields)
+    const replayBlocks = collectChatReasoningReplayBlocks(assistantMsg)
     return {
       content: assistantMsg.content || '',
       reasoningContent,
       toolCalls: extractChatToolCalls(assistantMsg.tool_calls),
       finishReason: choice.finish_reason || undefined,
-      usage: normalizeAiTokenUsage(response.usage)
+      usage: normalizeAiTokenUsage(response.usage),
+      replayState: createChatReplayState(this.provider, input.model, replayBlocks, response.id)
     }
   }
 
@@ -264,7 +443,7 @@ class OpenAiChatAdapter implements AiProtocolAdapter {
     const stream = await this.client.chat.completions.create(
       {
         model: input.model,
-        messages: convertMessages(input.messages),
+        messages: convertMessages(input.messages, this.provider, input.model),
         stream: true,
         stream_options: { include_usage: true },
         ...(tools.length ? { tools, tool_choice: input.toolChoice || 'auto' } : {}),
@@ -279,16 +458,20 @@ class OpenAiChatAdapter implements AiProtocolAdapter {
     let fullReasoning = ''
     let finishReason: string | undefined
     let usage: ReturnType<typeof normalizeAiTokenUsage>
+    let responseId: string | undefined
+    const replayBlocks: Array<Record<string, unknown>> = []
     // 工具调用按 index 累积参数片段，流结束后统一归一化。
     const toolCalls = new Map<number, { id: string; name: string; arguments: string }>()
 
     for await (const chunk of stream) {
+      if (chunk.id) responseId = chunk.id
       const delta = chunk.choices[0]?.delta
       if (chunk.choices[0]?.finish_reason) {
         finishReason = chunk.choices[0].finish_reason
       }
       const chunkUsage = normalizeAiTokenUsage(chunk.usage)
       if (delta) {
+        replayBlocks.push(...collectChatReasoningReplayBlocks(delta))
         const reasoningDelta = extractAiReasoningDelta(delta, reasoning.responseFields)
         const contentDelta = delta.content || ''
 
@@ -353,7 +536,8 @@ class OpenAiChatAdapter implements AiProtocolAdapter {
         function: { name: toolCall.name, arguments: toolCall.arguments }
       })),
       finishReason,
-      usage
+      usage,
+      replayState: createChatReplayState(this.provider, input.model, replayBlocks, responseId)
     }
   }
 }
@@ -362,7 +546,10 @@ class OpenAiChatAdapter implements AiProtocolAdapter {
  * OpenAI Responses API 适配器。
  */
 class OpenAiResponsesAdapter implements AiProtocolAdapter {
-  constructor(private readonly client: OpenAI) {}
+  constructor(
+    private readonly provider: AiProvider,
+    private readonly client: OpenAI
+  ) {}
 
   /**
    * 通过 Responses API 执行非流式单轮请求。
@@ -374,18 +561,24 @@ class OpenAiResponsesAdapter implements AiProtocolAdapter {
     const tools = toResponsesTools(input.tools)
     const temperature = normalizeTemperature(input.temperature, 2)
     const maxOutputTokens = normalizeMaxTokens(input.maxTokens)
+    const context = createReplayContext(this.provider, input.model)
+    const reasoning = buildResponsesReasoning(input)
     // store:false 使请求无状态化，工具调用历史由输入项完整回传。
     const params = {
       model: input.model,
-      input: toResponsesInput(input.messages),
+      input: toResponsesInput(input.messages, context),
       store: false,
       ...(tools ? { tools, ...(input.toolChoice ? { tool_choice: input.toolChoice } : {}) } : {}),
       ...(temperature === undefined ? {} : { temperature }),
-      ...(maxOutputTokens === undefined ? {} : { max_output_tokens: maxOutputTokens })
+      ...(maxOutputTokens === undefined ? {} : { max_output_tokens: maxOutputTokens }),
+      ...reasoning
     } as unknown as OpenAI.Responses.ResponseCreateParamsNonStreaming
     const response = await this.client.responses.create(params, { signal })
     return {
-      ...fromResponsesOutput(response.output),
+      ...fromResponsesOutput(response.output, context, {
+        id: response.id,
+        status: response.status
+      }),
       finishReason: response.output.some((item) => item.type === 'function_call')
         ? 'tool_calls'
         : 'stop',
@@ -409,20 +602,26 @@ class OpenAiResponsesAdapter implements AiProtocolAdapter {
     const tools = toResponsesTools(input.tools)
     const temperature = normalizeTemperature(input.temperature, 2)
     const maxOutputTokens = normalizeMaxTokens(input.maxTokens)
+    const context = createReplayContext(this.provider, input.model)
+    const reasoning = buildResponsesReasoning(input)
     const params = {
       model: input.model,
-      input: toResponsesInput(input.messages),
+      input: toResponsesInput(input.messages, context),
       store: false,
       stream: true,
       ...(tools ? { tools, ...(input.toolChoice ? { tool_choice: input.toolChoice } : {}) } : {}),
       ...(temperature === undefined ? {} : { temperature }),
-      ...(maxOutputTokens === undefined ? {} : { max_output_tokens: maxOutputTokens })
+      ...(maxOutputTokens === undefined ? {} : { max_output_tokens: maxOutputTokens }),
+      ...reasoning
     } as unknown as OpenAI.Responses.ResponseCreateParamsStreaming
     const stream = await this.client.responses.create(params, { signal })
 
     let completed: OpenAI.Responses.Response | null = null
     let usage: ReturnType<typeof normalizeAiTokenUsage>
+    // 协议 output_index 包含 reasoning、message 等所有输出项；对外工具索引必须单独连续编号。
     const toolCalls = new Map<number, { id: string; name: string; arguments: string }>()
+    const outputToolIndexes = new Map<number, number>()
+    const itemToolIndexes = new Map<string, number>()
     let nextToolCallIndex = 0
     for await (const event of stream) {
       // 文本与推理增量实时回传，工具调用在 completed 事件中一次性归一化。
@@ -435,22 +634,29 @@ class OpenAiResponsesAdapter implements AiProtocolAdapter {
         const item = eventRecord.item as Record<string, unknown> | undefined
         if (item?.type === 'function_call') {
           const outputIndex = Number(eventRecord.output_index)
-          const index = Number.isFinite(outputIndex) ? outputIndex : nextToolCallIndex++
-          toolCalls.set(index, {
-            id: typeof item.call_id === 'string' ? item.call_id : '',
-            name: typeof item.name === 'string' ? item.name : '',
-            arguments: ''
-          })
+          const itemId = typeof item.id === 'string' ? item.id : ''
+          const index =
+            (itemId ? itemToolIndexes.get(itemId) : undefined) ??
+            (Number.isFinite(outputIndex) ? outputToolIndexes.get(outputIndex) : undefined) ??
+            nextToolCallIndex++
+          if (Number.isFinite(outputIndex)) outputToolIndexes.set(outputIndex, index)
+          if (itemId) itemToolIndexes.set(itemId, index)
+          const existing = toolCalls.get(index) ?? { id: '', name: '', arguments: '' }
+          if (typeof item.call_id === 'string' && item.call_id) existing.id = item.call_id
+          if (typeof item.name === 'string' && item.name) existing.name = item.name
+          toolCalls.set(index, existing)
         }
       } else if (event.type === 'response.function_call_arguments.delta') {
         const eventRecord = event as unknown as Record<string, unknown>
         const itemId = typeof eventRecord.item_id === 'string' ? eventRecord.item_id : ''
         const outputIndex = Number(eventRecord.output_index)
-        const existingIndex = Array.from(toolCalls.entries()).find(
-          ([, toolCall]) => toolCall.id === itemId
-        )?.[0]
         const index =
-          existingIndex ?? (Number.isFinite(outputIndex) ? outputIndex : nextToolCallIndex++)
+          (itemId ? itemToolIndexes.get(itemId) : undefined) ??
+          (Number.isFinite(outputIndex) ? outputToolIndexes.get(outputIndex) : undefined) ??
+          nextToolCallIndex++
+        // delta 可能先于 added 到达，首次看到时也要固定协议索引与连续工具索引的关系。
+        if (Number.isFinite(outputIndex)) outputToolIndexes.set(outputIndex, index)
+        if (itemId) itemToolIndexes.set(itemId, index)
         const existing = toolCalls.get(index) ?? { id: itemId, name: '', arguments: '' }
         // Responses 的 item_id 与工具 call_id 可能不同，已有 output_item 信息优先保留。
         if (itemId && !existing.id) existing.id = itemId
@@ -473,7 +679,10 @@ class OpenAiResponsesAdapter implements AiProtocolAdapter {
       }
     }
     if (!completed) throw new Error('Responses API 未返回完整响应')
-    const turn = fromResponsesOutput(completed.output)
+    const turn = fromResponsesOutput(completed.output, context, {
+      id: completed.id,
+      status: completed.status
+    })
     return {
       ...turn,
       finishReason: turn.toolCalls.length ? 'tool_calls' : 'stop',
@@ -502,7 +711,7 @@ class AnthropicMessagesAdapter implements AiProtocolAdapter {
       stop_reason?: unknown
       usage?: unknown
     }
-    const turn = fromAnthropicContent(json.content)
+    const turn = fromAnthropicContent(json.content, createReplayContext(this.provider, input.model))
     return {
       ...turn,
       finishReason: turn.toolCalls.length ? 'tool_calls' : String(json.stop_reason || 'end_turn'),
@@ -523,7 +732,11 @@ class AnthropicMessagesAdapter implements AiProtocolAdapter {
     onDelta: (delta: AdapterDelta) => void
   ): Promise<AssistantTurn> {
     const response = await this.request(this.buildBody(input, true), signal)
-    return parseAnthropicSse(response.body, onDelta)
+    return parseAnthropicSse(
+      response.body,
+      onDelta,
+      createReplayContext(this.provider, input.model)
+    )
   }
 
   /**
@@ -533,16 +746,29 @@ class AnthropicMessagesAdapter implements AiProtocolAdapter {
    * @returns 请求体对象
    */
   private buildBody(input: AdapterInput, stream: boolean): Record<string, unknown> {
-    const { system, messages } = toAnthropicMessages(input.messages)
+    const context = createReplayContext(this.provider, input.model)
+    const { system, messages } = toAnthropicMessages(input.messages, context)
     const temperature = normalizeTemperature(input.temperature, 1)
+    const maxTokens = normalizeMaxTokens(input.maxTokens, ANTHROPIC_DEFAULT_MAX_TOKENS)!
+    const thinking = buildAnthropicThinking(input, maxTokens)
+    // 强制工具选择与 extended thinking 在 Anthropic 协议中互斥，提前返回稳定错误。
+    if (thinking && input.toolChoice === 'required') {
+      const error = new Error(
+        'Anthropic extended thinking 不支持 required toolChoice，请使用 auto 或关闭推理'
+      ) as Error & { normalizedCode?: string }
+      error.normalizedCode = 'INVALID_REQUEST'
+      throw error
+    }
     // max_tokens 是 Anthropic 必填字段，缺省时使用较高默认值减少截断。
     const body: Record<string, unknown> = {
       model: input.model,
       messages,
-      max_tokens: normalizeMaxTokens(input.maxTokens, ANTHROPIC_DEFAULT_MAX_TOKENS),
+      max_tokens: maxTokens,
       stream
     }
-    if (temperature !== undefined) body.temperature = temperature
+    // Anthropic extended thinking 不接受 temperature，启用时交由模型使用默认采样策略。
+    if (temperature !== undefined && !thinking) body.temperature = temperature
+    if (thinking) body.thinking = thinking
     if (system) body.system = system
     const tools = input.toolChoice === 'none' ? undefined : toAnthropicTools(input.tools)
     if (tools) body.tools = tools
@@ -606,12 +832,14 @@ interface AnthropicToolCallAccumulator {
  * 解析 Anthropic 流式响应的 SSE，实时回传增量并累积工具调用。
  * @param body fetch 响应的可读流
  * @param onDelta 接收文本与推理增量的回调
+ * @param context 当前协议、供应商与模型身份
  * @returns 归一化的助手回复
  * @throws 流中断或收到 error 事件时抛出错误
  */
 async function parseAnthropicSse(
   body: ReadableStream<Uint8Array> | null,
-  onDelta: (delta: AdapterDelta) => void
+  onDelta: (delta: AdapterDelta) => void,
+  context: AiReplayContext
 ): Promise<AssistantTurn> {
   if (!body) throw new Error('Anthropic 流式响应缺少 body')
   const reader = body.getReader()
@@ -621,9 +849,10 @@ async function parseAnthropicSse(
   let fullReasoning = ''
   let finishReason: string | undefined
   let usage: ReturnType<typeof normalizeAiTokenUsage>
-  const toolCalls: AiToolCall[] = []
+  const usageSource: Record<string, unknown> = {}
   // 每个 content_block 的状态按 index 跟踪，content_block_stop 时完成工具调用解析。
-  const blocks = new Map<number, AnthropicToolCallAccumulator>()
+  const toolBlocks = new Map<number, AnthropicToolCallAccumulator>()
+  const nativeBlocks = new Map<number, Record<string, unknown>>()
 
   for (;;) {
     const { done, value } = await reader.read()
@@ -644,8 +873,12 @@ async function parseAnthropicSse(
       if (type === 'content_block_start') {
         const index = event.index as number
         const block = event.content_block as Record<string, unknown> | undefined
+        const serializableBlock = toJsonValue(block)
+        if (serializableBlock && typeof serializableBlock === 'object') {
+          nativeBlocks.set(index, serializableBlock as Record<string, unknown>)
+        }
         if (block && block.type === 'tool_use') {
-          blocks.set(index, {
+          toolBlocks.set(index, {
             id: typeof block.id === 'string' ? block.id : '',
             name: typeof block.name === 'string' ? block.name : '',
             args: ''
@@ -658,13 +891,23 @@ async function parseAnthropicSse(
         // 文本增量：回传并累积为最终内容。
         if (delta.type === 'text_delta' && typeof delta.text === 'string') {
           fullContent += delta.text
+          const block = nativeBlocks.get(index) ?? { type: 'text', text: '' }
+          block.text = `${typeof block.text === 'string' ? block.text : ''}${delta.text}`
+          nativeBlocks.set(index, block)
           onDelta({ content: delta.text })
         } else if (delta.type === 'thinking_delta' && typeof delta.thinking === 'string') {
-          // 扩展思考默认未启用，仅当中转站或模型返回时透传。
           fullReasoning += delta.thinking
+          const block = nativeBlocks.get(index) ?? { type: 'thinking', thinking: '' }
+          block.thinking = `${typeof block.thinking === 'string' ? block.thinking : ''}${delta.thinking}`
+          nativeBlocks.set(index, block)
           onDelta({ reasoningContent: delta.thinking })
+        } else if (delta.type === 'signature_delta' && typeof delta.signature === 'string') {
+          // signature 必须与 thinking 块一起回放，否则 Anthropic 会拒绝后续工具轮次。
+          const block = nativeBlocks.get(index) ?? { type: 'thinking', thinking: '' }
+          block.signature = `${typeof block.signature === 'string' ? block.signature : ''}${delta.signature}`
+          nativeBlocks.set(index, block)
         } else if (delta.type === 'input_json_delta' && typeof delta.partial_json === 'string') {
-          const accumulator = blocks.get(index)
+          const accumulator = toolBlocks.get(index)
           if (accumulator) accumulator.args += delta.partial_json
           if (accumulator) {
             onDelta({
@@ -677,14 +920,23 @@ async function parseAnthropicSse(
             })
           }
         }
+      } else if (type === 'message_start') {
+        const message = event.message as Record<string, unknown> | undefined
+        const initialUsage = message?.usage
+        if (initialUsage && typeof initialUsage === 'object') {
+          Object.assign(usageSource, initialUsage)
+          usage = normalizeAiTokenUsage(usageSource)
+          if (usage) onDelta({ usage })
+        }
       } else if (type === 'message_delta') {
         const messageDelta = event.delta as Record<string, unknown> | undefined
         if (typeof messageDelta?.stop_reason === 'string') finishReason = messageDelta.stop_reason
-        usage = normalizeAiTokenUsage(event.usage)
+        if (event.usage && typeof event.usage === 'object') Object.assign(usageSource, event.usage)
+        usage = normalizeAiTokenUsage(usageSource)
         if (usage) onDelta({ usage })
       } else if (type === 'content_block_stop') {
         const index = event.index as number
-        const accumulator = blocks.get(index)
+        const accumulator = toolBlocks.get(index)
         if (accumulator) {
           // 工具调用参数为累积的 JSON 片段，解析失败时回退为空对象。
           let input: unknown
@@ -693,15 +945,14 @@ async function parseAnthropicSse(
           } catch {
             input = {}
           }
-          toolCalls.push({
+          const block = nativeBlocks.get(index) ?? {
+            type: 'tool_use',
             id: accumulator.id,
-            type: 'function',
-            function: {
-              name: accumulator.name,
-              arguments: typeof input === 'string' ? input : JSON.stringify(input)
-            }
-          })
-          blocks.delete(index)
+            name: accumulator.name
+          }
+          block.input = input
+          nativeBlocks.set(index, block)
+          toolBlocks.delete(index)
         }
       } else if (type === 'error') {
         const error = event.error as Record<string, unknown> | undefined
@@ -712,11 +963,16 @@ async function parseAnthropicSse(
     }
   }
 
+  const nativeContent = Array.from(nativeBlocks.entries())
+    .sort(([left], [right]) => left - right)
+    .map(([, block]) => block)
+  const turn = fromAnthropicContent(nativeContent, context)
   return {
-    content: fullContent,
-    reasoningContent: fullReasoning || undefined,
-    toolCalls,
-    finishReason: finishReason || (toolCalls.length ? 'tool_use' : 'end_turn'),
+    ...turn,
+    // 兼容缺少 content_block_start 的中转站，以已流式投递的文本作为最终兜底。
+    content: turn.content || fullContent,
+    reasoningContent: turn.reasoningContent || fullReasoning || undefined,
+    finishReason: finishReason || (turn.toolCalls.length ? 'tool_use' : 'end_turn'),
     usage
   }
 }

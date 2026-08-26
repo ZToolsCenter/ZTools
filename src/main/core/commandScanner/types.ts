@@ -6,6 +6,12 @@ export interface Command {
   acronym?: string // 英文首字母缩写（用于搜索）
 }
 
+export interface ApplicationScanResult {
+  apps: Command[]
+  complete: boolean
+  errors: string[]
+}
+
 export interface AppScanner {
-  scanApplications(): Promise<Command[]>
+  scanApplications(): Promise<ApplicationScanResult>
 }

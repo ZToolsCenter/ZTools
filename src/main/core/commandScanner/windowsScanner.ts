@@ -1,8 +1,9 @@
 import { extractAcronym } from '../../utils/common'
-import { getWindowsRootScanPaths, getWindowsScanPaths } from '../../utils/systemPaths'
+import { getWindowsFlatScanPaths, getWindowsRecursiveScanPaths } from '../../utils/systemPaths'
 import { toZToolsIconUrl } from '../../common/iconUtils'
 import { WindowsShortcutScanner, type WindowsShortcutInfo } from '../native/index'
-import type { Command } from './types'
+import type { ApplicationScanResult, Command } from './types'
+import { pLimit } from './utils'
 
 // ========== 配置 ==========
 
@@ -28,6 +29,17 @@ export const SKIP_NAME_PATTERN =
 
 // ========== 辅助函数 ==========
 
+interface WindowsScanSource {
+  path: string
+  recursive: boolean
+}
+
+interface WindowsScanSourceResult {
+  source: WindowsScanSource
+  entries: WindowsShortcutInfo[]
+  error?: unknown
+}
+
 /**
  * Windows 扫描实现说明：
  *
@@ -41,10 +53,10 @@ export const SKIP_NAME_PATTERN =
  *   跳过普通网页链接（http/https），保留其他应用协议（如 steam://）。
  * - 处理单个快捷方式 entry（.url / .lnk）：解析、过滤、入列。
  *   递归与扁平扫描共用，仅处理文件 entry；目录的下钻 / 跳过由原生模块决定。
- * - 递归扫描目录中的快捷方式（Programs 子树 / 桌面）。
+ * - 从 Start Menu 根目录递归扫描全部子树。
  *   处理子目录时跳过 SDK、示例、文档等开发相关文件夹。
- * - 扁平扫描 Start Menu 根。
- *   仅处理本层文件，不下钻 Programs 子目录，避免重复索引。
+ * - 扁平扫描用户桌面和公共桌面。
+ *   仅处理本层文件，避免遍历桌面中的大型工程目录。
  *
  * TS 层保留最终的名称过滤、图标协议封装、首字母缩写和去重，避免业务侧行为变化。
  */
@@ -93,6 +105,43 @@ function toCommand(entry: WindowsShortcutInfo): (Command & { _dedupeTarget?: str
 }
 
 /**
+ * 将未知异常转换为可持久记录的错误文本。
+ *
+ * @param error 捕获到的任意异常值。
+ * @returns 适合日志和扫描结果的错误文本。
+ */
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+/**
+ * 在独立 runner 中扫描单个 Windows 来源，限制失败只影响该来源。
+ *
+ * @param source 扫描路径及是否递归的配置。
+ * @returns 当前来源扫描出的原生快捷方式条目。
+ * @throws runner 启动失败、native 异常、进程退出或超时时抛出。
+ */
+async function scanSource(source: WindowsScanSource): Promise<WindowsShortcutInfo[]> {
+  const recursivePaths = source.recursive ? [source.path] : []
+  const flatPaths = source.recursive ? [] : [source.path]
+  return WindowsShortcutScanner.scan(recursivePaths, flatPaths, SKIP_FOLDERS)
+}
+
+/**
+ * 扫描单个来源并把失败转换为结构化结果，避免并发池提前终止。
+ *
+ * @param source 扫描路径及递归配置。
+ * @returns 当前来源的条目或失败原因。
+ */
+async function scanSourceSafely(source: WindowsScanSource): Promise<WindowsScanSourceResult> {
+  try {
+    return { source, entries: await scanSource(source) }
+  } catch (error) {
+    return { source, entries: [], error }
+  }
+}
+
+/**
  * 去重：按名称+目标路径的组合去重（允许不同名但同目标的应用共存）
  * 对于 .lnk 快捷方式，使用 _dedupeTarget（目标路径）而非 .lnk 路径去重
  * 这样同名同目标但位于不同目录（用户/系统开始菜单）的快捷方式只保留一个
@@ -115,21 +164,45 @@ export function deduplicateCommands(apps: (Command & { _dedupeTarget?: string })
 /**
  * 扫描 Windows 快捷方式并转换为去重后的应用命令。
  *
- * @returns 扫描完成后的应用命令；native 扫描失败时返回空数组。
+ * @returns 扫描出的应用、完整性标记和失败来源摘要。
  */
-export async function scanApplications(): Promise<Command[]> {
+export async function scanApplications(): Promise<ApplicationScanResult> {
   try {
-    // 获取 Windows 扫描路径（开始菜单 + 桌面）
-    const scanPaths = getWindowsScanPaths()
-    // 获取 Start Menu 根路径
-    const rootScanPaths = getWindowsRootScanPaths()
+    // 每个来源使用独立 runner，单个目录超时或崩溃时仍保留其他来源结果。
+    const sources: WindowsScanSource[] = [
+      ...getWindowsRecursiveScanPaths().map((path) => ({ path, recursive: true })),
+      ...getWindowsFlatScanPaths().map((path) => ({ path, recursive: false }))
+    ]
+    const sourceResults = await pLimit(
+      sources.map((source) => () => scanSourceSafely(source)),
+      2
+    )
+    const nativeEntries: WindowsShortcutInfo[] = []
+    const errors: string[] = []
 
-    // 原生模块负责递归扫描 Programs + 桌面，并扁平扫描 Start Menu 根
-    // 同时在原生模块中处理 desktop.ini 本地化名称、MUI 资源、.url 和 .lnk
-    const nativeEntries = await WindowsShortcutScanner.scan(scanPaths, rootScanPaths, SKIP_FOLDERS)
-    const apps = nativeEntries
-      .map((entry) => toCommand(entry))
-      .filter((entry): entry is Command & { _dedupeTarget?: string } => entry !== null)
+    // 汇总成功来源；失败来源只记录诊断，不丢弃其他 runner 的结果。
+    sourceResults.forEach((result) => {
+      if (!result.error) {
+        nativeEntries.push(...result.entries)
+        return
+      }
+
+      const { source } = result
+      const message = `${source.recursive ? 'recursive' : 'flat'}:${source.path}: ${getErrorMessage(result.error)}`
+      errors.push(message)
+      console.error(`[Scanner] Windows 来源扫描失败，已跳过 ${source.path}:`, result.error)
+    })
+
+    const apps: (Command & { _dedupeTarget?: string })[] = []
+    for (const entry of nativeEntries) {
+      try {
+        // 业务字段转换失败只跳过当前快捷方式，不影响其他已解析条目。
+        const command = toCommand(entry)
+        if (command) apps.push(command)
+      } catch (error) {
+        console.error(`[Scanner] Windows 快捷方式转换失败，已跳过 ${entry.path}:`, error)
+      }
+    }
 
     const deduplicatedApps = deduplicateCommands(apps)
 
@@ -137,9 +210,13 @@ export async function scanApplications(): Promise<Command[]> {
       `[Scanner] native 扫描完成: ${nativeEntries.length} 个条目 -> ${deduplicatedApps.length} 个应用`
     )
 
-    return deduplicatedApps
+    return {
+      apps: deduplicatedApps,
+      complete: errors.length === 0,
+      errors
+    }
   } catch (error) {
     console.error('[Scanner] native Windows 应用扫描失败:', error)
-    return []
+    return { apps: [], complete: false, errors: [getErrorMessage(error)] }
   }
 }

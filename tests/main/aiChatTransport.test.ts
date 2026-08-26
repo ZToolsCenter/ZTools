@@ -1,12 +1,44 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   normalizeAiChatFailure,
+  normalizeAiTokenUsage,
   resolveAiReasoningPolicy,
   streamSingleAiProtocolChat,
   type AiChatEvent
 } from '../../src/main/core/aiChatTransport'
 
 describe('aiChatTransport', () => {
+  it('normalizes cache and reasoning token details across provider protocols', () => {
+    expect(
+      normalizeAiTokenUsage({
+        input_tokens: 20,
+        output_tokens: 8,
+        input_tokens_details: { cached_tokens: 5 },
+        output_tokens_details: { reasoning_tokens: 3 }
+      })
+    ).toEqual({
+      prompt_tokens: 20,
+      completion_tokens: 8,
+      total_tokens: 28,
+      cache_read_tokens: 5,
+      reasoning_tokens: 3
+    })
+    expect(
+      normalizeAiTokenUsage({
+        input_tokens: 12,
+        output_tokens: 4,
+        cache_read_input_tokens: 6,
+        cache_creation_input_tokens: 2
+      })
+    ).toEqual({
+      prompt_tokens: 12,
+      completion_tokens: 4,
+      total_tokens: 16,
+      cache_read_tokens: 6,
+      cache_write_tokens: 2
+    })
+  })
+
   it('maps provider reasoning protocols and structured server errors', () => {
     expect(
       resolveAiReasoningPolicy(

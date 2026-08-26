@@ -800,7 +800,8 @@ export class PluginsAPI {
   /**
    * 删除插件
    * @param pluginPath 插件路径
-   * @param options 删除选项 当 options.deleteData 显式设置为 false 时，保留插件数据
+   * @param options 删除选项 当 options.deleteData 显式设置为 false 时，保留 LMDB 数据、插件专属数据目录
+   * 与各插件名配置；默认或为 true 时一并清除。
    * @returns 删除结果
    */
   public async deletePlugin(pluginPath: string, options: DeletePluginOptions = {}): Promise<any> {

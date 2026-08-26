@@ -1,24 +1,20 @@
 <script setup lang="ts">
 import defaultAvatar from '@/assets/image/default.png'
 import { BaseDialog, useToast } from '@/components'
+import { useAccountProfile } from '@/composables'
 import { notifyAccountChanged } from '@/composables/useZToolsAccount'
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
-interface AccountProfileCache {
-  uid: string
-  nickname?: string
-  avatarUrl?: string
-  updatedAt: number
-}
-
 const router = useRouter()
 const { success, error, warning, confirm } = useToast()
+const {
+  state: accountProfile,
+  refresh: refreshAccountProfile,
+  update: updateAccountProfile,
+  clear: clearAccountProfile
+} = useAccountProfile()
 
-const username = ref('')
-const nickname = ref('')
-const avatar = ref(defaultAvatar)
-const loadingProfile = ref(true)
 const loadingStats = ref(false)
 const editingNickname = ref(false)
 const nicknameInput = ref('')
@@ -36,128 +32,32 @@ const stats = ref<{
   monthlyTraffic: number
 } | null>(null)
 
-const displayName = computed(() => nickname.value || username.value || 'ZTools 用户')
+const username = computed(() => accountProfile.uid)
+const nickname = computed(() => accountProfile.nickname)
+const avatar = computed(() => accountProfile.avatarUrl || defaultAvatar)
+const loadingProfile = computed(() => accountProfile.loading)
+const displayName = computed(() => accountProfile.nickname || accountProfile.uid || 'ZTools 用户')
 
 onMounted(() => {
   void loadAccount()
 })
 
 /**
- * 生成指定账号的本地资料缓存键。
- * @param uid 账号唯一标识
- * @returns 本地数据库缓存键
- */
-function profileCacheKey(uid: string): string {
-  return `account-profile-cache:${uid}`
-}
-
-/**
- * 读取指定账号的本地资料缓存。
- * @param uid 账号唯一标识
- * @returns 账号资料缓存；不存在或读取失败时返回 null
- */
-async function readCachedProfile(uid: string): Promise<AccountProfileCache | null> {
-  if (!uid) return null
-
-  try {
-    const cached = await window.ztools.internal.dbGet(profileCacheKey(uid))
-    if (!cached || typeof cached !== 'object') return null
-
-    return {
-      uid: typeof cached.uid === 'string' ? cached.uid : uid,
-      nickname: typeof cached.nickname === 'string' ? cached.nickname : '',
-      avatarUrl: typeof cached.avatarUrl === 'string' ? cached.avatarUrl : '',
-      updatedAt: Number(cached.updatedAt || 0)
-    }
-  } catch {
-    return null
-  }
-}
-
-/**
- * 持久化账号资料缓存，供侧边栏和个人中心快速展示。
- * @param profile 要写入的账号资料
- * @returns 缓存写入完成后结束的 Promise
- */
-async function writeCachedProfile(profile: AccountProfileCache): Promise<void> {
-  if (!profile.uid) return
-
-  try {
-    await window.ztools.internal.dbPut(profileCacheKey(profile.uid), {
-      uid: profile.uid,
-      nickname: profile.nickname || '',
-      avatarUrl: profile.avatarUrl || '',
-      updatedAt: profile.updatedAt || Date.now()
-    })
-  } catch {
-    // 本地缓存失败不阻断资料更新和账号操作。
-  }
-}
-
-/**
- * 将账号资料应用到当前页面状态。
- * @param profile 要展示的账号资料
- * @param fallbackUid 资料缺少账号标识时使用的兜底值
- * @returns 无返回值
- */
-function applyProfile(profile: AccountProfileCache | null, fallbackUid: string): void {
-  username.value = profile?.uid || fallbackUid
-  nickname.value = profile?.nickname || ''
-  avatar.value = profile?.avatarUrl || defaultAvatar
-}
-
-/**
  * 校验登录状态并加载个人中心所需资料。
  * @returns 资料加载完成后结束的 Promise
  */
 async function loadAccount(): Promise<void> {
-  loadingProfile.value = true
-
   try {
-    const result = await window.ztools.internal.accountGetSession()
-    const session = result.success ? result.session : null
-    const uid = session?.username || ''
-    const isLoggedIn = Boolean(session?.token && uid)
-    if (!isLoggedIn) {
+    // 个人中心进入时强制读取服务端，确保跨设备修改立即覆盖本机缓存。
+    await refreshAccountProfile({ force: true })
+    if (!accountProfile.loggedIn) {
       await router.replace({ name: 'GeneralSetting' })
       return
     }
-
-    // 先使用本地缓存完成首屏，再并行刷新远端资料和统计数据。
-    const cachedProfile = await readCachedProfile(uid)
-    applyProfile(cachedProfile, uid)
-    await Promise.allSettled([refreshProfile(uid), loadCloudStats()])
+    await loadCloudStats()
   } catch (err: unknown) {
     console.error('加载个人中心失败:', err)
     error('加载个人中心失败')
-  } finally {
-    loadingProfile.value = false
-  }
-}
-
-/**
- * 从服务端刷新账号资料并更新本地缓存。
- * @param expectedUid 当前页面预期加载的账号标识
- * @returns 资料刷新完成后结束的 Promise
- */
-async function refreshProfile(expectedUid: string): Promise<void> {
-  try {
-    const result = await window.ztools.internal.syncGetAccountProfile()
-    if (!result.success || !result.profile) return
-
-    const profile = {
-      uid: result.profile.uid || expectedUid,
-      nickname: result.profile.nickname || '',
-      avatarUrl: result.profile.avatarUrl || '',
-      updatedAt: Date.now()
-    }
-    if (profile.uid !== expectedUid) return
-
-    // 仅应用当前账号的返回结果，避免账号切换期间写入错位资料。
-    applyProfile(profile, expectedUid)
-    await writeCachedProfile(profile)
-  } catch {
-    // 远端刷新失败时继续使用本地缓存，个人中心仍保持可用。
   }
 }
 
@@ -204,16 +104,16 @@ async function changeAvatar(): Promise<void> {
     return
   }
 
-  // 上传成功后同步当前页面、本地缓存和侧边栏账号信息。
-  const profile = {
-    uid: uploaded.profile.uid || username.value,
-    nickname: uploaded.profile.nickname || nickname.value,
-    avatarUrl: uploaded.profile.avatarUrl || '',
-    updatedAt: Date.now()
-  }
-  applyProfile(profile, username.value)
-  await writeCachedProfile(profile)
-  notifyAccountChanged()
+  // 上传成功后写入共享状态，侧边栏与个人中心在同一轮渲染中更新。
+  await updateAccountProfile(
+    {
+      uid: uploaded.profile.uid || username.value,
+      nickname: uploaded.profile.nickname || nickname.value,
+      avatarUrl: uploaded.profile.avatarUrl || '',
+      updatedAt: Date.now()
+    },
+    username.value
+  )
   success('账号头像已更新')
 }
 
@@ -226,6 +126,7 @@ async function logout(): Promise<void> {
     const result = await window.ztools.internal.accountLogout()
     if (!result.success) throw new Error(result.error || '退出登录失败')
 
+    clearAccountProfile()
     notifyAccountChanged()
     success('已退出登录')
     await router.replace({ name: 'GeneralSetting' })
@@ -252,7 +153,8 @@ async function deleteAccount(): Promise<void> {
     const result = await window.ztools.internal.accountDelete()
     if (!result.success) throw new Error(result.error || '删除账号失败')
 
-    // 主进程已完成服务端删除与本地会话清理，这里只刷新界面登录态。
+    // 主进程已完成服务端删除与本地会话清理，立即清空共享资料状态。
+    clearAccountProfile()
     notifyAccountChanged()
     success('账号已删除')
     await router.replace({ name: 'GeneralSetting' })
@@ -323,6 +225,7 @@ async function changePassword(): Promise<void> {
     currentPassword.value = ''
     newPassword.value = ''
     confirmPassword.value = ''
+    clearAccountProfile()
     notifyAccountChanged()
     success('密码已修改，请使用新密码重新登录')
     await router.replace({ name: 'GeneralSetting' })
@@ -384,17 +287,17 @@ async function saveNickname(): Promise<void> {
       return
     }
 
-    // 保存服务端最终资料，并通知侧边栏更新展示名称。
-    const profile = {
-      uid: result.profile.uid || username.value,
-      nickname: result.profile.nickname || newNickname,
-      avatarUrl: result.profile.avatarUrl || avatar.value,
-      updatedAt: Date.now()
-    }
-    applyProfile(profile, username.value)
-    await writeCachedProfile(profile)
+    // 保存服务端最终资料，共享状态会直接驱动侧边栏更新展示名称。
+    await updateAccountProfile(
+      {
+        uid: result.profile.uid || username.value,
+        nickname: result.profile.nickname || newNickname,
+        avatarUrl: result.profile.avatarUrl || accountProfile.avatarUrl,
+        updatedAt: Date.now()
+      },
+      username.value
+    )
     editingNickname.value = false
-    notifyAccountChanged()
     success('昵称已更新')
   } catch (err: unknown) {
     error(err instanceof Error ? err.message : '更新昵称失败')

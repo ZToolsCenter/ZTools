@@ -266,9 +266,22 @@ function setReasoningCapabilityMode(modelId: string, mode: ReasoningCapabilityMo
     config.reasoning = {
       protocol: 'auto',
       efforts: { high: 'high' },
+      defaultEffort: 'high',
       responseField: 'auto'
     }
   }
+}
+
+/**
+ * 获取模型当前启用的推理强度，并保持标准档位顺序。
+ * @param modelId 正在编辑的远端模型 ID
+ * @returns 当前模型已启用的推理强度
+ */
+function supportedReasoningEfforts(modelId: string): AiReasoningEffort[] {
+  const efforts = reasoningConfig(modelId)?.efforts || {}
+  return AI_REASONING_EFFORTS.filter((effort) =>
+    Object.prototype.hasOwnProperty.call(efforts, effort)
+  )
 }
 
 /**
@@ -296,18 +309,13 @@ function setReasoningResponseField(modelId: string, responseField: AiReasoningRe
 /**
  * 更新模型未被调用方覆盖时使用的推理档位。
  * @param modelId 正在编辑的远端模型 ID
- * @param effort 默认档位；空字符串表示供应商默认
+ * @param effort 默认推理档位
  * @returns 无返回值
  */
-function setDefaultReasoningEffort(modelId: string, effort: string): void {
+function setDefaultReasoningEffort(modelId: string, effort: AiReasoningEffort): void {
   const reasoning = reasoningConfig(modelId)
-  if (!reasoning) return
-  if (!effort) {
-    delete reasoning.defaultEffort
-    return
-  }
-  if (Object.prototype.hasOwnProperty.call(reasoning.efforts, effort)) {
-    reasoning.defaultEffort = effort as AiReasoningEffort
+  if (reasoning && Object.prototype.hasOwnProperty.call(reasoning.efforts, effort)) {
+    reasoning.defaultEffort = effort
   }
 }
 
@@ -331,7 +339,14 @@ function toggleSupportedReasoningEffort(
   if (enabled) efforts[effort] = effort === 'off' ? null : effort
   else delete efforts[effort]
   reasoning.efforts = efforts
-  if (!enabled && reasoning.defaultEffort === effort) delete reasoning.defaultEffort
+  if (!enabled && reasoning.defaultEffort === effort) {
+    // 当前默认档位被移除后，自动切换到剩余的第一个标准档位。
+    const fallbackEffort = AI_REASONING_EFFORTS.find((item) =>
+      Object.prototype.hasOwnProperty.call(efforts, item)
+    )
+    if (fallbackEffort) reasoning.defaultEffort = fallbackEffort
+    else delete reasoning.defaultEffort
+  }
 }
 
 /**
@@ -373,10 +388,10 @@ function validateReasoningConfigs(): string {
         return `模型 ${modelId} 的“${reasoningEffortLabels[effort as AiReasoningEffort]}”缺少供应商协议值`
       }
     }
-    if (
-      reasoning.defaultEffort &&
-      !Object.prototype.hasOwnProperty.call(reasoning.efforts, reasoning.defaultEffort)
-    ) {
+    if (!reasoning.defaultEffort) {
+      return `模型 ${modelId} 需要选择一个默认推理强度`
+    }
+    if (!Object.prototype.hasOwnProperty.call(reasoning.efforts, reasoning.defaultEffort)) {
       return `模型 ${modelId} 的默认推理强度不在支持列表中`
     }
   }
@@ -619,22 +634,16 @@ function handleSave(): void {
                     <span>默认强度</span>
                     <select
                       class="input"
-                      :value="reasoningConfig(modelId)?.defaultEffort || ''"
+                      :value="reasoningConfig(modelId)?.defaultEffort"
                       @change="
                         setDefaultReasoningEffort(
                           modelId,
-                          ($event.target as HTMLSelectElement).value
+                          ($event.target as HTMLSelectElement).value as AiReasoningEffort
                         )
                       "
                     >
-                      <option value="">供应商默认</option>
                       <option
-                        v-for="effort in AI_REASONING_EFFORTS.filter((item) =>
-                          Object.prototype.hasOwnProperty.call(
-                            reasoningConfig(modelId)?.efforts || {},
-                            item
-                          )
-                        )"
+                        v-for="effort in supportedReasoningEfforts(modelId)"
                         :key="effort"
                         :value="effort"
                       >

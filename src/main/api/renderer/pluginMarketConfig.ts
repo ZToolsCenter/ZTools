@@ -5,9 +5,10 @@ import {
 } from '../../core/account/officialAccountService'
 import type { HttpRequestOptions, HttpResponse } from '../../utils/httpRequest'
 import { httpRequest } from '../../utils/httpRequest.js'
+import { OFFICIAL_SYNC_SERVER_URL } from '../../../shared/syncServerUrl'
 
-export const DEFAULT_PLUGIN_MARKET_API_BASE = 'https://z-tools.top/api/market'
-export const DEFAULT_SYNC_SERVER_URL = 'wss://z-tools.top'
+export const DEFAULT_SYNC_SERVER_URL = OFFICIAL_SYNC_SERVER_URL
+export const DEFAULT_PLUGIN_MARKET_API_BASE = `${OFFICIAL_SYNC_SERVER_URL.replace(/^wss:/, 'https:')}/api/market`
 
 export class PluginMarketAuthRequiredError extends Error {
   constructor(message = '需要登录后操作') {

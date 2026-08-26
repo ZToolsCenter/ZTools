@@ -41,13 +41,58 @@ afterEach(() => {
 })
 
 describe('aiProtocol adapters', () => {
+  it('rejects forced Anthropic tool choice while extended thinking is enabled', async () => {
+    const adapter = createAdapter(createProvider('anthropic-messages'))
+
+    await expect(
+      adapter.stream(
+        {
+          model: 'claude-test',
+          messages: [{ role: 'user', content: '测试' }],
+          tools: [
+            {
+              type: 'function',
+              function: {
+                name: 'lookup',
+                description: '查询',
+                parameters: { type: 'object', properties: {} }
+              }
+            }
+          ],
+          toolChoice: 'required',
+          modelReasoning: {
+            protocol: 'passthrough',
+            efforts: { high: 'high' },
+            responseField: 'auto'
+          },
+          reasoningEffort: 'high'
+        },
+        new AbortController().signal,
+        () => undefined
+      )
+    ).rejects.toMatchObject({
+      normalizedCode: 'INVALID_REQUEST',
+      message: expect.stringContaining('不支持 required toolChoice')
+    })
+  })
+
   it('streams Anthropic messages with native auth and normalized generation options', async () => {
     const fetchMock = vi.fn(async () =>
       createSseResponse([
         {
+          type: 'content_block_start',
+          index: 0,
+          content_block: { type: 'thinking', thinking: '' }
+        },
+        {
           type: 'content_block_delta',
           index: 0,
           delta: { type: 'thinking_delta', thinking: '分析' }
+        },
+        {
+          type: 'content_block_delta',
+          index: 0,
+          delta: { type: 'signature_delta', signature: 'signed-thinking' }
         },
         {
           type: 'content_block_delta',
@@ -86,9 +131,15 @@ describe('aiProtocol adapters', () => {
             }
           }
         ],
-        toolChoice: 'required',
+        toolChoice: 'auto',
         temperature: 1.8,
-        maxTokens: 4096
+        maxTokens: 4096,
+        modelReasoning: {
+          protocol: 'passthrough',
+          efforts: { high: 'high' },
+          responseField: 'auto'
+        },
+        reasoningEffort: 'high'
       },
       new AbortController().signal,
       (event) => events.push(event)
@@ -102,11 +153,12 @@ describe('aiProtocol adapters', () => {
     })
     expect(JSON.parse(String(init?.body))).toMatchObject({
       model: 'claude-test',
-      temperature: 1,
       max_tokens: 4096,
       stream: true,
-      tool_choice: { type: 'any' }
+      tool_choice: { type: 'auto' },
+      thinking: { type: 'enabled', budget_tokens: 3072 }
     })
+    expect(JSON.parse(String(init?.body))).not.toHaveProperty('temperature')
     expect(events.map((event) => event.type)).toEqual([
       'reasoning',
       'reasoning_end',
@@ -117,15 +169,45 @@ describe('aiProtocol adapters', () => {
       content: '答案',
       reasoning_content: '分析',
       finish_reason: 'tool_calls',
-      tool_calls: [{ id: 'call-a', function: { name: 'lookup', arguments: '{"id":1}' } }]
+      tool_calls: [{ id: 'call-a', function: { name: 'lookup', arguments: '{"id":1}' } }],
+      replay_state: {
+        apiFormat: 'anthropic-messages',
+        blocks: expect.arrayContaining([
+          {
+            type: 'thinking',
+            item: {
+              type: 'thinking',
+              thinking: '分析',
+              signature: 'signed-thinking'
+            }
+          }
+        ])
+      }
     })
   })
 
   it('streams OpenAI Responses output and sends Responses generation fields', async () => {
     const fetchMock = vi.fn(async () =>
       createSseResponse([
-        { type: 'response.reasoning_text.delta', delta: '分析' },
-        { type: 'response.output_text.delta', delta: '答案' },
+        { type: 'response.reasoning_text.delta', output_index: 0, delta: '分析' },
+        { type: 'response.output_text.delta', output_index: 1, delta: '答案' },
+        {
+          type: 'response.output_item.added',
+          output_index: 2,
+          item: {
+            id: 'function-item-r',
+            type: 'function_call',
+            call_id: 'call-r',
+            name: 'lookup',
+            arguments: ''
+          }
+        },
+        {
+          type: 'response.function_call_arguments.delta',
+          output_index: 2,
+          item_id: 'function-item-r',
+          delta: '{"id":2}'
+        },
         {
           type: 'response.completed',
           response: {
@@ -163,7 +245,13 @@ describe('aiProtocol adapters', () => {
         ],
         toolChoice: 'required',
         temperature: 0.8,
-        maxTokens: 3072
+        maxTokens: 3072,
+        modelReasoning: {
+          protocol: 'openai-compatible',
+          efforts: { high: 'high' },
+          responseField: 'auto'
+        },
+        reasoningEffort: 'high'
       },
       new AbortController().signal,
       (event) => events.push(event)
@@ -179,7 +267,9 @@ describe('aiProtocol adapters', () => {
       temperature: 0.8,
       max_output_tokens: 3072,
       stream: true,
-      tool_choice: 'required'
+      tool_choice: 'required',
+      reasoning: { effort: 'high', summary: 'auto' },
+      include: ['reasoning.encrypted_content']
     })
     expect(events.map((event) => event.type)).toEqual([
       'reasoning',
@@ -187,11 +277,19 @@ describe('aiProtocol adapters', () => {
       'content',
       'tool_call'
     ])
+    expect(events.at(-1)).toMatchObject({
+      type: 'tool_call',
+      index: 0,
+      id: 'call-r',
+      name: 'lookup',
+      argumentsDelta: '{"id":2}'
+    })
     expect(result).toMatchObject({
       content: '答案',
       reasoning_content: '分析',
       finish_reason: 'tool_calls',
-      tool_calls: [{ id: 'call-r', function: { name: 'lookup', arguments: '{"id":2}' } }]
+      tool_calls: [{ id: 'call-r', function: { name: 'lookup', arguments: '{"id":2}' } }],
+      replay_state: { apiFormat: 'openai-responses' }
     })
   })
 
@@ -306,7 +404,105 @@ describe('aiProtocol adapters', () => {
       reasoning_content: '分析',
       finish_reason: 'tool_calls',
       usage: { prompt_tokens: 10, completion_tokens: 7, total_tokens: 17 },
-      tool_calls: [{ id: 'call-chat', function: { name: 'lookup', arguments: '{"id":1}' } }]
+      tool_calls: [{ id: 'call-chat', function: { name: 'lookup', arguments: '{"id":1}' } }],
+      replay_state: {
+        apiFormat: 'openai-chat',
+        blocks: [
+          {
+            type: 'reasoning',
+            field: 'reasoning_content',
+            value: '分析'
+          }
+        ]
+      }
     })
+  })
+
+  it('replays the original Chat reasoning field during a tool-call second round', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        createSseResponse([
+          {
+            id: 'chat-replay-1',
+            object: 'chat.completion.chunk',
+            choices: [
+              {
+                index: 0,
+                delta: {
+                  reasoning_details: [{ type: 'reasoning.text', text: 'private reasoning' }],
+                  tool_calls: [
+                    {
+                      index: 0,
+                      id: 'call-replay',
+                      type: 'function',
+                      function: { name: 'lookup', arguments: '{}' }
+                    }
+                  ]
+                },
+                finish_reason: 'tool_calls'
+              }
+            ]
+          }
+        ])
+      )
+      .mockResolvedValueOnce(
+        createSseResponse([
+          {
+            id: 'chat-replay-2',
+            object: 'chat.completion.chunk',
+            choices: [{ index: 0, delta: { content: 'done' }, finish_reason: 'stop' }]
+          }
+        ])
+      )
+    vi.stubGlobal('fetch', fetchMock)
+    const provider = createProvider('openai-chat')
+    const adapter = createAdapter(provider)
+    const modelReasoning = {
+      protocol: 'passthrough' as const,
+      efforts: { high: 'high' },
+      responseField: 'reasoning_details' as const
+    }
+    const first = await streamSingleAiProtocolChat(
+      adapter,
+      'chat-replay-model',
+      {
+        messages: [{ role: 'user', content: 'run' }],
+        modelReasoning,
+        reasoningEffort: 'high'
+      },
+      new AbortController().signal,
+      () => undefined
+    )
+
+    await streamSingleAiProtocolChat(
+      adapter,
+      'chat-replay-model',
+      {
+        messages: [
+          { role: 'user', content: 'run' },
+          {
+            role: 'assistant',
+            content: first.content ?? '',
+            reasoning_content: first.reasoning_content ?? undefined,
+            tool_calls: first.tool_calls,
+            replay_state: first.replay_state
+          },
+          { role: 'tool', content: 'tool result', tool_call_id: 'call-replay' }
+        ],
+        modelReasoning,
+        reasoningEffort: 'high'
+      },
+      new AbortController().signal,
+      () => undefined
+    )
+
+    const secondBody = JSON.parse(String(fetchMock.mock.calls[1][1]?.body))
+    expect(secondBody.messages[1]).toMatchObject({
+      role: 'assistant',
+      reasoning_details: [{ type: 'reasoning.text', text: 'private reasoning' }],
+      tool_calls: [{ id: 'call-replay' }]
+    })
+    expect(secondBody.messages[1]).not.toHaveProperty('reasoning_content')
   })
 })

@@ -36,18 +36,45 @@ vi.mock('electron', () => ({
 
 // notifyChange -> appsAPI.refreshAppsCache；mock 避免加载重量级 commands.ts（LMDB 等依赖）
 vi.mock('../../src/main/api/renderer/commands', () => ({
-  default: { refreshAppsCache: vi.fn() }
+  default: {
+    refreshAppsCache: vi.fn(),
+    refreshUwpAppsCache: vi.fn(),
+    refreshAppsCacheIfUwpPackagesChanged: vi.fn()
+  }
+}))
+
+const uwpMonitorMock = vi.hoisted(() => {
+  let callback: ((event: { type: string; packageFullName: string }) => void) | null = null
+  return {
+    start: vi.fn((nextCallback: typeof callback) => {
+      callback = nextCallback
+    }),
+    stop: vi.fn(),
+    emit: (event: { type: string; packageFullName: string }) => callback?.(event),
+    reset: () => {
+      callback = null
+    }
+  }
+})
+
+vi.mock('../../src/main/core/uwpPackageMonitor', () => ({
+  startUwpPackageMonitor: uwpMonitorMock.start,
+  stopUwpPackageMonitor: uwpMonitorMock.stop
 }))
 
 import chokidar from 'chokidar'
 import path from 'path'
 import appsAPI from '../../src/main/api/renderer/commands'
-import { getWindowsScanPaths, getWindowsRootScanPaths } from '../../src/main/utils/systemPaths'
+import {
+  getWindowsFlatScanPaths,
+  getWindowsRecursiveScanPaths
+} from '../../src/main/utils/systemPaths'
 import appWatcher from '../../src/main/appWatcher'
 
 let originalPlatform: string
 beforeEach(() => {
   vi.clearAllMocks()
+  uwpMonitorMock.reset()
   originalPlatform = process.platform
   // stub 为 win32：使 getRecursiveWatchPaths / getFlatRootWatchPaths 返回 Windows 路径，
   // 从而同时创建递归 watcher 与扁平根 watcher
@@ -72,8 +99,8 @@ describe('AppWatcher 双 watcher 接线', () => {
 
     expect(recursiveOpts?.depth).toBe(5)
     expect(flatOpts?.depth).toBe(0)
-    expect(recursivePaths).toEqual(getWindowsScanPaths())
-    expect(flatPaths).toEqual(getWindowsRootScanPaths())
+    expect(recursivePaths).toEqual(getWindowsRecursiveScanPaths())
+    expect(flatPaths).toEqual(getWindowsFlatScanPaths())
   })
 
   it('扁平根路径为空时（非 win32，如 darwin）不创建扁平 watcher', () => {
@@ -92,7 +119,7 @@ describe('AppWatcher 双 watcher 接线', () => {
     const flatWatcher = watchMock.mock.results[1].value as {
       __emit: (event: string, ...args: unknown[]) => void
     }
-    const rootPath = getWindowsRootScanPaths()[0]
+    const rootPath = getWindowsFlatScanPaths()[0]
     const lnkPath = path.join(rootPath, 'NewApp.lnk')
 
     // add 事件：防抖未到时不刷新
@@ -109,6 +136,46 @@ describe('AppWatcher 双 watcher 接线', () => {
     expect(appsAPI.refreshAppsCache).toHaveBeenCalledTimes(2)
   })
 
+  it('UWP 包变化完成事件经过防抖后刷新应用缓存', () => {
+    appWatcher.init({} as never)
+
+    expect(uwpMonitorMock.start).toHaveBeenCalledTimes(1)
+    expect(appsAPI.refreshAppsCacheIfUwpPackagesChanged).toHaveBeenCalledTimes(1)
+
+    // 同一次商店操作可能带来多个包完成事件，应合并成一次 UWP 独立刷新。
+    uwpMonitorMock.emit({
+      type: 'update',
+      packageFullName: 'HillsLite_2.0.0.0_x64__publisher'
+    })
+    uwpMonitorMock.emit({
+      type: 'install',
+      packageFullName: 'HillsLite.Resources_2.0.0.0_neutral__publisher'
+    })
+
+    expect(appsAPI.refreshUwpAppsCache).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(1000)
+    expect(appsAPI.refreshUwpAppsCache).toHaveBeenCalledTimes(1)
+    expect(appsAPI.refreshAppsCache).not.toHaveBeenCalled()
+  })
+
+  it('同一防抖窗口内快捷方式变化优先于 UWP 独立刷新', () => {
+    appWatcher.init({} as never)
+    const watchMock = vi.mocked(chokidar.watch)
+    const flatWatcher = watchMock.mock.results[1].value as {
+      __emit: (event: string, ...args: unknown[]) => void
+    }
+
+    flatWatcher.__emit('add', path.join(getWindowsFlatScanPaths()[0], 'NewApp.lnk'))
+    uwpMonitorMock.emit({
+      type: 'update',
+      packageFullName: 'Publisher.StoreApp_2.0.0.0_x64'
+    })
+    vi.advanceTimersByTime(1000)
+
+    expect(appsAPI.refreshAppsCache).toHaveBeenCalledTimes(1)
+    expect(appsAPI.refreshUwpAppsCache).not.toHaveBeenCalled()
+  })
+
   it('非 .lnk 文件事件不触发刷新', () => {
     appWatcher.init({} as never)
     const watchMock = vi.mocked(chokidar.watch)
@@ -116,7 +183,7 @@ describe('AppWatcher 双 watcher 接线', () => {
       __emit: (event: string, ...args: unknown[]) => void
     }
 
-    flatWatcher.__emit('add', path.join(getWindowsRootScanPaths()[0], 'notes.txt'))
+    flatWatcher.__emit('add', path.join(getWindowsFlatScanPaths()[0], 'notes.txt'))
     vi.advanceTimersByTime(1000)
     expect(appsAPI.refreshAppsCache).not.toHaveBeenCalled()
   })
@@ -131,5 +198,6 @@ describe('AppWatcher 双 watcher 接线', () => {
 
     expect(recursiveWatcher.close).toHaveBeenCalledTimes(1)
     expect(flatWatcher.close).toHaveBeenCalledTimes(1)
+    expect(uwpMonitorMock.stop).toHaveBeenCalledTimes(1)
   })
 })

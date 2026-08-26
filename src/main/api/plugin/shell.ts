@@ -1,6 +1,6 @@
 import { execFile } from 'child_process'
 import os from 'os'
-import { ipcMain, shell } from 'electron'
+import { app, ipcMain, shell } from 'electron'
 import { getFileIconAsBase64 } from '../../core/iconProtocol'
 import { WindowManager } from '../../core/native/index.js'
 import type ClipboardManager from '../../managers/clipboardManager'
@@ -103,6 +103,25 @@ export class PluginShellAPI {
           success: false,
           error: error instanceof Error ? error.message : '未知错误'
         }
+      }
+    })
+
+    // 拖动文件到外部
+    ipcMain.on('start-drag-file', async (event, filePath: string | string[]) => {
+      if (Array.isArray(filePath) && filePath.length === 0) {
+        console.warn('[PluginShell] 拖动文件到外部失败，文件路径为空')
+        return
+      }
+
+      try {
+        const item = Array.isArray(filePath)
+          ? { file: filePath[0], files: filePath }
+          : { file: filePath }
+        const icon = await app.getFileIcon(item.file, { size: 'normal' })
+
+        event.sender.startDrag({ ...item, icon })
+      } catch (error: unknown) {
+        console.error('[PluginShell] 拖动文件到外部失败:', filePath, error)
       }
     })
 

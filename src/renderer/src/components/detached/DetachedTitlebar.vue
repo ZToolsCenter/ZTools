@@ -1,5 +1,5 @@
 <template>
-  <div :class="['titlebar', platform]">
+  <div :class="['titlebar', platform, { 'is-compact': compactWindowHeader }]">
     <!-- macOS 不显示自定义交通灯，使用系统原生的 -->
 
     <!-- 插件图标和名称 -->
@@ -192,6 +192,7 @@ const acrylicDarkOpacity = ref(50) // 亚克力暗黑模式透明度（默认 50
 const aiRequestStatus = ref<AiRequestStatus>('idle') // AI 请求状态
 const primaryColor = ref('green')
 const customColor = ref('#db2777')
+const compactWindowHeader = ref(false)
 
 type PluginUpdateStatus = 'idle' | 'available' | 'upgrading' | 'error'
 
@@ -213,6 +214,7 @@ const pluginUpgradeProgress = ref<number | null>(null)
 const pluginUpgradeError = ref('')
 let pluginUpdateRequestSequence = 0
 let cleanupPluginUpdateProgressListener: (() => void) | null = null
+let cleanupCompactWindowHeaderListener: (() => void) | null = null
 
 const hasPluginUpdate = computed(
   () => pluginUpdateName.value === pluginId.value && pluginUpdateStatus.value !== 'idle'
@@ -428,6 +430,9 @@ onMounted(async () => {
   cleanupPluginUpdateProgressListener = window.ztools.pluginUpdates.onProgress(
     handlePluginUpgradeProgress
   )
+  cleanupCompactWindowHeaderListener = window.ztools.onUpdateCompactMainWindowHeader((enabled) => {
+    compactWindowHeader.value = enabled
+  })
 
   // 检测操作系统并添加类名
   const userAgent = navigator.userAgent.toLowerCase()
@@ -445,6 +450,7 @@ onMounted(async () => {
     if (settings) {
       acrylicLightOpacity.value = settings.acrylicLightOpacity ?? 78
       acrylicDarkOpacity.value = settings.acrylicDarkOpacity ?? 50
+      compactWindowHeader.value = settings.compactMainWindowHeader === true
       console.log('标题栏加载亚克力透明度:', {
         light: acrylicLightOpacity.value,
         dark: acrylicDarkOpacity.value
@@ -525,6 +531,7 @@ onMounted(async () => {
     pluginPath.value = data.pluginPath || ''
     pluginLogo.value = data.pluginLogo
     aiRequestStatus.value = data.aiRequestStatus || 'idle'
+    compactWindowHeader.value = data.compactWindowHeader === true
 
     // 初始化信息到达后再检查版本，确保请求携带真实插件名和路径。
     void checkCurrentPluginUpdate()
@@ -605,6 +612,8 @@ onUnmounted(() => {
   // 释放进度监听并让尚未返回的版本请求失效。
   cleanupPluginUpdateProgressListener?.()
   cleanupPluginUpdateProgressListener = null
+  cleanupCompactWindowHeaderListener?.()
+  cleanupCompactWindowHeaderListener = null
   pluginUpdateRequestSequence += 1
 })
 
@@ -829,6 +838,20 @@ body {
 
 .titlebar.darwin {
   padding-left: 90px; /* 为系统交通灯按钮留空间 */
+}
+
+.titlebar.is-compact {
+  height: 40px;
+}
+
+.titlebar.is-compact .logo-container,
+.titlebar.is-compact .plugin-logo {
+  width: 30px;
+  height: 30px;
+}
+
+.titlebar.is-compact .search-input {
+  height: 30px;
 }
 
 /* 插件信息 */

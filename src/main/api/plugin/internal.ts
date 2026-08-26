@@ -900,6 +900,13 @@ export class InternalPluginAPI {
       return await settingsAPI.setWindowDefaultHeight(height)
     })
 
+    ipcMain.handle('internal:set-compact-main-window-header', async (event, enabled: boolean) => {
+      if (!requireInternalPlugin(this.pluginManager, event)) {
+        throw new PermissionDeniedError('internal:set-compact-main-window-header')
+      }
+      return settingsAPI.setCompactMainWindowHeader(enabled)
+    })
+
     ipcMain.handle('internal:select-avatar', async (event) => {
       if (!requireInternalPlugin(this.pluginManager, event)) {
         throw new PermissionDeniedError('internal:select-avatar')
@@ -1045,6 +1052,27 @@ export class InternalPluginAPI {
         }
         // 直接通知 windowManager 更新配置
         await windowAPI.updateAutoBackToSearch(autoBackToSearch)
+        return { success: true }
+      }
+    )
+
+    ipcMain.handle(
+      'internal:update-hide-main-window-on-plugin-esc',
+      async (event, enabled: boolean) => {
+        if (!requireInternalPlugin(this.pluginManager, event)) {
+          throw new PermissionDeniedError('internal:update-hide-main-window-on-plugin-esc')
+        }
+
+        const hideMainWindowOnPluginEsc = enabled === true
+        // 主渲染层处理顶部栏获得焦点时的 ESC，插件 WebContents 路径由主进程读取持久化配置。
+        this.mainWindow?.webContents.send(
+          'update-hide-main-window-on-plugin-esc',
+          hideMainWindowOnPluginEsc
+        )
+        if (hideMainWindowOnPluginEsc) {
+          // 直接隐藏后必须立即退出插件，保证下次呼出显示搜索页。
+          await windowAPI.updateAutoBackToSearch('immediately')
+        }
         return { success: true }
       }
     )

@@ -53,7 +53,7 @@ export interface AiReasoningConfig {
   protocol: AiReasoningProtocol
   /** 模型支持的标准档位及供应商实际接收的值。 */
   efforts: AiReasoningEffortMap
-  /** 调用方未明确选择时使用的档位；缺省时保留供应商默认行为。 */
+  /** 调用方未明确选择时使用的档位；历史输入缺省时规范化为首个自定义档位。 */
   defaultEffort?: AiReasoningEffort
   responseField: AiReasoningResponseField
 }
@@ -252,15 +252,17 @@ export function normalizeAiReasoningCapability(value: unknown): AiReasoningCapab
     'reasoning_text',
     'reasoning_details'
   ]
+  const supportedEfforts = AI_REASONING_EFFORTS.filter((effort) => effort in efforts)
   const requestedDefault = normalizeAiReasoningEffort(source.defaultEffort ?? source.effort)
+  // 自定义能力始终具备明确默认档位，避免缺省值重新落入供应商默认语义。
   const defaultEffort =
-    requestedDefault && requestedDefault in efforts ? requestedDefault : undefined
+    requestedDefault && requestedDefault in efforts ? requestedDefault : supportedEfforts[0]
   return {
     protocol: protocolValues.includes(source.protocol as AiReasoningProtocol)
       ? (source.protocol as AiReasoningProtocol)
       : 'auto',
     efforts,
-    ...(defaultEffort === undefined ? {} : { defaultEffort }),
+    defaultEffort,
     responseField: responseFieldValues.includes(source.responseField as AiReasoningResponseField)
       ? (source.responseField as AiReasoningResponseField)
       : 'auto'

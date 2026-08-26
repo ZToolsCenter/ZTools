@@ -23,7 +23,7 @@ interface CategorySummary {
   description?: string
   icon?: string
   showDescription: boolean
-  pluginCount: number
+  pluginCount?: number
 }
 
 interface StorefrontSection {

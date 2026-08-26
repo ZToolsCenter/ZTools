@@ -324,6 +324,94 @@ test('个人中心确认删除账号后退出登录', async ({ browserName: _bro
   }
 })
 
+test('个人中心修改密码后退出登录并保留本地账号数据', async ({ browserName: _browserName }) => {
+  const dataRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'ztools-account-password-playwright-'))
+  const legacyRoot = path.join(dataRoot, 'legacy')
+  const accountDirectory = path.join(
+    dataRoot,
+    'lmdb',
+    'accounts',
+    crypto.createHash('sha256').update('change-password-user').digest('hex').slice(0, 16)
+  )
+  let electronApp: ElectronApplication | null = null
+
+  await fs.mkdir(legacyRoot, { recursive: true })
+
+  try {
+    // 使用隔离账号验证密码表单和本地退出流程，不触发线上密码修改请求。
+    electronApp = await electron.launch({
+      args: [projectRoot],
+      cwd: projectRoot,
+      env: {
+        ...Object.fromEntries(
+          Object.entries(process.env).filter((entry): entry is [string, string] =>
+            Boolean(entry[1])
+          )
+        ),
+        ZTOOLS_DATA_ROOT: dataRoot,
+        ZTOOLS_E2E: '1',
+        ZTOOLS_LEGACY_USER_DATA_PATH: legacyRoot,
+        ZTOOLS_SETTING_DEV_SERVER_URL: 'http://127.0.0.1:15177'
+      }
+    })
+
+    await openSettingsPlugin(electronApp)
+    await executeInSettings(
+      electronApp,
+      `
+      (async () => {
+        await window.ztools.internal.accountSaveSession({
+          username: 'change-password-user',
+          token: ${JSON.stringify(createFutureJwt('change-password-user'))},
+          refreshToken: ''
+        })
+        window.ztools.db.put({
+          _id: 'PLUGIN/e2e/password-marker',
+          data: { account: 'change-password-user' }
+        })
+        window.dispatchEvent(new CustomEvent('ztools-account-changed'))
+      })()
+    `
+    )
+    await expect(fs.stat(accountDirectory)).resolves.toBeTruthy()
+    await waitForSettingsText(electronApp, 'change-password-user')
+    await executeInSettings(
+      electronApp,
+      `document.querySelector('.account-dock')?.dispatchEvent(new MouseEvent('click', { bubbles: true }))`
+    )
+    await waitForSettingsText(electronApp, '云同步用量')
+
+    await executeInSettings(
+      electronApp,
+      `document.querySelector('[data-testid="change-password"]')?.dispatchEvent(new MouseEvent('click', { bubbles: true }))`
+    )
+    await waitForSettingsText(electronApp, '修改成功后，所有设备都会退出登录')
+    await fillSettingsInput(electronApp, 'current-password', 'old-password')
+    await fillSettingsInput(electronApp, 'new-password', 'new-password')
+    await fillSettingsInput(electronApp, 'confirm-password', 'new-password')
+    await executeInSettings(
+      electronApp,
+      `document.querySelector('[data-testid="submit-password-change"]')?.dispatchEvent(new MouseEvent('click', { bubbles: true }))`
+    )
+    await waitForSettingsText(electronApp, '开机自动启动')
+    await waitForSettingsText(electronApp, '注册/登录 ZTools')
+
+    const accountState = await executeInSettings(
+      electronApp,
+      `(async () => await window.ztools.internal.accountGetSession())()`
+    )
+    expect(accountState).toMatchObject({
+      success: true,
+      session: { username: 'change-password-user', token: '', refreshToken: '' }
+    })
+    await expect(fs.stat(accountDirectory)).resolves.toBeTruthy()
+  } finally {
+    // 始终关闭 Electron，并清理当前用例创建的隔离数据目录。
+    await electronApp?.close()
+    await fs.rm(dataRoot, { recursive: true, force: true })
+  }
+})
+
 /**
  * 启动满足登录、checkpoint、空数据拉取和心跳流程的最小同步服务。
  * @returns 已开始监听测试端口的 HTTP 服务。

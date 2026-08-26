@@ -25,7 +25,8 @@ describe('syncServerUrl', () => {
     expect(() => normalizeSyncServerUrl(input)).toThrow(message)
   })
 
-  it('recognizes equivalent official service addresses', () => {
+  it('recognizes the current and trusted legacy official service addresses', () => {
+    expect(isOfficialSyncServerUrl('https://z.zosen.link/')).toBe(true)
     expect(isOfficialSyncServerUrl('https://z-tools.top/')).toBe(true)
     expect(isOfficialSyncServerUrl(OFFICIAL_SYNC_SERVER_URL)).toBe(true)
     expect(isOfficialSyncServerUrl('https://private.example.com')).toBe(false)

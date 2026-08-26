@@ -22,11 +22,15 @@ import globalInputManager from '../core/globalInputManager.js'
 import { WindowManager as NativeWindowManager } from '../core/native/index.js'
 import clipboardManager from './clipboardManager'
 
-import { WINDOW_DEFAULT_HEIGHT, WINDOW_INITIAL_HEIGHT, WINDOW_WIDTH } from '../common/constants'
+import { WINDOW_DEFAULT_HEIGHT, WINDOW_WIDTH } from '../common/constants'
 import detachedWindowManager from '../core/detachedWindowManager'
 import superPanelManager from '../core/superPanelManager'
 import { applyWindowMaterial, getDefaultWindowMaterial } from '../utils/windowUtils'
 import pluginManager from './pluginManager'
+import {
+  normalizeCompactMainWindowHeader,
+  resolveMainWindowHeaderHeight
+} from '../../shared/mainWindowLayout'
 
 // 窗口材质类型
 type WindowMaterial = 'mica' | 'acrylic' | 'none'
@@ -124,6 +128,7 @@ class WindowManager {
   private appShortcuts: Map<string, string> = new Map() // 应用快捷键映射表 (快捷键 -> 目标指令)
   private wakeupBlacklist: Array<{ app: string; bundleId?: string; label?: string }> = [] // 唤醒黑名单
   private onThemeInfoChanged: (() => void) | null = null // 主题信息变更回调钩子
+  private compactMainWindowHeader = false // 主窗口是否使用紧凑顶部栏
   // 应用快捷键触发时携带的当前输入上下文
   private appShortcutLaunchContext: AppShortcutLaunchContext = {
     searchQuery: '',
@@ -145,6 +150,23 @@ class WindowManager {
    */
   public notifyBackToSearch(): void {
     this.mainWindow?.webContents.send('back-to-search')
+  }
+
+  /**
+   * 更新主窗口顶部栏密度，后续窗口尺寸和插件视图布局统一读取该状态。
+   * @param enabled 是否启用紧凑顶部栏。
+   * @returns 无返回值。
+   */
+  public setCompactMainWindowHeader(enabled: boolean): void {
+    this.compactMainWindowHeader = normalizeCompactMainWindowHeader(enabled)
+  }
+
+  /**
+   * 获取当前主窗口顶部栏高度。
+   * @returns 当前主窗口顶部栏高度，单位为像素。
+   */
+  public getMainWindowHeaderHeight(): number {
+    return resolveMainWindowHeaderHeight(this.compactMainWindowHeader)
   }
 
   private isLeftMouseButton(button: unknown): boolean {
@@ -505,12 +527,17 @@ class WindowManager {
     // 智能检测：在鼠标所在的显示器上打开窗口
     const { width, height, x: displayX, y: displayY } = this.getDisplayAtCursor()
 
+    // 创建窗口前读取布局偏好，避免首次显示后再跳变高度。
+    const settings = databaseAPI.dbGet('settings-general')
+    this.setCompactMainWindowHeader(settings?.compactMainWindowHeader === true)
+    const initialHeight = this.getMainWindowHeaderHeight()
+
     // 根据平台设置不同的窗口配置
     const windowConfig: Electron.BrowserWindowConstructorOptions = {
       type: 'panel',
       title: 'ZTools',
       width: WINDOW_WIDTH,
-      height: WINDOW_INITIAL_HEIGHT,
+      height: initialHeight,
       alwaysOnTop: true,
       // 基于最大窗口高度计算居中位置，确保窗口扩展时不会超出屏幕
       x: displayX + Math.floor((width - WINDOW_WIDTH) / 2),

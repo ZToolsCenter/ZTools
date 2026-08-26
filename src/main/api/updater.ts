@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, screen, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, screen, shell, type WebContents } from 'electron'
 import { is } from '@electron-toolkit/utils'
 import { getPreloadPath, getRendererPath } from '../utils/appBundlePath'
 import createPlatformUpdater from '@platform-updater'
@@ -327,6 +327,48 @@ export class UpdaterAPI {
     }
   }
 
+  /**
+   * 使用系统默认浏览器打开更新日志中的 HTTP(S) 链接。
+   * @param url 更新日志请求打开的链接。
+   * @returns 无返回值。
+   */
+  private openExternalUpdateLink(url: string): void {
+    try {
+      const target = new URL(url)
+      if (target.protocol !== 'http:' && target.protocol !== 'https:') return
+
+      // 外部打开失败不应影响更新窗口本身，记录错误供诊断即可。
+      void shell.openExternal(target.toString()).catch((error) => {
+        console.error('[Updater] 使用默认浏览器打开更新日志链接失败:', error)
+      })
+    } catch {
+      console.warn('[Updater] 忽略无效的更新日志链接:', url)
+    }
+  }
+
+  /**
+   * 阻止更新日志链接接管更新窗口，并将可信的网页链接交给系统浏览器。
+   * @param webContents 更新窗口的 WebContents。
+   * @returns 无返回值。
+   */
+  private registerExternalLinkInterceptor(webContents: WebContents): void {
+    webContents.on('will-navigate', (event, url) => {
+      // 更新窗口只承载本地界面，任何页面导航都不得替换当前更新流程。
+      event.preventDefault()
+      this.openExternalUpdateLink(url)
+    })
+
+    webContents.setWindowOpenHandler(({ url }) => {
+      // 新窗口链接同样统一交给系统浏览器，且不创建额外 Electron 窗口。
+      this.openExternalUpdateLink(url)
+      return { action: 'deny' }
+    })
+  }
+
+  /**
+   * 创建并加载居中的更新窗口，已有窗口则直接显示并聚焦。
+   * @returns 无返回值。
+   */
   private createUpdateWindow(): void {
     if (this.updateWindow && !this.updateWindow.isDestroyed()) {
       this.updateWindow.show()
@@ -365,6 +407,7 @@ export class UpdaterAPI {
     }
 
     this.updateWindow = new BrowserWindow(windowConfig)
+    this.registerExternalLinkInterceptor(this.updateWindow.webContents)
     if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
       void this.updateWindow.loadURL(`${process.env['ELECTRON_RENDERER_URL']}/updater.html`)
     } else {

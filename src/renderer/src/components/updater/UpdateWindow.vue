@@ -588,6 +588,30 @@ body,
   line-height: 1.6;
 }
 
+.changelog :deep(a) {
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+@media (prefers-color-scheme: dark) {
+  .changelog :deep(a),
+  .changelog :deep(a:visited) {
+    color: #9ec5ff;
+    text-decoration-color: rgba(158, 197, 255, 0.72);
+  }
+
+  .changelog :deep(a:hover) {
+    color: #c2d9ff;
+    text-decoration-color: currentColor;
+  }
+
+  .changelog :deep(a:focus-visible) {
+    border-radius: 2px;
+    outline: 2px solid rgba(158, 197, 255, 0.78);
+    outline-offset: 2px;
+  }
+}
+
 /* Markdown样式适配 */
 :deep(h1),
 :deep(h2),

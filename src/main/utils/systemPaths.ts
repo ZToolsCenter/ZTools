@@ -3,18 +3,13 @@ import os from 'os'
 import path from 'path'
 
 /**
- * 获取 Windows 开始菜单路径
+ * 获取 Windows 需要递归扫描的开始菜单根目录。
+ *
+ * @returns 系统级与用户级开始菜单根目录。
  */
-export function getWindowsScanPaths(): string[] {
+export function getWindowsRecursiveScanPaths(): string[] {
   // 系统级开始菜单
-  const programDataStartMenu = path.join(
-    'C:',
-    'ProgramData',
-    'Microsoft',
-    'Windows',
-    'Start Menu',
-    'Programs'
-  )
+  const programDataStartMenu = path.join('C:', 'ProgramData', 'Microsoft', 'Windows', 'Start Menu')
 
   // 用户级开始菜单
   const userStartMenu = path.join(
@@ -23,38 +18,38 @@ export function getWindowsScanPaths(): string[] {
     'Roaming',
     'Microsoft',
     'Windows',
-    'Start Menu',
-    'Programs'
+    'Start Menu'
   )
 
-  // 用户桌面（使用 Electron API 获取真实路径，支持桌面被移到其他位置的情况）
-  const userDesktop = app.getPath('desktop')
+  return [programDataStartMenu, userStartMenu]
+}
 
-  // 公共桌面
+/**
+ * 获取 Windows 只扫描顶层的桌面路径。
+ *
+ * @returns 用户桌面和公共桌面路径。
+ */
+export function getWindowsFlatScanPaths(): string[] {
+  // Electron 返回重定向后的真实桌面路径，桌面始终只扫描顶层。
+  const userDesktop = app.getPath('desktop')
   const publicDesktop = path.join('C:', 'Users', 'Public', 'Desktop')
 
-  return [programDataStartMenu, userStartMenu, userDesktop, publicDesktop]
+  return [...new Set([userDesktop, publicDesktop])]
 }
 
 /**
- * 获取 Windows 开始菜单根路径
- */
-export function getWindowsRootScanPaths(): string[] {
-  return getWindowsScanPaths()
-    .filter((p) => p.endsWith(`${path.sep}Programs`))
-    .map(path.dirname)
-}
-
-/**
- * 获取 macOS 应用目录路径
+ * 获取 macOS 应用目录路径。
+ *
+ * @returns macOS 系统级与用户级应用目录。
  */
 export function getMacApplicationPaths(): string[] {
   return ['/Applications', '/System/Applications', `${process.env.HOME}/Applications`]
 }
 
 /**
- * 获取 Linux XDG 应用目录路径（遵循 XDG Base Directory 规范）
- * 包含用户级和系统级 .desktop 文件目录
+ * 获取 Linux XDG 应用目录路径（遵循 XDG Base Directory 规范）。
+ *
+ * @returns 用户级和系统级 .desktop 文件目录。
  */
 export function getLinuxApplicationPaths(): string[] {
   const home = os.homedir()

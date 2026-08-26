@@ -42,6 +42,8 @@ vi.mock('../../src/main/core/pluginWindowManager', () => ({
 }))
 
 import { DatabaseAPI } from '../../src/main/api/shared/database'
+import { getPluginDataPath } from '../../src/main/core/appData/appDataPaths'
+import { physicalFs } from '../../src/main/utils/physicalFs'
 
 describe('database plugin isolation', () => {
   beforeEach(() => {
@@ -195,6 +197,33 @@ describe('database plugin isolation', () => {
       success: true,
       deletedCount: 2
     })
+  })
+
+  it('clears the plugin filesystem data directory alongside the database namespace', async () => {
+    const fsRm = vi.spyOn(physicalFs.promises, 'rm').mockResolvedValue(undefined as any)
+    mockLmdb.allDocs.mockReturnValue([])
+
+    const database = new DatabaseAPI()
+    const result = await database.clearPluginData('demo')
+
+    expect(result).toEqual({ success: true, deletedCount: 0 })
+    // 「清除数据」同时删除 ztools.getPath('pluginData') 指向的目录，与卸载清理语义一致
+    expect(fsRm).toHaveBeenCalledWith(getPluginDataPath('demo'), {
+      recursive: true,
+      force: true
+    })
+    fsRm.mockRestore()
+  })
+
+  it('does not delete the filesystem data directory when clearing host data', async () => {
+    const fsRm = vi.spyOn(physicalFs.promises, 'rm').mockResolvedValue(undefined as any)
+
+    const database = new DatabaseAPI()
+    const result = await database.clearPluginData('ZTOOLS')
+
+    expect(result).toEqual({ success: false, error: '主程序数据不支持通过该接口清空' })
+    expect(fsRm).not.toHaveBeenCalled()
+    fsRm.mockRestore()
   })
 
   it('derives plugin prefix from child window session partition when webContents is not a main view', () => {

@@ -62,23 +62,32 @@ export class PluginUIAPI {
     // 隐藏插件
     ipcMain.on('hide-plugin', () => this.hidePlugin())
 
-    // 插件 ESC 按键事件（由插件 preload 通过 JS 拦截后上报）
-    ipcMain.on('plugin-esc-pressed', () => {
-      const settings = databaseAPI.dbGet('settings-general') || {}
-      const escShortcutEnabled = settings?.builtinAppShortcutsEnabled?.esc !== false
-      if (!escShortcutEnabled) {
-        return
-      }
-
-      if (this.pluginManager && typeof this.pluginManager.handlePluginEsc === 'function') {
-        this.pluginManager.handlePluginEsc()
-      }
-    })
+    // 插件 ESC 按键事件（同步返回是否接管，供 preload 决定是否阻止系统默认行为）。
+    ipcMain.on('plugin-esc-pressed', (event) => this.handlePluginEscPressed(event))
 
     // 获取是否深色主题
     ipcMain.on('is-dark-colors', (event) => {
       event.returnValue = nativeTheme.shouldUseDarkColors
     })
+  }
+
+  /**
+   * 处理插件页面上报的 ESC，并同步告知 preload 是否已由宿主接管。
+   * @param event 插件 preload 发起的同步 IPC 事件。
+   * @returns 无返回值；处理结果通过 event.returnValue 返回。
+   */
+  private handlePluginEscPressed(event: Electron.IpcMainEvent): void {
+    const settings = databaseAPI.dbGet('settings-general') || {}
+    const escShortcutEnabled = settings?.builtinAppShortcutsEnabled?.esc !== false
+    if (!escShortcutEnabled || !this.pluginManager) {
+      // 未接管时明确返回 false，让插件和系统继续处理该 ESC。
+      event.returnValue = false
+      return
+    }
+
+    // 先执行宿主退出策略，再确认该按键已经被完整处理。
+    this.pluginManager.handlePluginEsc()
+    event.returnValue = true
   }
 
   private showNotification(event: Electron.IpcMainInvokeEvent, body: string): void {

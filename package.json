@@ -20,7 +20,7 @@
     "typecheck:web": "vue-tsc --noEmit -p tsconfig.web.json --composite false",
     "typecheck": "pnpm typecheck:node && pnpm typecheck:web",
     "start": "node -e \"if (process.platform === 'win32') require('child_process').execSync('chcp 65001 >nul 2>&1', {stdio: 'ignore'})\" && electron-vite preview",
-    "dev:main": "node -e \"if (process.platform === 'win32') require('child_process').execSync('chcp 65001 >nul 2>&1', {stdio: 'ignore'})\" && electron-vite dev",
+    "dev:main": "node -e \"if (process.platform === 'win32') require('child_process').execSync('chcp 65001 >nul 2>&1', {stdio: 'ignore'})\" && electron-vite dev --inspect --sourcemap",
     "dev:setting": "cd internal-plugins/setting && pnpm dev",
     "dev": "concurrently -n \"main,setting\" -c \"blue,green\" \"pnpm dev:main\" \"pnpm dev:setting\"",
     "kill": "pkill -9 Electron",

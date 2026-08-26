@@ -18,6 +18,8 @@ import { primeScreenCaptureFrame } from '../../core/screenCapture'
 import type { GlobalShortcutPreparation } from '../index'
 import api from '../index'
 import databaseAPI from '../shared/database'
+import { normalizeCompactMainWindowHeader } from '../../../shared/mainWindowLayout'
+import detachedWindowManager from '../../core/detachedWindowManager'
 
 /**
  * 快捷键触发时携带的文件输入
@@ -262,7 +264,10 @@ export class SettingsAPI {
     ipcMain.handle('start-hotkey-recording', () => this.startHotkeyRecording())
   }
 
-  // 加载并应用设置
+  /**
+   * 从数据库加载通用设置，并将需要即时生效的配置应用到运行时。
+   * @returns 设置加载和应用完成后结束的 Promise。
+   */
   private async loadAndApplySettings(): Promise<void> {
     try {
       const data = databaseAPI.dbGet('settings-general')
@@ -271,6 +276,9 @@ export class SettingsAPI {
       windowManager.setTrayIconVisible(data?.showTrayIcon ?? true)
       console.log('[Settings] 启动时应用托盘图标显示设置:', data?.showTrayIcon ?? true)
       dndManager.loadConfig()
+
+      // 顶部栏密度在缺少历史字段时保持标准模式，并同步给宿主渲染层。
+      this.setCompactMainWindowHeader(data?.compactMainWindowHeader === true)
 
       if (data) {
         // 应用透明度设置
@@ -289,10 +297,12 @@ export class SettingsAPI {
           this.setTheme(data.theme)
           console.log('[Settings] 启动时应用主题设置:', data.theme)
         }
-        // 应用自动返回搜索设置
-        if (data.autoBackToSearch) {
-          await windowManager.updateAutoBackToSearch(data.autoBackToSearch)
-          console.log('[Settings] 启动时应用自动返回搜索设置:', data.autoBackToSearch)
+        // 插件内 ESC 直接隐藏依赖立即返回，启动时统一收敛运行时配置。
+        const autoBackToSearch =
+          data.hideMainWindowOnPluginEsc === true ? 'immediately' : data.autoBackToSearch
+        if (autoBackToSearch) {
+          await windowManager.updateAutoBackToSearch(autoBackToSearch)
+          console.log('[Settings] 启动时应用自动返回搜索设置:', autoBackToSearch)
         }
         // 应用窗口呼出位置策略设置
         if (data.windowPositionStrategy) {
@@ -916,6 +926,32 @@ export class SettingsAPI {
       return { success: true }
     } catch (error: unknown) {
       console.error('[Settings] 设置插件默认高度失败:', error)
+      return { success: false, error: error instanceof Error ? error.message : '未知错误' }
+    }
+  }
+
+  /**
+   * 更新主窗口顶部栏密度，并立即重排宿主界面和当前插件视图。
+   * @param enabled 是否启用紧凑顶部栏。
+   * @returns 设置是否成功应用到当前运行实例。
+   */
+  public setCompactMainWindowHeader(enabled: boolean): { success: boolean; error?: string } {
+    try {
+      const compactMainWindowHeader = normalizeCompactMainWindowHeader(enabled)
+
+      // 先切换主进程布局状态，确保后续尺寸计算使用新高度。
+      windowManager.setCompactMainWindowHeader(compactMainWindowHeader)
+      detachedWindowManager.setCompactWindowHeader(compactMainWindowHeader)
+      this.mainWindow?.webContents.send(
+        'update-compact-main-window-header',
+        compactMainWindowHeader
+      )
+      this.pluginManager?.refreshMainWindowHeaderLayout()
+
+      console.log('[Settings] 主窗口紧凑顶部栏已更新:', compactMainWindowHeader)
+      return { success: true }
+    } catch (error: unknown) {
+      console.error('[Settings] 更新主窗口紧凑顶部栏失败:', error)
       return { success: false, error: error instanceof Error ? error.message : '未知错误' }
     }
   }

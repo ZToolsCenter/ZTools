@@ -1,4 +1,10 @@
-export const OFFICIAL_SYNC_SERVER_URL = 'wss://z-tools.top'
+export const OFFICIAL_SYNC_SERVER_URL = 'wss://z.zosen.link'
+export const LEGACY_OFFICIAL_SYNC_SERVER_URLS = ['wss://z-tools.top'] as const
+
+const TRUSTED_OFFICIAL_SYNC_SERVER_URLS = new Set<string>([
+  OFFICIAL_SYNC_SERVER_URL,
+  ...LEGACY_OFFICIAL_SYNC_SERVER_URLS
+])
 
 /**
  * 将用户输入的 HTTP 或 WebSocket 地址规范化为同步客户端使用的 WebSocket origin。
@@ -34,14 +40,14 @@ export function normalizeSyncServerUrl(input: string): string {
 }
 
 /**
- * 判断给定地址是否指向 ZTools 官方同步服务。
+ * 判断给定地址是否指向当前或受信任的历史 ZTools 官方同步服务。
  * @param input 待判断的同步服务器地址。
- * @returns 地址规范化后与官方服务一致时返回 true。
+ * @returns 地址规范化后命中官方服务迁移白名单时返回 true。
  */
 export function isOfficialSyncServerUrl(input?: string | null): boolean {
   if (!input) return false
   try {
-    return normalizeSyncServerUrl(input) === OFFICIAL_SYNC_SERVER_URL
+    return TRUSTED_OFFICIAL_SYNC_SERVER_URLS.has(normalizeSyncServerUrl(input))
   } catch {
     return false
   }

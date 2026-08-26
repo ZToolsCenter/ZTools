@@ -74,6 +74,7 @@ export const useWindowStore = defineStore('window', () => {
   const builtInClosePluginShortcutEnabled = ref(true)
   const builtInKillPluginShortcutEnabled = ref(true)
   const builtInEscShortcutEnabled = ref(true)
+  const hideMainWindowOnPluginEsc = ref(false)
 
   // 悬浮球双击目标指令
   const floatingBallDoubleClickCommand = ref('')
@@ -110,6 +111,7 @@ export const useWindowStore = defineStore('window', () => {
   const theme = ref('system') // system, light, dark
   const primaryColor = ref('green') // blue, purple, green, orange, red, pink, custom
   const customColor = ref('#db2777') // 自定义颜色
+  const compactMainWindowHeader = ref(false) // 主窗口是否使用紧凑顶部栏
 
   // 亚克力材质背景色透明度（0-100）
   const acrylicLightOpacity = ref(78) // 明亮模式默认 78%
@@ -141,6 +143,15 @@ export const useWindowStore = defineStore('window', () => {
   // 更新 placeholder
   function updatePlaceholder(value: string): void {
     placeholder.value = value || DEFAULT_PLACEHOLDER
+  }
+
+  /**
+   * 更新主窗口顶部栏密度状态。
+   * @param enabled 是否启用紧凑顶部栏。
+   * @returns 无返回值。
+   */
+  function updateCompactMainWindowHeader(enabled: boolean): void {
+    compactMainWindowHeader.value = enabled === true
   }
 
   // 更新 avatar
@@ -259,6 +270,15 @@ export const useWindowStore = defineStore('window', () => {
       return
     }
     builtInEscShortcutEnabled.value = value
+  }
+
+  /**
+   * 更新插件内按 ESC 时是否直接隐藏主窗口。
+   * @param enabled 是否直接隐藏主窗口。
+   * @returns 无返回值。
+   */
+  function updateHideMainWindowOnPluginEsc(enabled: boolean): void {
+    hideMainWindowOnPluginEsc.value = enabled === true
   }
 
   function updateFloatingBallDoubleClickCommand(value: string): void {
@@ -642,6 +662,7 @@ export const useWindowStore = defineStore('window', () => {
         if (data.theme) {
           theme.value = data.theme
         }
+        compactMainWindowHeader.value = data.compactMainWindowHeader === true
         if (data.customColor) {
           customColor.value = data.customColor
         }
@@ -694,6 +715,7 @@ export const useWindowStore = defineStore('window', () => {
           builtInKillPluginShortcutEnabled.value = config.killPlugin !== false
           builtInEscShortcutEnabled.value = config.esc !== false
         }
+        hideMainWindowOnPluginEsc.value = data.hideMainWindowOnPluginEsc === true
       } else {
         // 首次启动没有通用设置时使用当前产品默认的绿色。
         updatePrimaryColor('green')
@@ -726,6 +748,7 @@ export const useWindowStore = defineStore('window', () => {
     theme,
     primaryColor,
     customColor,
+    compactMainWindowHeader,
     acrylicLightOpacity,
     acrylicDarkOpacity,
     searchWallpaper,
@@ -734,6 +757,7 @@ export const useWindowStore = defineStore('window', () => {
     shouldShowUpdateNotification,
     updateWindowInfo,
     updatePlaceholder,
+    updateCompactMainWindowHeader,
     updateAvatar,
     updateCurrentPlugin,
     setPluginLoading,
@@ -760,7 +784,9 @@ export const useWindowStore = defineStore('window', () => {
     builtInClosePluginShortcutEnabled,
     builtInKillPluginShortcutEnabled,
     builtInEscShortcutEnabled,
+    hideMainWindowOnPluginEsc,
     updateBuiltInShortcutEnabled,
+    updateHideMainWindowOnPluginEsc,
     floatingBallDoubleClickCommand,
     updateFloatingBallDoubleClickCommand,
     updateTheme,

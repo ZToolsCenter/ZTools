@@ -12,6 +12,7 @@ import {
   streamSingleAiProtocolChat,
   type AiChatEvent,
   type AiChatOption,
+  type AiChatReplayState,
   type AiChatResult
 } from '../../core/aiChatTransport.js'
 import { createAiChatEventBatcher } from '../../core/aiChatEventBatcher.js'
@@ -54,6 +55,7 @@ export interface Message {
   reasoning_content?: string // 消息推理内容
   tool_calls?: ToolCall[] // 工具调用
   tool_call_id?: string // 工具调用 ID（role 为 tool 时使用）
+  replay_state?: AiChatReplayState // 宿主生成的协议私有回放状态
 }
 
 /**
@@ -351,7 +353,8 @@ class PluginAiAPI {
           role: 'assistant',
           content: turn.content,
           reasoning_content: turn.reasoningContent,
-          tool_calls: turn.toolCalls
+          tool_calls: turn.toolCalls,
+          replay_state: turn.replayState
         })
 
         for (const toolCall of turn.toolCalls) {
@@ -544,7 +547,8 @@ class PluginAiAPI {
           role: 'assistant',
           content: turn.content,
           reasoning_content: turn.reasoningContent,
-          tool_calls: turn.toolCalls
+          tool_calls: turn.toolCalls,
+          replay_state: turn.replayState
         })
 
         for (const toolCall of turn.toolCalls) {

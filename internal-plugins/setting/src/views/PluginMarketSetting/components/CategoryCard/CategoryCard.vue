@@ -4,7 +4,7 @@ defineProps<{
   description?: string
   icon?: string
   showDescription: boolean
-  pluginCount: number
+  pluginCount?: number
 }>()
 
 defineEmits<{
@@ -23,7 +23,7 @@ defineEmits<{
       </div>
     </div>
     <div class="category-card-right">
-      <span class="category-count">{{ pluginCount }}</span>
+      <span v-if="pluginCount !== undefined" class="category-count">{{ pluginCount }}</span>
       <svg
         class="category-arrow"
         width="14"

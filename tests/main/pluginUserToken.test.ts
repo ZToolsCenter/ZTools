@@ -38,7 +38,7 @@ describe('plugin getUserTempToken API', () => {
   it('identifies the caller and caches a valid temporary token', async () => {
     const expiresAt = Date.now() + 5 * 60_000
     mocks.loadOfficialAccountSession.mockResolvedValue({
-      serverUrl: 'wss://z-tools.top',
+      serverUrl: 'wss://z.zosen.link',
       username: 'zing',
       token: 'account-token',
       refreshToken: 'refresh-token'
@@ -66,7 +66,7 @@ describe('plugin getUserTempToken API', () => {
 
     expect(mocks.httpRequest).toHaveBeenCalledTimes(1)
     const [url, options] = mocks.httpRequest.mock.calls[0]
-    expect(url).toBe('https://z-tools.top/api/auth/plugin-token')
+    expect(url).toBe('https://z.zosen.link/api/auth/plugin-token')
     expect(options.headers.Authorization).toBe('Bearer account-token')
     expect(JSON.parse(options.body)).toEqual({
       pluginId: 'quick-translate',
@@ -78,7 +78,7 @@ describe('plugin getUserTempToken API', () => {
   it('refreshes an expired account token and retries once', async () => {
     const expiresAt = Date.now() + 5 * 60_000
     mocks.loadOfficialAccountSession.mockResolvedValue({
-      serverUrl: 'wss://z-tools.top',
+      serverUrl: 'wss://z.zosen.link',
       username: 'zing',
       token: 'expired-account-token',
       refreshToken: 'refresh-token'
@@ -92,7 +92,7 @@ describe('plugin getUserTempToken API', () => {
     mocks.refreshOfficialAccountTokens.mockResolvedValue({
       status: 'refreshed',
       session: {
-        serverUrl: 'wss://z-tools.top',
+        serverUrl: 'wss://z.zosen.link',
         username: 'zing',
         token: 'new-account-token',
         refreshToken: 'new-refresh-token'

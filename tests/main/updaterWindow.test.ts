@@ -4,7 +4,10 @@ type IPCListener = (...args: unknown[]) => void
 
 const mocks = vi.hoisted(() => {
   const ipcListeners = new Map<string, IPCListener>()
+  const navigationListeners = new Map<string, IPCListener>()
   const latestWindow = { current: null as any }
+  const openExternal = vi.fn(() => Promise.resolve())
+  const windowOpenHandler = { current: null as null | ((details: { url: string }) => unknown) }
   const browserWindow = vi.fn(function BrowserWindowMock(
     options: Electron.BrowserWindowConstructorOptions
   ) {
@@ -12,7 +15,11 @@ const mocks = vi.hoisted(() => {
     const win = {
       options,
       webContents: {
-        send: vi.fn()
+        send: vi.fn(),
+        on: vi.fn((event: string, handler: IPCListener) => navigationListeners.set(event, handler)),
+        setWindowOpenHandler: vi.fn((handler: (details: { url: string }) => unknown) => {
+          windowOpenHandler.current = handler
+        })
       },
       isDestroyed: vi.fn(() => false),
       loadURL: vi.fn(),
@@ -28,7 +35,14 @@ const mocks = vi.hoisted(() => {
     return win
   })
 
-  return { browserWindow, ipcListeners, latestWindow }
+  return {
+    browserWindow,
+    ipcListeners,
+    latestWindow,
+    navigationListeners,
+    openExternal,
+    windowOpenHandler
+  }
 })
 
 vi.mock('electron', () => ({
@@ -53,7 +67,7 @@ vi.mock('electron', () => ({
     }))
   },
   shell: {
-    openExternal: vi.fn()
+    openExternal: mocks.openExternal
   }
 }))
 
@@ -109,7 +123,9 @@ describe('updater window controls', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mocks.ipcListeners.clear()
+    mocks.navigationListeners.clear()
     mocks.latestWindow.current = null
+    mocks.windowOpenHandler.current = null
   })
 
   it('creates a minimizable window and minimizes it through IPC', async () => {
@@ -127,5 +143,32 @@ describe('updater window controls', () => {
     minimizeListener?.()
 
     expect(mocks.latestWindow.current.minimize).toHaveBeenCalledOnce()
+  })
+
+  it('opens changelog links in the system browser without navigating the update window', async () => {
+    const updater = new UpdaterAPI()
+    updater.init({ webContents: { send: vi.fn() } } as any)
+    await updater.checkUpdate()
+
+    const navigationListener = mocks.navigationListeners.get('will-navigate')
+    const navigationEvent = { preventDefault: vi.fn() }
+    expect(navigationListener).toBeTypeOf('function')
+
+    navigationListener?.(navigationEvent, 'https://github.com/ZToolsCenter/ZTools/issues/642')
+
+    expect(navigationEvent.preventDefault).toHaveBeenCalledOnce()
+    expect(mocks.openExternal).toHaveBeenCalledWith(
+      'https://github.com/ZToolsCenter/ZTools/issues/642'
+    )
+
+    const windowOpenResult = mocks.windowOpenHandler.current?.({
+      url: 'http://example.com/release-notes'
+    })
+    expect(windowOpenResult).toEqual({ action: 'deny' })
+    expect(mocks.openExternal).toHaveBeenCalledWith('http://example.com/release-notes')
+
+    // 非网页协议必须被拦截，但不能交由操作系统执行。
+    navigationListener?.({ preventDefault: vi.fn() }, 'file:///tmp/untrusted-release-note')
+    expect(mocks.openExternal).toHaveBeenCalledTimes(2)
   })
 })

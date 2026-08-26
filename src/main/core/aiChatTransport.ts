@@ -1,5 +1,6 @@
 import {
   normalizeAiReasoningEffort,
+  type AiApiFormat,
   type AiReasoningCapability,
   type AiReasoningEffort
 } from '../../shared/aiProviderShared.js'
@@ -24,6 +25,43 @@ export interface AiChatMessage {
   tool_calls?: AiToolCall[]
   tool_call_id?: string
   name?: string
+  /** 由宿主返回并由插件原样带回的协议私有回放状态。 */
+  replay_state?: AiChatReplayState
+}
+
+/** 可跨 IPC 和插件存储边界安全传递的协议原生回放状态。 */
+export interface AiChatReplayState {
+  version: 1
+  apiFormat: AiApiFormat
+  providerId: string
+  model: string
+  response?: Record<string, unknown>
+  blocks?: Array<Record<string, unknown>>
+}
+
+/**
+ * 检查回放状态是否属于当前协议、供应商和模型。
+ * @param state 插件历史消息携带的未知回放状态
+ * @param apiFormat 当前供应商协议
+ * @param providerId 当前供应商 ID
+ * @param model 当前远端模型 ID
+ * @returns 状态可由当前适配器原生回放时返回 true
+ */
+export function isCompatibleAiChatReplayState(
+  state: unknown,
+  apiFormat: AiApiFormat,
+  providerId: string,
+  model: string
+): state is AiChatReplayState {
+  if (!state || typeof state !== 'object' || Array.isArray(state)) return false
+  const value = state as Record<string, unknown>
+  return (
+    value.version === 1 &&
+    value.apiFormat === apiFormat &&
+    value.providerId === providerId &&
+    value.model === model &&
+    (value.blocks === undefined || Array.isArray(value.blocks))
+  )
 }
 
 /** 单个 Function Calling 工具定义。 */
@@ -81,6 +119,9 @@ export interface AiTokenUsage {
   prompt_tokens: number
   completion_tokens: number
   total_tokens: number
+  cache_read_tokens?: number
+  cache_write_tokens?: number
+  reasoning_tokens?: number
 }
 
 /** 单轮完整响应。 */
@@ -91,6 +132,7 @@ export interface AiChatResult {
   tool_calls: AiToolCall[]
   finish_reason: string
   usage?: AiTokenUsage
+  replay_state?: AiChatReplayState
 }
 
 /** 协议适配器接收的单轮流式输入。 */
@@ -127,6 +169,7 @@ export interface AiChatProtocolTurn {
   toolCalls: AiToolCall[]
   finishReason?: string
   usage?: AiTokenUsage
+  replayState?: AiChatReplayState
 }
 
 /** 三种 AI 协议适配器共同实现的最小流式契约。 */
@@ -175,7 +218,12 @@ export function resolveAiReasoningPolicy(
   model: string,
   capability: AiReasoningCapability | undefined,
   requestedEffort?: AiReasoningEffort | 'none'
-): { request: Record<string, unknown>; responseFields: string[] } {
+): {
+  request: Record<string, unknown>
+  responseFields: string[]
+  effort?: AiReasoningEffort
+  wireValue?: string | null
+} {
   const modelId = model.toLowerCase()
   const inferredProtocol = /deepseek[-_/.:]?v4/.test(modelId)
     ? 'deepseek'
@@ -196,6 +244,7 @@ export function resolveAiReasoningPolicy(
   }
   const effort = normalizedRequested ?? config?.defaultEffort
   const request: Record<string, unknown> = {}
+  let wireValue: string | null | undefined
   if (effort !== undefined) {
     if (!config || !Object.prototype.hasOwnProperty.call(config.efforts, effort)) {
       const error = new Error(`模型“${model}”不支持推理强度“${effort}”`) as Error & {
@@ -205,7 +254,7 @@ export function resolveAiReasoningPolicy(
       throw error
     }
 
-    const wireValue = config.efforts[effort]
+    wireValue = config.efforts[effort]
     if (protocol === 'openai-compatible' && typeof wireValue === 'string') {
       request.reasoning_effort = wireValue
     }
@@ -218,6 +267,8 @@ export function resolveAiReasoningPolicy(
   }
   return {
     request,
+    effort,
+    wireValue,
     responseFields:
       config?.responseField && config.responseField !== 'auto'
         ? [config.responseField]
@@ -266,15 +317,40 @@ export function extractAiReasoningDelta(delta: unknown, fields: string[]): strin
 export function normalizeAiTokenUsage(usage: unknown): AiTokenUsage | undefined {
   if (!usage || typeof usage !== 'object') return undefined
   const value = usage as Record<string, unknown>
+  const promptDetails = readUsageDetails(value.prompt_tokens_details ?? value.input_tokens_details)
+  const completionDetails = readUsageDetails(
+    value.completion_tokens_details ?? value.output_tokens_details
+  )
   const promptTokens = Number(value.prompt_tokens ?? value.input_tokens)
   const completionTokens = Number(value.completion_tokens ?? value.output_tokens)
-  const totalTokens = Number(value.total_tokens ?? value.total)
-  if (![promptTokens, completionTokens, totalTokens].some(Number.isFinite)) return undefined
+  const explicitTotalTokens = Number(value.total_tokens ?? value.total)
+  const totalTokens = Number.isFinite(explicitTotalTokens)
+    ? explicitTotalTokens
+    : (Number.isFinite(promptTokens) ? promptTokens : 0) +
+      (Number.isFinite(completionTokens) ? completionTokens : 0)
+  if (![promptTokens, completionTokens, explicitTotalTokens].some(Number.isFinite)) return undefined
+  const cacheReadTokens = Number(value.cache_read_input_tokens ?? promptDetails?.cached_tokens)
+  const cacheWriteTokens = Number(value.cache_creation_input_tokens)
+  const reasoningTokens = Number(completionDetails?.reasoning_tokens)
   return {
     prompt_tokens: Number.isFinite(promptTokens) ? promptTokens : 0,
     completion_tokens: Number.isFinite(completionTokens) ? completionTokens : 0,
-    total_tokens: Number.isFinite(totalTokens) ? totalTokens : 0
+    total_tokens: Number.isFinite(totalTokens) ? totalTokens : 0,
+    ...(Number.isFinite(cacheReadTokens) ? { cache_read_tokens: cacheReadTokens } : {}),
+    ...(Number.isFinite(cacheWriteTokens) ? { cache_write_tokens: cacheWriteTokens } : {}),
+    ...(Number.isFinite(reasoningTokens) ? { reasoning_tokens: reasoningTokens } : {})
   }
+}
+
+/**
+ * 将 usage 的可选详情字段收窄为普通对象。
+ * @param value SDK 返回的详情字段
+ * @returns 可读取的详情对象；格式不正确时返回 undefined
+ */
+function readUsageDetails(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined
 }
 
 /**
@@ -445,6 +521,7 @@ export async function streamSingleAiProtocolChat(
         : turn.finishReason === 'end_turn'
           ? 'stop'
           : turn.finishReason || 'stop',
-    usage: turn.usage
+    usage: turn.usage,
+    ...(turn.replayState ? { replay_state: turn.replayState } : {})
   }
 }

@@ -99,6 +99,12 @@ export interface UwpLaunchResult {
   stage: string
 }
 
+/** UWP 包安装、更新或卸载完成事件。 */
+export interface UwpPackageChangeEvent {
+  type: 'install' | 'update' | 'uninstall'
+  packageFullName: string
+}
+
 interface NativeAddon {
   startMonitor: (callback: () => void) => void
   stopMonitor: () => void
@@ -136,6 +142,9 @@ interface NativeAddon {
     callback: () => void | { shouldBlock?: boolean }
   ) => void
   stopMouseMonitor: () => void
+  startUwpPackageMonitor: (callback: (event: UwpPackageChangeEvent) => void) => void
+  stopUwpPackageMonitor: () => void
+  getUwpPackageSnapshot: () => string[]
   getUwpApps: () => UwpAppInfo[]
   launchUwpApp: (appId: string) => UwpLaunchResult
   launchViaExplorer: (options: ExplorerLaunchOptions) => Promise<ExplorerLaunchResult>
@@ -1004,6 +1013,49 @@ export class ScreenCapture {
  * UWP 应用管理类
  */
 export class UwpManager {
+  /**
+   * 启动当前用户 UWP 包安装、更新和卸载完成事件监听。
+   *
+   * @param callback 包变化完成时调用的回调函数。
+   * @returns 无返回值。
+   * @throws 当前平台不是 Windows、回调无效或原生监听初始化失败时抛出。
+   */
+  static startPackageMonitor(callback: (event: UwpPackageChangeEvent) => void): void {
+    if (platform !== 'win32') {
+      throw new Error('startPackageMonitor is only supported on Windows')
+    }
+    if (typeof callback !== 'function') {
+      throw new TypeError('Callback must be a function')
+    }
+
+    ;(addon as NativeAddon).startUwpPackageMonitor(callback)
+  }
+
+  /**
+   * 停止当前用户 UWP 包变化监听。
+   *
+   * @returns 无返回值。
+   */
+  static stopPackageMonitor(): void {
+    if (platform === 'win32') {
+      ;(addon as NativeAddon).stopUwpPackageMonitor()
+    }
+  }
+
+  /**
+   * 获取当前用户已注册包的稳定快照。
+   *
+   * @returns 按包完整名排序的快照。
+   * @throws 当前平台不是 Windows 或包注册表不可读时抛出。
+   */
+  static getPackageSnapshot(): string[] {
+    if (platform !== 'win32') {
+      throw new Error('getPackageSnapshot is only supported on Windows')
+    }
+
+    return (addon as NativeAddon).getUwpPackageSnapshot()
+  }
+
   /**
    * 获取已安装的 UWP 应用列表
    * @returns {Array<{name: string, appId: string, icon: string, installLocation: string}>} 应用列表

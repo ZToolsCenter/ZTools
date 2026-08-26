@@ -180,6 +180,7 @@ const avatar = ref(DEFAULT_AVATAR)
 const autoPaste = ref<AutoPasteOption>('3s')
 const autoClear = ref<AutoClearOption>('immediately')
 const autoBackToSearch = ref<AutoBackToSearchOption>('never')
+const hideMainWindowOnPluginEsc = ref(false)
 const windowPositionStrategy = ref<WindowPositionStrategy>('remember')
 // Wayland 下由系统接管搜索框区域拖拽（仅 Linux 平台显示）
 const useCssAppRegionDrag = ref(false)
@@ -190,6 +191,12 @@ const recentRows = ref(2)
 const pinnedRows = ref(2)
 const searchMode = ref<'aggregate' | 'list'>('aggregate')
 const clipboardRetentionDays = ref(180)
+
+const availableAutoBackToSearchOptions = computed(() =>
+  hideMainWindowOnPluginEsc.value
+    ? autoBackToSearchOptions.filter((option) => option.value === 'immediately')
+    : autoBackToSearchOptions
+)
 
 // Tab 键目标指令
 const tabTargetCommand = ref('')
@@ -260,6 +267,9 @@ const hotkey = ref('')
 
 // 不透明度设置
 const opacity = ref(1)
+
+// 主窗口紧凑顶部栏设置
+const compactMainWindowHeader = ref(false)
 
 // 插件默认高度设置
 const windowDefaultHeight = ref(541)
@@ -416,6 +426,25 @@ async function handleOpacityChange(): Promise<void> {
   }
 }
 
+/**
+ * 保存主窗口顶部栏密度，并立即同步到宿主运行时。
+ * @returns 设置保存和运行时更新完成后结束的 Promise。
+ */
+async function handleCompactMainWindowHeaderChange(): Promise<void> {
+  try {
+    // 先持久化用户选择，确保后续启动直接使用相同布局。
+    await saveSettings()
+    const result = await window.ztools.internal.setCompactMainWindowHeader(
+      compactMainWindowHeader.value
+    )
+    if (!result.success) {
+      throw new Error(result.error || '主窗口布局更新失败')
+    }
+  } catch (error) {
+    console.error('设置主窗口紧凑顶部栏失败:', error)
+  }
+}
+
 // 处理窗口默认高度变化
 async function handleWindowDefaultHeightChange(): Promise<void> {
   try {
@@ -556,15 +585,44 @@ async function handleAutoClearChange(): Promise<void> {
   }
 }
 
-// 处理自动返回搜索配置变化
+/**
+ * 保存自动返回搜索配置；插件 ESC 直接隐藏启用时强制保持立即返回。
+ * @returns 设置保存和运行时更新完成后结束的 Promise。
+ */
 async function handleAutoBackToSearchChange(): Promise<void> {
   try {
+    // 直接隐藏依赖立即返回，防止下次呼出时仍停留在插件页面。
+    if (hideMainWindowOnPluginEsc.value) {
+      autoBackToSearch.value = 'immediately'
+    }
     await saveSettings()
     // 通知主渲染进程更新
     await window.ztools.internal.updateAutoBackToSearch(autoBackToSearch.value)
     console.log('自动返回搜索配置已更新:', autoBackToSearch.value)
   } catch (error) {
     console.error('保存自动返回搜索配置失败:', error)
+  }
+}
+
+/**
+ * 保存插件内 ESC 行为，并在启用时同步锁定立即返回搜索。
+ * @returns 设置保存和运行时更新完成后结束的 Promise。
+ */
+async function handleHideMainWindowOnPluginEscChange(): Promise<void> {
+  try {
+    // 先收敛关联配置，再一次性持久化，避免两个字段短暂不一致。
+    if (hideMainWindowOnPluginEsc.value) {
+      autoBackToSearch.value = 'immediately'
+    }
+    await saveSettings()
+    const result = await window.ztools.internal.updateHideMainWindowOnPluginEsc(
+      hideMainWindowOnPluginEsc.value
+    )
+    if (!result.success) {
+      throw new Error(result.error || '插件 ESC 行为更新失败')
+    }
+  } catch (error) {
+    console.error('保存插件 ESC 行为失败:', error)
   }
 }
 
@@ -1316,6 +1374,7 @@ async function loadSettings(): Promise<void> {
 
     if (data) {
       opacity.value = data.opacity ?? 1
+      compactMainWindowHeader.value = data.compactMainWindowHeader === true
       windowDefaultHeight.value = data.windowDefaultHeight ?? 541
       hotkey.value = data.hotkey ?? defaultHotkey.value
       showTrayIcon.value = data.showTrayIcon ?? true
@@ -1323,7 +1382,10 @@ async function loadSettings(): Promise<void> {
       avatar.value = data.avatar ?? DEFAULT_AVATAR
       autoPaste.value = data.autoPaste ?? '3s'
       autoClear.value = data.autoClear ?? 'immediately'
-      autoBackToSearch.value = data.autoBackToSearch ?? 'never'
+      hideMainWindowOnPluginEsc.value = data.hideMainWindowOnPluginEsc === true
+      autoBackToSearch.value = hideMainWindowOnPluginEsc.value
+        ? 'immediately'
+        : (data.autoBackToSearch ?? 'never')
       windowPositionStrategy.value = data.windowPositionStrategy ?? 'remember'
       useCssAppRegionDrag.value = data.useCssAppRegionDrag ?? false
       showRecentInSearch.value = data.showRecentInSearch ?? true
@@ -1414,6 +1476,7 @@ async function saveSettings(): Promise<void> {
     await window.ztools.internal.dbPut('settings-general', {
       ...existing,
       opacity: opacity.value,
+      compactMainWindowHeader: compactMainWindowHeader.value,
       windowDefaultHeight: windowDefaultHeight.value,
       hotkey: hotkey.value,
       placeholder: placeholder.value,
@@ -1421,6 +1484,7 @@ async function saveSettings(): Promise<void> {
       autoPaste: autoPaste.value,
       autoClear: autoClear.value,
       autoBackToSearch: autoBackToSearch.value,
+      hideMainWindowOnPluginEsc: hideMainWindowOnPluginEsc.value,
       windowPositionStrategy: windowPositionStrategy.value,
       useCssAppRegionDrag: useCssAppRegionDrag.value,
       showRecentInSearch: showRecentInSearch.value,
@@ -1621,6 +1685,24 @@ onUnmounted(() => {
         </div>
         <div class="setting-control">
           <Dropdown v-model="theme" :options="themeOptions" @change="handleThemeChange" />
+        </div>
+      </div>
+
+      <div class="setting-item">
+        <div class="setting-label">
+          <span>紧凑顶部栏</span>
+          <span class="setting-desc">缩小主搜索框和插件顶部栏，显示更多内容</span>
+        </div>
+        <div class="setting-control">
+          <label class="toggle">
+            <input
+              v-model="compactMainWindowHeader"
+              type="checkbox"
+              aria-label="紧凑顶部栏"
+              @change="handleCompactMainWindowHeaderChange"
+            />
+            <span class="toggle-slider"></span>
+          </label>
         </div>
       </div>
 
@@ -2119,13 +2201,31 @@ onUnmounted(() => {
 
       <div class="setting-item">
         <div class="setting-label">
+          <span>插件内 ESC 直接隐藏</span>
+          <span class="setting-desc">在插件中按 ESC 直接隐藏主窗口，下次呼出时显示搜索</span>
+        </div>
+        <div class="setting-control">
+          <label class="toggle">
+            <input
+              v-model="hideMainWindowOnPluginEsc"
+              type="checkbox"
+              aria-label="插件内 ESC 直接隐藏"
+              @change="handleHideMainWindowOnPluginEscChange"
+            />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+      </div>
+
+      <div class="setting-item">
+        <div class="setting-label">
           <span>自动返回到搜索</span>
           <span class="setting-desc">主窗口打开插件后隐藏，在设定时间后自动返回搜索界面</span>
         </div>
         <div class="setting-control">
           <Dropdown
             v-model="autoBackToSearch"
-            :options="autoBackToSearchOptions"
+            :options="availableAutoBackToSearchOptions"
             @change="handleAutoBackToSearchChange"
           />
         </div>

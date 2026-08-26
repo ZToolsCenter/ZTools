@@ -21,7 +21,8 @@ vi.mock('electron', () => ({
     get isPackaged() {
       return mocks.appIsPackaged()
     },
-    getPath: mocks.appGetPath
+    getPath: mocks.appGetPath,
+    on: vi.fn()
   },
   globalShortcut: {
     register: mocks.electronRegister,
@@ -61,6 +62,9 @@ vi.mock('../../src/main/core/doubleTapManager.js', () => ({
 vi.mock('../../src/main/managers/proxyManager.js', () => ({ default: {} }))
 vi.mock('../../src/main/managers/windowManager.js', () => ({
   default: { captureCurrentActiveWindow: mocks.captureCurrentActiveWindow }
+}))
+vi.mock('../../src/main/core/detachedWindowManager.js', () => ({
+  default: { setCompactWindowHeader: vi.fn() }
 }))
 vi.mock('../../src/main/core/screenCapture.js', () => ({ primeScreenCaptureFrame: vi.fn() }))
 vi.mock('../../src/main/api/shared/database.js', () => ({

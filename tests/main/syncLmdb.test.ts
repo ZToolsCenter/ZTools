@@ -1780,7 +1780,7 @@ describe('同步系统集成测试（真实 LMDB）', () => {
       const client = new SyncClient(db)
       const officialConfig = {
         enabled: true,
-        serverUrl: 'wss://z-tools.top',
+        serverUrl: 'wss://z.zosen.link',
         token: 'official-token',
         refreshToken: '',
         syncInterval: 30,

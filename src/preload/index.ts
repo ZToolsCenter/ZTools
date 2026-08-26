@@ -330,6 +330,30 @@ const api = {
       ipcRenderer.removeListener('update-css-app-region-drag', handler)
     }
   },
+  /**
+   * 监听主窗口顶部栏密度的实时变化。
+   * @param callback 接收紧凑模式开关的回调函数。
+   * @returns 用于移除监听器的清理函数。
+   */
+  onUpdateCompactMainWindowHeader: (callback: (enabled: boolean) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, enabled: boolean): void => callback(enabled)
+    ipcRenderer.on('update-compact-main-window-header', handler)
+    return (): void => {
+      ipcRenderer.removeListener('update-compact-main-window-header', handler)
+    }
+  },
+  /**
+   * 监听插件内 ESC 直接隐藏设置的实时变化。
+   * @param callback 接收开关状态的回调函数。
+   * @returns 用于移除监听器的清理函数。
+   */
+  onUpdateHideMainWindowOnPluginEsc: (callback: (enabled: boolean) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, enabled: boolean): void => callback(enabled)
+    ipcRenderer.on('update-hide-main-window-on-plugin-esc', handler)
+    return (): void => {
+      ipcRenderer.removeListener('update-hide-main-window-on-plugin-esc', handler)
+    }
+  },
   onIpcLaunch: (
     callback: (options: {
       path: string
@@ -589,6 +613,8 @@ declare global {
       }) => Promise<void>
       hideWindow: () => void
       resizeWindow: (height: number) => void
+      onUpdateCompactMainWindowHeader: (callback: (enabled: boolean) => void) => () => void
+      onUpdateHideMainWindowOnPluginEsc: (callback: (enabled: boolean) => void) => () => void
       updateLaunchContext: (context: {
         searchQuery: string
         pastedImage: string | null

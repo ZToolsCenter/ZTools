@@ -271,18 +271,6 @@ export async function launchApp(
     }
   }
 
-  // 系统可执行文件（不包含路径分隔符，说明在 PATH 中）
-  if (ext === 'exe' && !appPath.includes('\\') && !appPath.includes('/')) {
-    // 对于 PATH 中的可执行文件，使用 shell.openPath（Electron 会自动在 PATH 中查找）
-    // 这是最可靠的方式，避免路径解析问题
-    const error = await shell.openPath(appPath)
-    if (error) {
-      throw new Error(`启动系统命令失败: ${error}`)
-    }
-    console.log(`[Launcher] 成功启动系统命令: ${appPath}`)
-    return
-  }
-
   if (appPath.toLowerCase().endsWith('.exe') || appPath.toLowerCase().endsWith('.lnk')) {
     await openApplicationViaExplorer(appPath, 'openPath', resolveLaunchWorkingDirectory(appPath))
     return

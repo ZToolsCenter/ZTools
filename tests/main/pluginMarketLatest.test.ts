@@ -5,7 +5,7 @@ const mockRequestPluginMarket = vi.hoisted(() => vi.fn())
 vi.mock('../../src/main/api/renderer/pluginMarketConfig', () => ({
   PluginMarketAuthRequiredError: class PluginMarketAuthRequiredError extends Error {},
   PluginMarketAuthMode: { OPTIONAL: 'optional', REQUIRED: 'required' },
-  getPluginMarketApiBase: () => 'https://z-tools.top/api/market',
+  getPluginMarketApiBase: () => 'https://z.zosen.link/api/market',
   requestPluginMarket: mockRequestPluginMarket
 }))
 

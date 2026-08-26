@@ -3,6 +3,7 @@ import App from './App.vue'
 import './assets/styles'
 import { router } from './router'
 import { dispatchZtoolsCodeEvent, initZtoolsBaseEventHandler } from '@/events'
+import { refreshAccountProfile } from '@/composables'
 // 单独导入注册事件
 import './events/allCodeEvent'
 
@@ -11,6 +12,8 @@ ztools.onPluginEnter((action) => {
   // 将 utools 事件派发根据不同的 code 进行派发出去
   console.log('[插件事件: onPluginEnter]', action)
   dispatchZtoolsCodeEvent(action, router)
+  // 设置视图会被宿主缓存复用，每次重新进入都要从服务端刷新账号资料。
+  void refreshAccountProfile({ force: true })
 })
 
 ztools.onPluginOut(() => {

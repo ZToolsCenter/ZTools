@@ -591,6 +591,8 @@ window.ztools = {
   showMainWindow: async () => {
     return await electron.ipcRenderer.invoke('show-main-window')
   },
+  // 拖动文件到外部
+  startDrag: (filePath) => electron.ipcRenderer.send('start-drag-file', filePath),
   // 隐藏主窗口
   hideMainWindow: async (isRestorePreWindow = true) => {
     return await electron.ipcRenderer.invoke('hide-main-window', isRestorePreWindow)
@@ -1140,6 +1142,13 @@ window.ztools = {
       await electron.ipcRenderer.invoke('internal:set-window-opacity', opacity),
     setWindowDefaultHeight: async (height) =>
       await electron.ipcRenderer.invoke('internal:set-window-default-height', height),
+    /**
+     * 将主窗口顶部栏密度切换同步到宿主运行时。
+     * @param {boolean} enabled 是否启用紧凑顶部栏
+     * @returns {Promise<object>} 主进程返回的应用结果
+     */
+    setCompactMainWindowHeader: async (enabled) =>
+      await electron.ipcRenderer.invoke('internal:set-compact-main-window-header', enabled),
     setWindowMaterial: async (material) =>
       await electron.ipcRenderer.invoke('internal:set-window-material', material),
     getWindowMaterial: async () =>
@@ -1184,6 +1193,13 @@ window.ztools = {
     // 通知主渲染进程更新自动返回搜索配置
     updateAutoBackToSearch: async (autoBackToSearch) =>
       await electron.ipcRenderer.invoke('internal:update-auto-back-to-search', autoBackToSearch),
+    /**
+     * 更新插件内按 ESC 时是否直接隐藏主窗口。
+     * @param {boolean} enabled 是否直接隐藏主窗口
+     * @returns {Promise<object>} 主进程返回的应用结果
+     */
+    updateHideMainWindowOnPluginEsc: async (enabled) =>
+      await electron.ipcRenderer.invoke('internal:update-hide-main-window-on-plugin-esc', enabled),
     updateWindowPositionStrategy: async (strategy) =>
       await electron.ipcRenderer.invoke('internal:update-window-position-strategy', strategy),
     // 通知主渲染进程切换 CSS app-region 拖拽
@@ -1801,16 +1817,25 @@ electron.ipcRenderer.on('call-plugin-method', async (event, { featureCode, actio
   }
 })
 
-// 监听 ESC 键，支持插件内部阻止返回
-window.addEventListener(
-  'keydown',
-  (e) => {
-    if (e.key === 'Escape') {
-      electron.ipcRenderer.send('plugin-esc-pressed')
-    }
-  },
-  false
-)
+/**
+ * 将插件未自行阻止的 ESC 交给宿主处理，并消费已接管按键的默认行为。
+ * @param {KeyboardEvent} event 插件页面冒泡到 window 的键盘事件
+ * @returns {void} 无返回值
+ */
+function handlePluginEscape(event) {
+  if (event.key !== 'Escape' || event.defaultPrevented) {
+    return
+  }
+
+  // 仅在宿主确认接管后阻止默认行为，保留禁用快捷键时的插件原生响应。
+  const handled = electron.ipcRenderer.sendSync('plugin-esc-pressed') === true
+  if (handled) {
+    event.preventDefault()
+  }
+}
+
+// 使用冒泡阶段监听，让插件可以在事件到达 window 前主动阻止退出。
+window.addEventListener('keydown', handlePluginEscape, false)
 
 // 监听主进程获取插件模式的请求
 electron.ipcRenderer.on('get-plugin-mode', (event, { featureCode, callId }) => {

@@ -365,6 +365,9 @@ declare global {
         // 窗口和设置
         setWindowOpacity: (opacity: number) => Promise<void>
         setWindowDefaultHeight: (height: number) => Promise<void>
+        setCompactMainWindowHeader: (
+          enabled: boolean
+        ) => Promise<{ success: boolean; error?: string }>
         setWindowMaterial: (material: 'mica' | 'acrylic' | 'none') => Promise<{ success: boolean }>
         getWindowMaterial: () => Promise<'mica' | 'acrylic' | 'none'>
         onUpdateWindowMaterial: (callback: (material: 'mica' | 'acrylic' | 'none') => void) => void
@@ -393,6 +396,9 @@ declare global {
         updateAutoPaste: (autoPaste: string) => Promise<void>
         updateAutoClear: (autoClear: string) => Promise<void>
         updateAutoBackToSearch: (autoBackToSearch: string) => Promise<void>
+        updateHideMainWindowOnPluginEsc: (
+          enabled: boolean
+        ) => Promise<{ success: boolean; error?: string }>
         updateWindowPositionStrategy: (strategy: string) => Promise<void>
         updateCssAppRegionDrag: (enabled: boolean) => Promise<void>
         updateShowRecentInSearch: (showRecentInSearch: boolean) => Promise<void>

@@ -219,6 +219,54 @@ describe('aiProviderService', () => {
     ])
   })
 
+  it('assigns a supported default effort when custom reasoning omits or invalidates it', () => {
+    aiProviderService.addProvider({
+      name: '默认推理档位供应商',
+      apiUrl: 'https://reasoning-default.example/v1',
+      apiKey: 'secret',
+      selectedModels: [
+        {
+          modelId: 'reasoning-model',
+          reasoning: {
+            protocol: 'openai-compatible',
+            efforts: { high: 'high', low: 'low' },
+            responseField: 'auto'
+          }
+        }
+      ]
+    })
+
+    expect(stored!.providers[0].selectedModels[0].reasoning).toMatchObject({
+      efforts: { low: 'low', high: 'high' },
+      defaultEffort: 'low'
+    })
+    expect(aiProviderService.getModelChoices()[0].reasoning).toMatchObject({
+      defaultEffort: 'low'
+    })
+
+    const provider = stored!.providers[0]
+    aiProviderService.updateProvider({
+      id: provider.id,
+      name: provider.name,
+      apiUrl: provider.apiUrl,
+      apiKey: provider.apiKey,
+      selectedModels: [
+        {
+          modelId: 'reasoning-model',
+          reasoning: {
+            protocol: 'openai-compatible',
+            efforts: { high: 'high', low: 'low' },
+            defaultEffort: 'max',
+            responseField: 'auto'
+          }
+        }
+      ]
+    })
+    expect(stored!.providers[0].selectedModels[0].reasoning).toMatchObject({
+      defaultEffort: 'low'
+    })
+  })
+
   it('does not expose a selector for unknown or explicitly unsupported reasoning', () => {
     aiProviderService.addProvider({
       name: '能力三态供应商',

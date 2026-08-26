@@ -71,7 +71,7 @@ describe('SyncClient authentication', () => {
   it('catches refresh failure, leaves authenticating, and does not send stale auth data', async () => {
     const config = {
       enabled: true,
-      serverUrl: 'wss://z-tools.top',
+      serverUrl: 'wss://z.zosen.link',
       token: 'expired-token',
       refreshToken: 'invalid-refresh-token',
       syncInterval: 30,

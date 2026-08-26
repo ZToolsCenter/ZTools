@@ -149,20 +149,21 @@ async function captchaVerifyCallback(captchaVerifyParam: string): Promise<{
   captchaResult: boolean
   bizResult: boolean
 }> {
-  if (!pending) return { captchaResult: false, bizResult: false }
+  const currentVerification = pending
+  if (!currentVerification) return { captchaResult: false, bizResult: false }
   try {
-    const result = await pending.business(captchaVerifyParam)
-    window.clearTimeout(pending.timeoutId)
-    pending.resolve(result)
-    pending = null
+    const result = await currentVerification.business(captchaVerifyParam)
+    window.clearTimeout(currentVerification.timeoutId)
+    currentVerification.resolve(result)
+    if (pending === currentVerification) pending = null
     return { captchaResult: true, bizResult: true }
   } catch (err) {
     if (isCaptchaFailure(err)) {
       return { captchaResult: false, bizResult: false }
     }
-    window.clearTimeout(pending.timeoutId)
-    pending.reject(err)
-    pending = null
+    window.clearTimeout(currentVerification.timeoutId)
+    currentVerification.reject(err)
+    if (pending === currentVerification) pending = null
     return { captchaResult: true, bizResult: false }
   }
 }

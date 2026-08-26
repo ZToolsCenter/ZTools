@@ -6,6 +6,10 @@ import path from 'path'
 import { normalizeIconPath, toZToolsIconUrl } from '../../common/iconUtils'
 import { launchApp, type ConfirmDialogOptions } from '../../core/commandLauncher'
 import { scanApplications } from '../../core/commandScanner'
+import {
+  hasStaleUwpIconCache,
+  hasUwpPackageSnapshotChanged
+} from '../../core/commandScanner/uwpCache'
 import { UwpManager } from '../../core/native'
 import { pluginFeatureAPI } from '../plugin/feature'
 import databaseAPI from '../shared/database'
@@ -27,13 +31,24 @@ interface LastMatchState {
   timestamp: number
 }
 
+interface AppsCacheRefreshResult {
+  apps: any[]
+  cacheUpdated: boolean
+}
+
+interface UwpAppsScanResult {
+  apps: any[]
+  packageSnapshot?: string[]
+}
+
 /**
  * 应用管理API - 主程序专用
  */
 export class AppsAPI {
-  // v4: macOS 扫描下钻一层以纳入浏览器 PWA（Chrome/Edge Apps.localized）以及 Python 安装子目录下的 IDLE 等
-  private static readonly APP_CACHE_VERSION = 4
+  // v5: Windows Start Menu 整体递归、桌面仅扫描顶层，并废弃可能仅含 UWP 的旧缓存。
+  private static readonly APP_CACHE_VERSION = 5
   private static readonly APP_CACHE_VERSION_KEY = 'cached-commands-version'
+  private static readonly UWP_PACKAGE_SNAPSHOT_KEY = 'cached-uwp-package-snapshot'
   private mainWindow: Electron.BrowserWindow | null = null
   private pluginManager: PluginManager | null = null
   private launchParam: any = null
@@ -195,6 +210,8 @@ export class AppsAPI {
       return []
     }
 
+    let currentUwpPackageSnapshot: string[] | undefined
+
     // 尝试从数据库缓存读取
     try {
       const cachedApps = databaseAPI.dbGet('cached-commands')
@@ -215,11 +232,41 @@ export class AppsAPI {
               app.icon.endsWith('.png')
             )
         )
+        const hasStaleUwpIcons = process.platform === 'win32' && hasStaleUwpIconCache(cachedApps)
+        let hasUwpPackageChanges = false
+        if (process.platform === 'win32') {
+          try {
+            // 轻量比较包注册快照，补偿 ZTools 未运行期间错过的安装、更新和卸载事件。
+            currentUwpPackageSnapshot = UwpManager.getPackageSnapshot()
+            const cachedUwpPackageSnapshot = databaseAPI.dbGet(AppsAPI.UWP_PACKAGE_SNAPSHOT_KEY)
+            hasUwpPackageChanges = hasUwpPackageSnapshotChanged(
+              cachedUwpPackageSnapshot,
+              currentUwpPackageSnapshot
+            )
+          } catch (error) {
+            // 快照不可用时继续使用图标路径校验，不阻断应用列表加载。
+            console.error('[Commands] 校验 UWP 包注册快照失败:', error)
+          }
+        }
 
         if (cacheVersion !== AppsAPI.APP_CACHE_VERSION) {
           console.log('[Commands] 检测到旧版应用缓存，将重新扫描以刷新本地化名称索引...')
         } else if (hasOldFormat) {
           console.log('[Commands] 检测到旧格式图标缓存，将重新扫描并更新为 ztools-icon 协议...')
+        } else if (hasStaleUwpIcons || hasUwpPackageChanges) {
+          try {
+            // Win32 缓存仍然有效时只替换 UWP 条目，避免包变化触发快捷方式全量扫描。
+            const reason = hasStaleUwpIcons ? '失效的 UWP 图标缓存' : 'UWP 包注册变化'
+            console.log(`[Commands] 检测到${reason}，仅刷新 UWP 应用...`)
+            const apps = this.replaceCachedUwpApps(cachedApps, currentUwpPackageSnapshot)
+            this.notifyFirstAppsReady()
+            return apps
+          } catch (error) {
+            // UWP 刷新失败时继续使用旧缓存，下次启动或包事件会再次尝试。
+            console.error('[Commands] 刷新启动阶段 UWP 应用失败，继续使用旧缓存:', error)
+            this.notifyFirstAppsReady()
+            return cachedApps
+          }
         } else {
           console.log(`从缓存读取到 ${cachedApps.length} 个应用`)
           this.notifyFirstAppsReady()
@@ -232,45 +279,136 @@ export class AppsAPI {
 
     // 缓存缺失、版本过旧或图标格式失效时执行一次修复性扫描。
     console.log('[Commands] 应用缓存不可用，开始扫描应用...')
-    const apps = await this.scanAndCacheApps()
+    const { apps } = await this.scanAndCacheApps(currentUwpPackageSnapshot)
     this.notifyFirstAppsReady()
+    return apps
+  }
+
+  /**
+   * 扫描当前用户的 UWP 应用并生成缓存命令。
+   *
+   * @param knownUwpPackageSnapshot 调用方已经读取的包注册快照。
+   * @returns UWP 命令和可用的包注册快照。
+   * @throws UWP 应用枚举失败时抛出。
+   */
+  private scanUwpApps(knownUwpPackageSnapshot?: string[]): UwpAppsScanResult {
+    const uwpApps = UwpManager.getUwpApps()
+    const apps: any[] = []
+    const seenPaths = new Set<string>()
+
+    // 同一包可能暴露重复注册项，按稳定的 AppUserModelID 去重。
+    for (const uwpApp of uwpApps) {
+      const uwpPath = `uwp:${uwpApp.appId}`
+      const normalizedPath = uwpPath.toLowerCase()
+      if (seenPaths.has(normalizedPath)) continue
+      seenPaths.add(normalizedPath)
+      apps.push({
+        name: uwpApp.name,
+        path: uwpPath,
+        icon: toZToolsIconUrl(uwpApp.icon)
+      })
+    }
+
+    let packageSnapshot = knownUwpPackageSnapshot
+    if (!packageSnapshot) {
+      try {
+        // 快照失败不影响本次 UWP 列表使用，但不持久化快照以便后续重试。
+        packageSnapshot = UwpManager.getPackageSnapshot()
+      } catch (error) {
+        console.error('[Commands] 保存 UWP 包注册快照失败:', error)
+      }
+    }
+
+    console.log(`获取到 ${uwpApps.length} 个 UWP 应用，去重后 ${apps.length} 个`)
+    return { apps, packageSnapshot }
+  }
+
+  /**
+   * 使用最新 UWP 条目替换缓存中的旧 UWP 条目并持久化。
+   *
+   * @param cachedApps 已确认版本有效的应用缓存。
+   * @param knownUwpPackageSnapshot 调用方已经读取的包注册快照。
+   * @returns 替换 UWP 条目后的完整应用列表。
+   * @throws UWP 枚举或数据库写入失败时抛出。
+   */
+  private replaceCachedUwpApps(cachedApps: any[], knownUwpPackageSnapshot?: string[]): any[] {
+    const uwpScan = this.scanUwpApps(knownUwpPackageSnapshot)
+
+    // 保留全部非 UWP 命令，只替换 path 带 uwp: 前缀的缓存条目。
+    const apps = [
+      ...cachedApps.filter(
+        (app) => typeof app?.path !== 'string' || !app.path.toLowerCase().startsWith('uwp:')
+      ),
+      ...uwpScan.apps
+    ]
+    databaseAPI.dbPut('cached-commands', apps)
+    if (uwpScan.packageSnapshot) {
+      databaseAPI.dbPut(AppsAPI.UWP_PACKAGE_SNAPSHOT_KEY, uwpScan.packageSnapshot)
+    }
+    console.log(`[Commands] UWP 应用缓存已独立刷新，共 ${apps.length} 个应用`)
     return apps
   }
 
   /**
    * 扫描应用并缓存到数据库
    *
-   * @returns 扫描并合并 UWP 应用后的应用列表。
+   * @param knownUwpPackageSnapshot 启动校验阶段已经读取的 UWP 包快照。
+   * @returns 扫描结果和持久化缓存是否发生更新。
    */
-  private async scanAndCacheApps(): Promise<any[]> {
-    const apps = await scanApplications()
-    console.log(`扫描到 ${apps.length} 个应用`)
+  private async scanAndCacheApps(
+    knownUwpPackageSnapshot?: string[]
+  ): Promise<AppsCacheRefreshResult> {
+    let fallbackApps: any[] = []
+    try {
+      // 扫描失败时保留进入本次刷新前的最后一份完整缓存。
+      const cachedApps = databaseAPI.dbGet('cached-commands')
+      if (Array.isArray(cachedApps)) fallbackApps = cachedApps
+    } catch (error) {
+      console.error('[Commands] 读取扫描失败回退缓存失败:', error)
+    }
+
+    const scanResult = await scanApplications()
+    const apps = [...scanResult.apps]
+    console.log(`扫描到 ${apps.length} 个本地应用`)
+
+    if (!scanResult.complete) {
+      console.error('[Commands] 本地应用扫描不完整，不覆盖现有缓存:', scanResult.errors)
+      if (fallbackApps.length > 0) {
+        return { apps: fallbackApps, cacheUpdated: false }
+      }
+
+      // 首次启动没有旧缓存时允许临时展示成功来源，但保持数据库为空以便下次重试。
+      if (process.platform === 'win32') {
+        try {
+          const uwpScan = this.scanUwpApps(knownUwpPackageSnapshot)
+          apps.push(...uwpScan.apps)
+        } catch (error) {
+          console.error('[Commands] 部分扫描后获取 UWP 应用失败:', error)
+        }
+      }
+      return { apps, cacheUpdated: false }
+    }
+
+    let uwpPackageSnapshot = knownUwpPackageSnapshot
+    let uwpScanSucceeded = false
 
     // Windows 平台：获取 UWP 应用并合并
     if (process.platform === 'win32') {
       try {
-        const uwpApps = UwpManager.getUwpApps()
-        console.log(`获取到 ${uwpApps.length} 个 UWP 应用`)
-
-        // 将 UWP 应用转换为 Command 格式，使用 uwp: 前缀标识
-        for (const uwpApp of uwpApps) {
-          const uwpPath = `uwp:${uwpApp.appId}`
-          // 按 name|path 组合去重，与 windowsScanner.deduplicateCommands 策略一致
-          const dedupeKey = `${uwpApp.name.toLowerCase()}|${uwpPath.toLowerCase()}`
-          const isDuplicate = apps.some(
-            (a) => `${a.name.toLowerCase()}|${a.path.toLowerCase()}` === dedupeKey
-          )
-          if (isDuplicate) continue
-
-          apps.push({
-            name: uwpApp.name,
-            path: uwpPath,
-            icon: toZToolsIconUrl(uwpApp.icon)
-          })
-        }
+        const uwpScan = this.scanUwpApps(knownUwpPackageSnapshot)
+        apps.push(...uwpScan.apps)
+        uwpPackageSnapshot = uwpScan.packageSnapshot
         console.log(`合并 UWP 后共 ${apps.length} 个应用`)
+        uwpScanSucceeded = true
       } catch (error) {
         console.error('[Commands] 获取 UWP 应用失败:', error)
+
+        // 新的 Win32 扫描仍可落盘，同时保留上一份 UWP 条目避免暂时消失。
+        apps.push(
+          ...fallbackApps.filter(
+            (app) => typeof app?.path === 'string' && app.path.toLowerCase().startsWith('uwp:')
+          )
+        )
       }
     }
 
@@ -281,12 +419,15 @@ export class AppsAPI {
     try {
       databaseAPI.dbPut('cached-commands', apps)
       databaseAPI.dbPut(AppsAPI.APP_CACHE_VERSION_KEY, AppsAPI.APP_CACHE_VERSION)
+      if (process.platform === 'win32' && uwpScanSucceeded && uwpPackageSnapshot) {
+        databaseAPI.dbPut(AppsAPI.UWP_PACKAGE_SNAPSHOT_KEY, uwpPackageSnapshot)
+      }
       console.log('[Commands] 应用列表已缓存到数据库')
+      return { apps, cacheUpdated: true }
     } catch (error) {
       console.error('[Commands] 缓存应用列表失败:', error)
+      return { apps, cacheUpdated: false }
     }
-
-    return apps
   }
 
   /**
@@ -300,11 +441,65 @@ export class AppsAPI {
 
     console.log('[Commands] 开始刷新应用缓存...')
     try {
-      await this.scanAndCacheApps()
-      this.invalidateCommandsCache(true)
-      console.log('[Commands] 应用缓存刷新成功')
+      const result = await this.scanAndCacheApps()
+      if (result.cacheUpdated) {
+        this.invalidateCommandsCache(true)
+        console.log('[Commands] 应用缓存刷新成功')
+      } else {
+        console.warn('[Commands] 应用扫描不完整，已保留原缓存')
+      }
     } catch (error) {
       console.error('[Commands] 刷新应用缓存失败:', error)
+    }
+  }
+
+  /**
+   * 仅刷新持久化缓存中的 UWP 应用，避免包事件触发 Win32 快捷方式扫描。
+   *
+   * @returns 刷新完成后的 Promise；缓存不可用或刷新失败时保留原缓存。
+   */
+  public async refreshUwpAppsCache(): Promise<void> {
+    if (process.platform !== 'win32' || !this.isLocalAppSearchEnabled) return
+
+    try {
+      const cachedApps = databaseAPI.dbGet('cached-commands')
+      const cacheVersion = databaseAPI.dbGet(AppsAPI.APP_CACHE_VERSION_KEY)
+      if (!Array.isArray(cachedApps) || cachedApps.length === 0) {
+        console.log('[Commands] 尚无完整应用缓存，跳过独立 UWP 刷新并等待首次扫描')
+        return
+      }
+      if (cacheVersion !== AppsAPI.APP_CACHE_VERSION) {
+        console.log('[Commands] 应用缓存版本过旧，跳过独立 UWP 刷新并等待修复性扫描')
+        return
+      }
+
+      this.replaceCachedUwpApps(cachedApps)
+      this.invalidateCommandsCache(true)
+    } catch (error) {
+      // 保持旧快照或旧缓存版本，让下一次事件或启动校验继续重试。
+      console.error('[Commands] 独立刷新 UWP 应用失败，将在后续重试:', error)
+    }
+  }
+
+  /**
+   * 在 PackageCatalog 订阅建立后复核包快照，关闭启动扫描与事件监听之间的竞态窗口。
+   *
+   * @returns 检查及必要刷新完成后的 Promise。
+   */
+  public async refreshAppsCacheIfUwpPackagesChanged(): Promise<void> {
+    if (process.platform !== 'win32' || !this.isLocalAppSearchEnabled) return
+
+    try {
+      // 仅枚举包完整名；没有变化时不执行应用和图标全量扫描。
+      const cachedSnapshot = databaseAPI.dbGet(AppsAPI.UWP_PACKAGE_SNAPSHOT_KEY)
+      const currentSnapshot = UwpManager.getPackageSnapshot()
+      if (hasUwpPackageSnapshotChanged(cachedSnapshot, currentSnapshot)) {
+        console.log('[Commands] PackageCatalog 建立后检测到包注册变化，开始补偿刷新...')
+        await this.refreshUwpAppsCache()
+      }
+    } catch (error) {
+      // 复核失败不影响实时监听和下次启动校验。
+      console.error('[Commands] PackageCatalog 建立后的包快照复核失败:', error)
     }
   }
 

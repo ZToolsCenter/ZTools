@@ -10,8 +10,11 @@ describe('SyncCheckpointStore server isolation', () => {
       store.load('same-user', 'same-device', 'https://z-tools.top/'),
       42
     )
+    const migratedCheckpoint = store.load('same-user', 'same-device', 'https://z.zosen.link/')
 
     expect(checkpoint.serverUrl).toBe('https://z-tools.top/')
+    expect(migratedCheckpoint.remotePullSeq).toBe(42)
+    expect(migratedCheckpoint.serverUrl).toBe('https://z.zosen.link/')
     expect(meta.has('_sync_checkpoint:same-user:same-device')).toBe(true)
   })
 
@@ -25,7 +28,7 @@ describe('SyncCheckpointStore server isolation', () => {
       18
     )
     expect(store.load('same-user', 'same-device', 'https://two.example.com').remotePullSeq).toBe(0)
-    expect(store.load('same-user', 'same-device', 'wss://z-tools.top').remotePullSeq).toBe(0)
+    expect(store.load('same-user', 'same-device', 'wss://z.zosen.link').remotePullSeq).toBe(0)
   })
 })
 

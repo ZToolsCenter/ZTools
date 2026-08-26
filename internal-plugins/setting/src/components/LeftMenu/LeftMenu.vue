@@ -9,33 +9,24 @@ import {
 } from '@/composables/useZToolsAccount'
 import { MenuRouterItemType } from '@/router'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { useNotificationCenter } from '@/composables'
+import { useAccountProfile, useNotificationCenter } from '@/composables'
 import { useRoute, useRouter } from 'vue-router'
 
 const router = useRouter()
 const route = useRoute()
 const { success, error, warning, confirm } = useToast()
 const { unreadCount, unreadLabel } = useNotificationCenter()
+const { state: accountProfile, refresh: refreshAccountProfile } = useAccountProfile()
 
 const menuRoutes = ref<MenuRouterItemType[]>([] as MenuRouterItemType[])
-const loggedIn = ref(false)
-const username = ref('')
-const nickname = ref('')
-const avatar = ref(defaultAvatar)
 const loginVisible = ref(false)
 const loggingIn = ref(false)
 const loginUsername = ref('')
-let accountLoadVersion = 0
 let stopSyncStatusListener: (() => void) | null = null
 
-interface AccountProfileCache {
-  uid: string
-  nickname?: string
-  avatarUrl?: string
-  updatedAt: number
-}
-
-const displayName = computed(() => nickname.value || username.value || 'ZTools 用户')
+const loggedIn = computed(() => accountProfile.loggedIn)
+const avatar = computed(() => accountProfile.avatarUrl || defaultAvatar)
+const displayName = computed(() => accountProfile.nickname || accountProfile.uid || 'ZTools 用户')
 
 /**
  * 切换右侧设置页面。
@@ -58,12 +49,12 @@ const autoLoadRouter = (): void => {
 
 onMounted(() => {
   autoLoadRouter()
-  void loadAccount()
+  void loadAccount(false)
   window.addEventListener(ACCOUNT_CHANGED_EVENT, handleAccountChanged)
   stopSyncStatusListener =
     window.ztools.internal.onSyncStatusChanged?.((payload = {}) => {
       if (payload.credentialsInvalidated || payload.accountCredentialsInvalidated) {
-        void loadAccount()
+        void loadAccount(true)
       }
     }) || null
 })
@@ -74,113 +65,25 @@ onBeforeUnmount(() => {
   stopSyncStatusListener = null
 })
 
+/**
+ * 响应账号会话或资料变化并强制刷新共享状态。
+ * @returns 无返回值
+ */
 function handleAccountChanged(): void {
-  void loadAccount()
-}
-
-async function loadAccount(): Promise<void> {
-  const version = (accountLoadVersion += 1)
-  try {
-    const result = await window.ztools.internal.accountGetSession()
-    const session = result.success ? result.session : null
-    const uid = session?.username || ''
-    const isLoggedIn = Boolean(session?.token && uid)
-    if (version !== accountLoadVersion) return
-
-    loginUsername.value = uid
-    if (isLoggedIn) {
-      const cachedProfile = await readCachedProfile(uid)
-      if (version !== accountLoadVersion) return
-
-      loggedIn.value = true
-      applyProfile(cachedProfile, uid)
-      void refreshProfile(uid, version)
-    } else {
-      clearAccountState()
-    }
-  } catch {
-    if (version === accountLoadVersion) clearAccountState()
-  }
-}
-
-function profileCacheKey(uid: string): string {
-  return `account-profile-cache:${uid}`
-}
-
-async function readCachedProfile(uid: string): Promise<AccountProfileCache | null> {
-  if (!uid) return null
-  try {
-    const cached = await window.ztools.internal.dbGet(profileCacheKey(uid))
-    if (!cached || typeof cached !== 'object') return null
-    return {
-      uid: typeof cached.uid === 'string' ? cached.uid : uid,
-      nickname: typeof cached.nickname === 'string' ? cached.nickname : '',
-      avatarUrl: typeof cached.avatarUrl === 'string' ? cached.avatarUrl : '',
-      updatedAt: Number(cached.updatedAt || 0)
-    }
-  } catch {
-    return null
-  }
-}
-
-async function writeCachedProfile(profile: AccountProfileCache): Promise<void> {
-  if (!profile.uid) return
-  try {
-    await window.ztools.internal.dbPut(profileCacheKey(profile.uid), {
-      uid: profile.uid,
-      nickname: profile.nickname || '',
-      avatarUrl: profile.avatarUrl || '',
-      updatedAt: profile.updatedAt || Date.now()
-    })
-  } catch {
-    // 缓存失败不影响账号主流程。
-  }
-}
-
-function applyProfile(
-  profile: AccountProfileCache | null,
-  fallbackUid: string = username.value
-): void {
-  username.value = profile?.uid || fallbackUid
-  nickname.value = profile?.nickname || ''
-  avatar.value = profile?.avatarUrl || defaultAvatar
+  void loadAccount(true)
 }
 
 /**
- * 清理当前账号展示状态，并在当前页面失效时回到通用设置。
- * @returns 无返回值
+ * 刷新共享账号资料，并在登录态失效时退出个人中心。
+ * @param force 是否废弃正在执行的刷新并重新请求服务端
+ * @returns 刷新完成后结束的 Promise
  */
-function clearAccountState(): void {
-  // 登录态失效后离开账号页面，避免继续展示过期账号信息。
-  if (route.name === 'Account') {
-    void router.replace({ name: 'GeneralSetting' })
-  }
-  loggedIn.value = false
-  username.value = ''
-  nickname.value = ''
-  avatar.value = defaultAvatar
-}
-
-async function refreshProfile(
-  expectedUid: string,
-  version: number = accountLoadVersion
-): Promise<void> {
-  try {
-    const result = await window.ztools.internal.syncGetAccountProfile()
-    if (version !== accountLoadVersion) return
-    if (result.success && result.profile) {
-      const profile = {
-        uid: result.profile.uid || expectedUid,
-        nickname: result.profile.nickname || '',
-        avatarUrl: result.profile.avatarUrl || '',
-        updatedAt: Date.now()
-      }
-      if (profile.uid !== expectedUid) return
-      applyProfile(profile, expectedUid)
-      await writeCachedProfile(profile)
-    }
-  } catch {
-    // 远端 profile 拉取失败时保留本地缓存展示，避免头像和昵称闪回默认值。
+async function loadAccount(force: boolean = false): Promise<void> {
+  await refreshAccountProfile({ force })
+  loginUsername.value = accountProfile.uid
+  if (!accountProfile.loggedIn && route.name === 'Account') {
+    // 登录态失效后离开账号页面，避免继续展示过期账号信息。
+    await router.replace({ name: 'GeneralSetting' })
   }
 }
 

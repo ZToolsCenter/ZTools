@@ -70,7 +70,7 @@ describe('migrateLegacySyncConfig', () => {
     expect(mocks.docs.get('SYNC/profile')?.data).toEqual({
       provider: 'official',
       enabled: true,
-      serverUrl: 'wss://z-tools.top',
+      serverUrl: 'wss://z.zosen.link',
       syncInterval: 60,
       lastSyncTime: 123,
       deviceId: 'device-1'
@@ -129,7 +129,7 @@ describe('saveSyncProfile', () => {
       data: {
         provider: 'official',
         enabled: true,
-        serverUrl: 'wss://z-tools.top',
+        serverUrl: 'wss://z.zosen.link',
         syncInterval: 30,
         lastSyncTime: 123
       }

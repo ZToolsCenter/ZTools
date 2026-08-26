@@ -4,5 +4,4 @@
 
 // 窗口尺寸常量
 export const WINDOW_WIDTH = 800
-export const WINDOW_INITIAL_HEIGHT = 58
 export const WINDOW_DEFAULT_HEIGHT = 600

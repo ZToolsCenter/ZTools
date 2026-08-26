@@ -4,9 +4,14 @@ import fs from 'fs'
 import path from 'path'
 import appsAPI from './api/renderer/commands'
 import {
+  startUwpPackageMonitor,
+  stopUwpPackageMonitor,
+  type UwpPackageChangeEvent
+} from './core/uwpPackageMonitor'
+import {
   getMacApplicationPaths,
-  getWindowsRootScanPaths,
-  getWindowsScanPaths
+  getWindowsFlatScanPaths,
+  getWindowsRecursiveScanPaths
 } from './utils/systemPaths'
 
 // 要跳过的文件夹名称
@@ -28,10 +33,16 @@ class AppWatcher {
   private flatRootWatcher: FSWatcher | null = null
   private mainWindow: BrowserWindow | null = null
   private debounceTimer: NodeJS.Timeout | null = null
+  private pendingRefreshType: 'full' | 'uwp' | null = null
   private started = false
   private readonly DEBOUNCE_DELAY = 1000 // 1秒防抖
 
-  // 初始化监听器
+  /**
+   * 初始化应用目录与 UWP 包变化监听器。
+   *
+   * @param mainWindow 接收应用列表变化通知的主窗口。
+   * @returns 无返回值。
+   */
   public init(mainWindow: BrowserWindow): void {
     this.mainWindow = mainWindow
     if (this.started) {
@@ -41,10 +52,14 @@ class AppWatcher {
     this.startWatching()
   }
 
-  // 获取递归监听路径
+  /**
+   * 获取当前平台需要递归监听的应用目录。
+   *
+   * @returns 递归监听路径；不支持的平台返回空数组。
+   */
   private getRecursiveWatchPaths(): string[] {
     if (process.platform === 'win32') {
-      return getWindowsScanPaths()
+      return getWindowsRecursiveScanPaths()
     }
 
     if (process.platform === 'darwin') {
@@ -54,10 +69,14 @@ class AppWatcher {
     return []
   }
 
-  // 获取扁平根监听路径
+  /**
+   * 获取 Windows 只监听顶层的桌面路径。
+   *
+   * @returns 扁平监听路径；非 Windows 平台返回空数组。
+   */
   private getFlatRootWatchPaths(): string[] {
     if (process.platform === 'win32') {
-      return getWindowsRootScanPaths()
+      return getWindowsFlatScanPaths()
     }
 
     return []
@@ -114,7 +133,11 @@ class AppWatcher {
     return true
   }
 
-  // 启动监听
+  /**
+   * 启动当前平台支持的应用目录和包注册变化监听。
+   *
+   * @returns 无返回值。
+   */
   private startWatching(): void {
     const recursivePaths = this.getRecursiveWatchPaths()
     const flatRootPaths = this.getFlatRootWatchPaths()
@@ -135,6 +158,32 @@ class AppWatcher {
     this.bindWatcherEvents(this.recursiveWatcher)
     if (this.flatRootWatcher) {
       this.bindWatcherEvents(this.flatRootWatcher)
+    }
+
+    // UWP 不一定创建或更新 .lnk，需要单独监听当前用户的包注册完成事件。
+    this.startUwpPackageMonitor()
+  }
+
+  /**
+   * 启动 Windows PackageCatalog 监听，并把完成事件合并到应用缓存刷新队列。
+   *
+   * @returns 无返回值；初始化失败时记录日志并保留启动校验兜底。
+   */
+  private startUwpPackageMonitor(): void {
+    if (process.platform !== 'win32') return
+
+    try {
+      startUwpPackageMonitor((event: UwpPackageChangeEvent) => {
+        console.log('[AppWatcher] 检测到 UWP 包变化完成:', event)
+        this.notifyChange('package', event.packageFullName)
+      })
+      console.log('[AppWatcher] UWP PackageCatalog 监听器已就绪')
+
+      // 订阅成功后再次比较快照，补偿启动扫描与监听建立之间发生的变化。
+      void appsAPI.refreshAppsCacheIfUwpPackagesChanged()
+    } catch (error) {
+      // PackageCatalog 不可用时不影响主程序，启动缓存校验仍会修复离线更新。
+      console.error('[AppWatcher] UWP PackageCatalog 监听启动失败:', error)
     }
   }
 
@@ -217,8 +266,21 @@ class AppWatcher {
     })
   }
 
-  // 通知渲染进程应用列表变化(使用防抖避免频繁刷新)
-  private notifyChange(type: 'add' | 'remove', filePath: string): void {
+  /**
+   * 合并短时间内的应用变化并刷新持久化应用缓存。
+   *
+   * @param type 文件添加、删除或 UWP 包注册变化类型。
+   * @param sourcePath 触发变化的快捷方式路径或包完整名。
+   * @returns 无返回值。
+   */
+  private notifyChange(type: 'add' | 'remove' | 'package', sourcePath: string): void {
+    // 同一防抖窗口内只要出现快捷方式变化，就必须执行覆盖面更完整的 Win32 扫描。
+    if (type !== 'package' || this.pendingRefreshType === 'full') {
+      this.pendingRefreshType = 'full'
+    } else {
+      this.pendingRefreshType = 'uwp'
+    }
+
     // 清除之前的定时器
     if (this.debounceTimer) {
       clearTimeout(this.debounceTimer)
@@ -226,16 +288,27 @@ class AppWatcher {
 
     // 设置新的定时器
     this.debounceTimer = setTimeout(async () => {
-      console.log(`[AppWatcher] 检测到应用变化: ${type} ${filePath}`)
+      console.log(`[AppWatcher] 检测到应用变化: ${type} ${sourcePath}`)
+      const refreshType = this.pendingRefreshType
 
-      // 刷新应用缓存
-      await appsAPI.refreshAppsCache()
-
+      // 先释放防抖状态，让刷新执行期间到达的新事件能够进入下一轮。
+      this.pendingRefreshType = null
       this.debounceTimer = null
+
+      // UWP 包变化只替换 UWP 条目，快捷方式变化才执行 Win32 全量扫描。
+      if (refreshType === 'uwp') {
+        await appsAPI.refreshUwpAppsCache()
+      } else {
+        await appsAPI.refreshAppsCache()
+      }
     }, this.DEBOUNCE_DELAY)
   }
 
-  // 停止监听
+  /**
+   * 停止全部应用变化监听并清理尚未执行的刷新任务。
+   *
+   * @returns 无返回值。
+   */
   public stop(): void {
     const watchers = [this.recursiveWatcher, this.flatRootWatcher]
     for (const watcher of watchers) {
@@ -248,10 +321,20 @@ class AppWatcher {
     this.flatRootWatcher = null
     this.started = false
 
+    if (process.platform === 'win32') {
+      try {
+        // 先撤销 PackageCatalog 订阅，阻止退出期间继续排入刷新任务。
+        stopUwpPackageMonitor()
+      } catch (error) {
+        console.error('[AppWatcher] 停止 UWP PackageCatalog 监听失败:', error)
+      }
+    }
+
     if (this.debounceTimer) {
       clearTimeout(this.debounceTimer)
       this.debounceTimer = null
     }
+    this.pendingRefreshType = null
   }
 
   // 重启监听

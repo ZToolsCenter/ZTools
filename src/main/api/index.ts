@@ -138,7 +138,7 @@ class APIManager {
     })
     pluginClipboardAPI.init()
     pluginDeviceAPI.init()
-    pluginDialogAPI.init(mainWindow)
+    pluginDialogAPI.init(mainWindow, pluginManager)
     pluginWindowAPI.init(mainWindow, pluginManager)
     pluginScreenAPI.init(mainWindow)
     // 初始化插件输入 API（需要 windowManager 和 clipboardManager 支持 paste/type 功能）

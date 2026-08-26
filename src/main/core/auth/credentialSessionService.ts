@@ -80,6 +80,41 @@ export class CredentialSessionService {
   }
 
   /**
+   * 仅在凭据仍指向预期旧地址时迁移服务器地址，并保留并发更新的账号与 token。
+   * @param expectedServerUrl 当前存储中预期的旧服务器地址。
+   * @param nextServerUrl 要写入的新服务器地址。
+   * @returns 迁移后的凭据；会话已被删除时返回 null。
+   * @throws 参数为空或存储写入失败时抛出错误。
+   */
+  async migrateServerUrl(
+    expectedServerUrl: string,
+    nextServerUrl: string
+  ): Promise<CredentialSession | null> {
+    if (!expectedServerUrl || !nextServerUrl) throw new Error('凭据服务器地址不能为空')
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const currentDoc = await lmdbInstance.promises.get(this.documentId)
+      const current = this.normalize(currentDoc?.data)
+      // 会话已切换地址或被删除时，禁止用旧快照覆盖最新状态。
+      if (!current || current.serverUrl !== expectedServerUrl) return current
+
+      const migrated = { ...current, serverUrl: nextServerUrl }
+      const result = await lmdbInstance.promises.put({
+        _id: this.documentId,
+        _rev: currentDoc?._rev,
+        data: migrated
+      })
+      if (result?.ok) return migrated
+      if (result?.name !== 'conflict') {
+        throw new Error(result?.message || '迁移凭据服务器地址失败')
+      }
+    }
+
+    // 连续冲突时使用最新会话，由调用方决定是否继续迁移。
+    return this.load()
+  }
+
+  /**
    * 清空当前凭据但保留服务器和用户名，供界面展示重新登录目标。
    * @param options 清理选项；主动注销可关闭凭据失效通知。
    * @returns 清理后的会话；原会话不存在时返回 null。

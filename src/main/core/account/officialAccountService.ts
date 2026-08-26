@@ -14,7 +14,21 @@ const service = new CredentialSessionService(OFFICIAL_ACCOUNT_DOCUMENT_ID)
  * @returns 官方账号凭据；未登录时返回 null。
  */
 export async function loadOfficialAccountSession(): Promise<CredentialSession | null> {
-  return normalizeOfficialSession(await service.load())
+  const storedSession = await service.load()
+  const normalizedSession = normalizeOfficialSession(storedSession)
+  if (!storedSession || !normalizedSession) return null
+  if (storedSession.serverUrl === OFFICIAL_SYNC_SERVER_URL) return normalizedSession
+
+  try {
+    // 旧官方域名已通过白名单校验，仅替换地址并保留当前最新 token。
+    return normalizeOfficialSession(
+      await service.migrateServerUrl(storedSession.serverUrl, OFFICIAL_SYNC_SERVER_URL)
+    )
+  } catch (error) {
+    // 迁移回写失败不应让当前登录态立即掉线，后续读取会再次尝试。
+    console.warn('[OfficialAccount] 迁移官方账号服务器地址失败:', error)
+    return normalizedSession
+  }
 }
 
 /**
@@ -87,9 +101,9 @@ export function onOfficialAccountInvalidated(
 }
 
 /**
- * 拒绝被旧数据或手工写入污染为自定义服务器的官方账号会话。
+ * 将当前或受信任历史官方地址的会话统一到当前官方地址。
  * @param session 待校验的设备级账号会话。
- * @returns 指向官方服务的会话；来源不可信时返回 null。
+ * @returns 指向当前官方服务的会话；来源不可信时返回 null。
  */
 function normalizeOfficialSession(session: CredentialSession | null): CredentialSession | null {
   if (!session || !isOfficialSyncServerUrl(session.serverUrl)) return null

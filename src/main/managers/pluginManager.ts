@@ -6,7 +6,8 @@ import hideWindowHtml from '../../../resources/hideWindow.html?asset'
 
 import mainPreload from '../../../resources/preload.js?asset'
 import api from '../api'
-import { WINDOW_INITIAL_HEIGHT, WINDOW_DEFAULT_HEIGHT, WINDOW_WIDTH } from '../common/constants'
+import { WINDOW_DEFAULT_HEIGHT, WINDOW_WIDTH } from '../common/constants'
+import { STANDARD_MAIN_WINDOW_HEADER_HEIGHT } from '../../shared/mainWindowLayout'
 import detachedWindowManager, {
   DETACHED_TITLEBAR_HEIGHT,
   type DetachedPluginUpgradeSnapshot
@@ -351,7 +352,7 @@ export class PluginManager {
   // 记录最近一次插件 ESC 触发的时间，用于短时间内抑制主窗口 hide
   private lastPluginEscTime: number | null = null
   // 插件默认高度（可配置）
-  private pluginDefaultHeight: number = WINDOW_DEFAULT_HEIGHT - WINDOW_INITIAL_HEIGHT
+  private pluginDefaultHeight: number = WINDOW_DEFAULT_HEIGHT - STANDARD_MAIN_WINDOW_HEADER_HEIGHT
   // 跟踪每个插件上次进入的状态（用于单例重入判断）
   private pluginLastEnterState: Map<string, PluginLastEnterState> = new Map()
 
@@ -643,7 +644,8 @@ export class PluginManager {
         featureCode
       })
       // 插件加载时，先将窗口高度设置为 1px，避免节流
-      api.resizeWindow(WINDOW_INITIAL_HEIGHT + 1)
+      const mainContentHeight = windowManager.getMainWindowHeaderHeight()
+      api.resizeWindow(mainContentHeight + 1)
       const pluginConfig = this.readPluginConfig(pluginPath)
       const isDevelopment = !!pluginInfoFromDB?.isDevelopment
       const effectiveName = pluginInfoFromDB?.name || pluginConfig.name
@@ -664,7 +666,7 @@ export class PluginManager {
       // 设置初始布局（使用固定宽度常量，避免多显示器 DPI 缩放导致尺寸漂移）
       const windowWidth = WINDOW_WIDTH
       // 设置初始高度为 1px，避免节流
-      this.pluginView.setBounds({ x: 0, y: WINDOW_INITIAL_HEIGHT, width: windowWidth, height: 1 })
+      this.pluginView.setBounds({ x: 0, y: mainContentHeight, width: windowWidth, height: 1 })
 
       // 缓存新创建的视图
       const logoUrl = this.buildPluginLogoUrl(pluginPath, pluginConfig.logo)
@@ -1420,14 +1422,19 @@ export class PluginManager {
     }
   }
 
-  // 设置插件视图高度
+  /**
+   * 设置主窗口插件视图高度，并按当前顶部栏高度同步窗口尺寸和视图偏移。
+   * @param height 插件正文期望高度，单位为像素。
+   * @param updateCache 是否更新当前插件缓存中的正文高度。
+   * @returns 无返回值。
+   */
   public setExpendHeight(height: number, updateCache: boolean = true): void {
     if (!this.mainWindow || !this.pluginView) return
 
     console.log('[Plugin] 设置插件高度:', height)
 
-    // 搜索框高度
-    const mainContentHeight = WINDOW_INITIAL_HEIGHT
+    // 顶部栏高度由当前紧凑模式统一决定。
+    const mainContentHeight = windowManager.getMainWindowHeaderHeight()
     // 计算总窗口高度
     const totalHeight = height + mainContentHeight
 
@@ -1485,11 +1492,16 @@ export class PluginManager {
     }
   }
 
-  // 更新插件视图大小（跟随窗口大小变化）
+  /**
+   * 根据主窗口尺寸更新当前插件视图边界。
+   * @param width 主窗口内容宽度，单位为像素。
+   * @param height 主窗口内容高度，单位为像素。
+   * @returns 无返回值。
+   */
   public updatePluginViewBounds(width: number, height: number): void {
     if (!this.pluginView) return
 
-    const mainContentHeight = WINDOW_INITIAL_HEIGHT
+    const mainContentHeight = windowManager.getMainWindowHeaderHeight()
     const viewHeight = height - mainContentHeight
 
     if (viewHeight > 0) {
@@ -1506,6 +1518,18 @@ export class PluginManager {
         cached.height = viewHeight
       }
     }
+  }
+
+  /**
+   * 在顶部栏密度变化后重新布局当前插件，并保持插件正文高度不变。
+   * @returns 无返回值。
+   */
+  public refreshMainWindowHeaderLayout(): void {
+    if (!this.pluginView) return
+
+    // 使用当前视图真实高度，避免切换密度时覆盖插件主动设置的高度。
+    const { height } = this.pluginView.getBounds()
+    this.setExpendHeight(height, false)
   }
 
   // 获取插件模式
@@ -1804,10 +1828,22 @@ export class PluginManager {
     })
   }
 
-  // 处理插件按 ESC 键
+  /**
+   * 处理主窗口插件 WebContents 上报的 ESC，并按用户设置返回搜索或直接隐藏。
+   * @returns 无返回值。
+   */
   public handlePluginEsc(): void {
     // 记录 ESC 触发时间
     this.lastPluginEscTime = Date.now()
+
+    const settings = databaseAPI.dbGet('settings-general') || {}
+    if (settings.hideMainWindowOnPluginEsc === true) {
+      // 隐藏流程会按已强制为 immediately 的自动返回配置在后台退出插件。
+      console.log('[Plugin] 插件按下 ESC，直接隐藏主窗口')
+      windowManager.hideWindow()
+      return
+    }
+
     console.log('[Plugin] 插件按下 ESC 键 (Main Process)，返回搜索页面')
     this.hidePluginView()
     windowManager.notifyBackToSearch()

@@ -82,6 +82,8 @@ const searchResultsRef = ref<{
 } | null>(null)
 let removeAutoCheckUpdateChangedListener: (() => void) | null = null
 let removeSearchWallpaperListener: (() => void) | null = null
+let removeCompactMainWindowHeaderListener: (() => void) | null = null
+let removeHideMainWindowOnPluginEscListener: (() => void) | null = null
 // 粘贴的图片数据
 const pastedImageData = ref<string | null>(null)
 // 粘贴的文件数据
@@ -222,7 +224,8 @@ function focusSearchAfterPluginExit(): void {
 }
 
 /**
- * 处理插件模式下的分步退出逻辑：清空输入 -> 清理粘贴态 -> 退出插件
+ * 处理插件模式下的分步退出逻辑：清空输入 -> 清理粘贴态 -> 退出插件或隐藏窗口。
+ * @returns 无返回值。
  */
 function handlePluginStepExit(): void {
   if (searchQuery.value.trim()) {
@@ -240,7 +243,14 @@ function handlePluginStepExit(): void {
     return
   }
 
-  // 第三步：退出插件返回搜索
+  if (windowStore.hideMainWindowOnPluginEsc) {
+    // 仅替换原流程的最终退出动作，确保顶部输入和粘贴态仍按顺序清理。
+    console.log('[PluginExit] 分步退出完成，直接隐藏主窗口')
+    window.ztools.hideWindow()
+    return
+  }
+
+  // 第三步：按原有行为退出插件返回搜索。
   exitPluginToSearch()
 }
 
@@ -744,6 +754,20 @@ onMounted(async () => {
     void windowStore.updateSearchWallpaper(wallpaper)
   })
 
+  removeCompactMainWindowHeaderListener = window.ztools.onUpdateCompactMainWindowHeader(
+    (enabled) => {
+      windowStore.updateCompactMainWindowHeader(enabled)
+      if (currentView.value === ViewMode.Search) {
+        updateWindowHeight()
+      }
+    }
+  )
+  removeHideMainWindowOnPluginEscListener = window.ztools.onUpdateHideMainWindowOnPluginEsc(
+    (enabled) => {
+      windowStore.updateHideMainWindowOnPluginEsc(enabled)
+    }
+  )
+
   // 监听自动粘贴配置更新事件
   window.ztools.onUpdateAutoPaste((autoPaste: string) => {
     console.log('更新自动粘贴配置:', autoPaste)
@@ -1118,6 +1142,10 @@ onUnmounted(() => {
   removeAutoCheckUpdateChangedListener = null
   removeSearchWallpaperListener?.()
   removeSearchWallpaperListener = null
+  removeCompactMainWindowHeaderListener?.()
+  removeCompactMainWindowHeaderListener = null
+  removeHideMainWindowOnPluginEscListener?.()
+  removeHideMainWindowOnPluginEscListener = null
   window.removeEventListener('keydown', handleKeydown)
 })
 </script>

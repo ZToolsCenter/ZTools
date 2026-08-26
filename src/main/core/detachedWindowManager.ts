@@ -12,11 +12,17 @@ import pluginWindowManager from './pluginWindowManager'
 import { getDetachedWindowSizeKey } from '../../shared/pluginRuntimeNamespace'
 import { getPreloadPath, getRendererPath } from '../utils/appBundlePath'
 import type { AiRequestStatus } from '../../shared/aiRequestStatus'
+import {
+  STANDARD_DETACHED_WINDOW_TITLEBAR_HEIGHT,
+  normalizeCompactMainWindowHeader,
+  resolveDetachedWindowTitlebarHeight
+} from '../../shared/mainWindowLayout'
 
-export const DETACHED_TITLEBAR_HEIGHT = 52
+export const DETACHED_TITLEBAR_HEIGHT = STANDARD_DETACHED_WINDOW_TITLEBAR_HEIGHT
 const MIN_WINDOW_WIDTH = 400
 const MIN_WINDOW_HEIGHT = 300
 const MIN_VIEW_HEIGHT = MIN_WINDOW_HEIGHT - DETACHED_TITLEBAR_HEIGHT
+const MAC_TRAFFIC_LIGHT_X = 15
 
 /**
  * 分离窗口信息
@@ -48,6 +54,61 @@ class DetachedWindowManager {
   private resizeSaveTimers: Map<string, NodeJS.Timeout> = new Map()
   private lastSavedSizeByPlugin: Map<string, { width: number; height: number }> = new Map()
   private suppressedSizePersistenceWindows = new Set<string>()
+  private compactWindowHeader = false
+
+  /**
+   * 获取当前分离插件窗口的标题栏高度。
+   * @returns 当前标题栏高度，单位为像素。
+   */
+  public getTitlebarHeight(): number {
+    return resolveDetachedWindowTitlebarHeight(this.compactWindowHeader)
+  }
+
+  /**
+   * 计算 macOS 系统交通灯在当前标题栏中的垂直居中位置。
+   * @param titlebarHeight 当前分离窗口标题栏高度，单位为像素。
+   * @returns Electron 交通灯左上角坐标。
+   */
+  private resolveTrafficLightPosition(titlebarHeight: number): Electron.Point {
+    return {
+      x: MAC_TRAFFIC_LIGHT_X,
+      y: Math.max(8, Math.round((titlebarHeight - 16) / 2))
+    }
+  }
+
+  /**
+   * 更新所有分离插件窗口的标题栏密度，并保持插件正文高度不变。
+   * @param enabled 是否启用紧凑顶部栏。
+   * @returns 无返回值。
+   */
+  public setCompactWindowHeader(enabled: boolean): void {
+    const compactWindowHeader = normalizeCompactMainWindowHeader(enabled)
+    if (this.compactWindowHeader === compactWindowHeader) return
+
+    // 先切换共享状态，确保 resize 回调使用新的标题栏高度。
+    this.compactWindowHeader = compactWindowHeader
+    const titlebarHeight = this.getTitlebarHeight()
+
+    for (const info of this.detachedWindowMap.values()) {
+      if (info.window.isDestroyed()) continue
+
+      // 使用视图真实高度，避免覆盖插件主动设置或用户保存的正文尺寸。
+      const windowBounds = info.window.getContentBounds()
+      const viewBounds = info.view.getBounds()
+      info.window.webContents.send('update-compact-main-window-header', compactWindowHeader)
+      if (process.platform === 'darwin') {
+        info.window.setWindowButtonPosition(this.resolveTrafficLightPosition(titlebarHeight))
+      }
+      info.window.setMinimumSize(WINDOW_WIDTH, titlebarHeight)
+      info.window.setContentSize(windowBounds.width, viewBounds.height + titlebarHeight)
+      info.view.setBounds({
+        x: 0,
+        y: titlebarHeight,
+        width: windowBounds.width,
+        height: viewBounds.height
+      })
+    }
+  }
 
   /**
    * 应用窗口材质（Windows 11）
@@ -151,22 +212,27 @@ class DetachedWindowManager {
     try {
       const windowId = uuidv4()
 
+      // 新窗口直接使用持久化密度，避免标题栏首次显示后再跳变。
+      const settings = databaseAPI.dbGet('settings-general')
+      this.compactWindowHeader = normalizeCompactMainWindowHeader(settings?.compactMainWindowHeader)
+      const titlebarHeight = this.getTitlebarHeight()
+
       // 创建窗口（macOS 和 Windows 都使用无边框，macOS 保留交通灯）
       const isMac = process.platform === 'darwin'
       const isWindows = process.platform === 'win32'
 
       const windowConfig: Electron.BrowserWindowConstructorOptions = {
         width: options.width,
-        height: options.height + DETACHED_TITLEBAR_HEIGHT,
+        height: options.height + titlebarHeight,
         title: options.title,
         frame: false, // 两个平台都无边框
         titleBarStyle: isMac ? 'hiddenInset' : undefined, // macOS 保留交通灯按钮
         ...(isMac && {
-          trafficLightPosition: { x: 15, y: 18 } // macOS 交通灯垂直居中
+          trafficLightPosition: this.resolveTrafficLightPosition(titlebarHeight)
         }),
         resizable: true,
         minWidth: WINDOW_WIDTH,
-        minHeight: 52,
+        minHeight: titlebarHeight,
         hasShadow: true, // 启用窗口阴影（可调整为 false 来移除阴影）
         webPreferences: {
           preload: getPreloadPath(),
@@ -232,7 +298,8 @@ class DetachedWindowManager {
           searchQuery: options.searchQuery || '', // 搜索框初始值
           searchPlaceholder: options.searchPlaceholder || '搜索...', // 搜索框占位符
           subInputVisible: options.subInputVisible !== undefined ? options.subInputVisible : true, // 子输入框可见性
-          aiRequestStatus: options.aiRequestStatus ?? 'idle'
+          aiRequestStatus: options.aiRequestStatus ?? 'idle',
+          compactWindowHeader: this.compactWindowHeader
         })
 
         // 注入全局滚动条样式到独立窗口的标题栏
@@ -240,11 +307,12 @@ class DetachedWindowManager {
 
         // 添加插件视图（在标题栏下方）
         const bounds = win.getContentBounds()
+        const currentTitlebarHeight = this.getTitlebarHeight()
         pluginView.setBounds({
           x: 0,
-          y: DETACHED_TITLEBAR_HEIGHT,
+          y: currentTitlebarHeight,
           width: bounds.width,
-          height: bounds.height - DETACHED_TITLEBAR_HEIGHT
+          height: bounds.height - currentTitlebarHeight
         })
         win.contentView.addChildView(pluginView)
 
@@ -268,12 +336,13 @@ class DetachedWindowManager {
       win.on('resize', () => {
         if (!win.isDestroyed()) {
           const newBounds = win.getContentBounds()
+          const currentTitlebarHeight = this.getTitlebarHeight()
           // 只需要更新插件视图大小（标题栏由窗口自动处理）
           pluginView.setBounds({
             x: 0,
-            y: DETACHED_TITLEBAR_HEIGHT,
+            y: currentTitlebarHeight,
             width: newBounds.width,
-            height: newBounds.height - DETACHED_TITLEBAR_HEIGHT
+            height: newBounds.height - currentTitlebarHeight
           })
 
           // 升级期间的 0 高度是临时状态，不得覆盖用户保存的窗口尺寸。
@@ -282,7 +351,7 @@ class DetachedWindowManager {
               windowId,
               pluginName,
               newBounds.width,
-              newBounds.height - DETACHED_TITLEBAR_HEIGHT
+              newBounds.height - currentTitlebarHeight
             )
           }
         }
@@ -554,23 +623,24 @@ class DetachedWindowManager {
 
       // 先保存真实内容尺寸，再抑制升级收起动作触发的尺寸持久化。
       const bounds = info.window.getContentBounds()
+      const titlebarHeight = this.getTitlebarHeight()
       const snapshot: DetachedPluginUpgradeSnapshot = {
         windowId,
         pluginName,
         pluginPath,
         width: bounds.width,
-        viewHeight: Math.max(0, bounds.height - DETACHED_TITLEBAR_HEIGHT)
+        viewHeight: Math.max(0, bounds.height - titlebarHeight)
       }
       this.suppressedSizePersistenceWindows.add(windowId)
 
       // 保留标题栏及升级进度，隐藏即将被替换的插件内容。
       info.view.setBounds({
         x: 0,
-        y: DETACHED_TITLEBAR_HEIGHT,
+        y: titlebarHeight,
         width: bounds.width,
         height: 0
       })
-      info.window.setContentSize(bounds.width, DETACHED_TITLEBAR_HEIGHT)
+      info.window.setContentSize(bounds.width, titlebarHeight)
       return snapshot
     }
 
@@ -595,10 +665,11 @@ class DetachedWindowManager {
 
     // 恢复前解除持久化抑制，让原始尺寸继续作为用户窗口尺寸保存。
     this.suppressedSizePersistenceWindows.delete(snapshot.windowId)
-    info.window.setContentSize(snapshot.width, snapshot.viewHeight + DETACHED_TITLEBAR_HEIGHT)
+    const titlebarHeight = this.getTitlebarHeight()
+    info.window.setContentSize(snapshot.width, snapshot.viewHeight + titlebarHeight)
     info.view.setBounds({
       x: 0,
-      y: DETACHED_TITLEBAR_HEIGHT,
+      y: titlebarHeight,
       width: snapshot.width,
       height: snapshot.viewHeight
     })
@@ -713,7 +784,8 @@ class DetachedWindowManager {
         if (info.window.isDestroyed()) return
 
         const bounds = info.window.getContentBounds()
-        const newWindowHeight = height + DETACHED_TITLEBAR_HEIGHT
+        const titlebarHeight = this.getTitlebarHeight()
+        const newWindowHeight = height + titlebarHeight
 
         // 调整窗口大小
         info.window.setContentSize(bounds.width, newWindowHeight)
@@ -721,7 +793,7 @@ class DetachedWindowManager {
         // 调整插件视图大小
         info.view.setBounds({
           x: 0,
-          y: DETACHED_TITLEBAR_HEIGHT,
+          y: titlebarHeight,
           width: bounds.width,
           height: height
         })

@@ -2,7 +2,11 @@
   <div
     ref="searchBoxRef"
     class="search-box"
-    :class="{ 'css-app-region-drag': useCssAppRegionDrag && currentView === 'plugin' }"
+    :class="{
+      'css-app-region-drag': useCssAppRegionDrag && currentView === 'plugin',
+      'is-compact': windowStore.compactMainWindowHeader
+    }"
+    :style="{ height: `${mainWindowHeaderHeight}px` }"
     @mousedown="handleMouseDown"
     @dblclick="handleDoubleClick"
   >
@@ -265,6 +269,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import PluginUpgradeIcon from '@renderer/assets/icons/plugin-upgrade.svg?component'
+import { resolveMainWindowHeaderHeight } from '@shared/mainWindowLayout'
 import { normalizeConfigList } from '@shared/pluginSettings'
 import {
   resolveMainPushMenuState,
@@ -318,6 +323,9 @@ const emit = defineEmits<{
 }>()
 
 const windowStore = useWindowStore()
+const mainWindowHeaderHeight = computed(() =>
+  resolveMainWindowHeaderHeight(windowStore.compactMainWindowHeader)
+)
 
 const searchBoxRef = ref<HTMLDivElement | null>(null)
 const searchActionsRef = ref<HTMLDivElement | null>(null)
@@ -1321,6 +1329,105 @@ defineExpose({
 /* 插件页面开启后由系统（合成器）接管搜索框区域拖拽，适用于 Wayland 等无法自行定位窗口的环境 */
 .search-box.css-app-region-drag {
   -webkit-app-region: drag;
+}
+
+.search-box.is-compact {
+  padding-block: 3px;
+  padding-inline: 8px;
+}
+
+.search-box.is-compact .measure-text,
+.search-box.is-compact .placeholder-text,
+.search-box.is-compact .search-input {
+  font-size: 20px;
+}
+
+.search-box.is-compact .search-input {
+  height: 38px;
+}
+
+.search-box.is-compact .pasted-image-thumbnail {
+  width: 38px;
+  height: 38px;
+}
+
+.search-box.is-compact .pasted-files,
+.search-box.is-compact .pasted-text {
+  height: 32px;
+  padding-inline: 10px;
+}
+
+.search-box.is-compact .plugin-tag {
+  height: 32px;
+  border-radius: 16px;
+  padding-right: 3px;
+}
+
+.search-box.is-compact .plugin-tag-left {
+  height: 32px;
+  gap: 5px;
+  padding: 6px 7px;
+}
+
+.search-box.is-compact .plugin-tag.has-cmd .plugin-tag-left {
+  padding-right: 18px;
+}
+
+.search-box.is-compact .plugin-tag-icon {
+  width: 18px;
+  height: 18px;
+}
+
+.search-box.is-compact .plugin-tag-title {
+  font-size: 15px;
+}
+
+.search-box.is-compact .plugin-tag-cmd {
+  font-size: 13px;
+  padding-inline: 3px;
+}
+
+.search-box.is-compact .plugin-tag-close {
+  width: 18px;
+  height: 18px;
+}
+
+.search-box.is-compact .search-btn,
+.search-box.is-compact .avatar-container {
+  width: 34px;
+  height: 34px;
+}
+
+.search-box.is-compact .avatar-spinner {
+  right: -3px;
+  width: 40px;
+  height: 40px;
+}
+
+.search-box.is-compact .update-notification {
+  border-radius: 7px;
+}
+
+.search-box.is-compact .update-action {
+  gap: 6px;
+  padding: 4px 6px 4px 9px;
+}
+
+.search-box.is-compact .update-text {
+  font-size: 12px;
+}
+
+.search-box.is-compact .update-action :deep(svg) {
+  width: 26px;
+  height: 26px;
+}
+
+.search-box.is-compact .update-dismiss {
+  top: -4px;
+  right: -4px;
+  width: 16px;
+  height: 16px;
+  font-size: 14px;
 }
 
 /* 拖放蒙版 */

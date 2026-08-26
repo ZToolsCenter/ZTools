@@ -88,6 +88,8 @@ declare global {
       launchAsAdmin: (appPath: string, name?: string) => Promise<void>
       hideWindow: () => void
       resizeWindow: (height: number) => void
+      onUpdateCompactMainWindowHeader: (callback: (enabled: boolean) => void) => () => void
+      onUpdateHideMainWindowOnPluginEsc: (callback: (enabled: boolean) => void) => () => void
       updateLaunchContext: (context: {
         searchQuery: string
         pastedImage: string | null

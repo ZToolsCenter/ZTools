@@ -2,6 +2,8 @@ import { ipcMain, IpcMainEvent, IpcMainInvokeEvent } from 'electron'
 import type { PluginManager } from '../../managers/pluginManager'
 import lmdbInstance from '../../core/lmdb/lmdbInstance'
 import pluginWindowManager from '../../core/pluginWindowManager'
+import { getPluginDataPath } from '../../core/appData/appDataPaths'
+import { physicalFs } from '../../utils/physicalFs'
 import {
   getPluginDataPrefix,
   isDevelopmentPluginName,
@@ -740,6 +742,17 @@ export class DatabaseAPI {
         deletedCount++
       }
 
+      // 3. 清理插件专属文件系统数据目录（ztools.getPath('pluginData')），与「清除数据」语义保持一致。
+      // 失败不阻断清空，避免残留目录导致本次操作整体失败。
+      try {
+        await physicalFs.promises.rm(getPluginDataPath(pluginName), {
+          recursive: true,
+          force: true
+        })
+      } catch (error) {
+        console.error('[Database] 删除插件数据目录失败:', error)
+      }
+
       return { success: true, deletedCount }
     } catch (error: unknown) {
       console.error('[Database] 清空插件数据失败:', error)
@@ -790,7 +803,7 @@ export class DatabaseAPI {
   }
 
   /**
-   * 公共方法：清空指定插件的所有数据
+   * 公共方法：清空指定插件的所有数据（LMDB 文档、附件与 ztools.getPath('pluginData') 数据目录）。
    */
   public async clearPluginData(
     pluginName: string

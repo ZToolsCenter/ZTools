@@ -126,6 +126,46 @@ describe('aiProtocol converters', () => {
         }
       ])
     })
+
+    it('replays signed and redacted thinking blocks for the same provider model', () => {
+      const context = {
+        apiFormat: 'anthropic-messages' as const,
+        providerId: 'anthropic-provider',
+        model: 'claude-test'
+      }
+      const turn = fromAnthropicContent(
+        [
+          { type: 'thinking', thinking: 'reasoning', signature: 'signature-a' },
+          { type: 'redacted_thinking', data: 'encrypted-a' },
+          { type: 'tool_use', id: 't1', name: 'do', input: { x: 1 } }
+        ],
+        context
+      )
+
+      const { messages } = toAnthropicMessages(
+        [
+          { role: 'user', content: 'run' },
+          {
+            role: 'assistant',
+            content: turn.content,
+            reasoning_content: turn.reasoningContent,
+            tool_calls: turn.toolCalls,
+            replay_state: turn.replayState
+          },
+          { role: 'tool', content: 'done', tool_call_id: 't1' }
+        ],
+        context
+      )
+
+      expect(messages[1]).toEqual({
+        role: 'assistant',
+        content: [
+          { type: 'thinking', thinking: 'reasoning', signature: 'signature-a' },
+          { type: 'redacted_thinking', data: 'encrypted-a' },
+          { type: 'tool_use', id: 't1', name: 'do', input: { x: 1 } }
+        ]
+      })
+    })
   })
 
   describe('toAnthropicTools', () => {
@@ -252,6 +292,88 @@ describe('aiProtocol converters', () => {
           function: { name: 'f', arguments: '{"a":1}' }
         }
       ])
+    })
+
+    it('replays native reasoning, message and function items with their IDs intact', () => {
+      const context = {
+        apiFormat: 'openai-responses' as const,
+        providerId: 'responses-provider',
+        model: 'gpt-test'
+      }
+      const output = [
+        {
+          id: 'rs_1',
+          type: 'reasoning',
+          encrypted_content: 'encrypted-reasoning',
+          summary: [{ type: 'summary_text', text: 'summary' }]
+        },
+        {
+          id: 'msg_1',
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'output_text', text: 'calling' }]
+        },
+        {
+          id: 'fc_1',
+          type: 'function_call',
+          call_id: 'call_1',
+          name: 'lookup',
+          arguments: '{"id":1}'
+        }
+      ]
+      const turn = fromResponsesOutput(output, context, { id: 'resp_1' })
+
+      const items = toResponsesInput(
+        [
+          { role: 'user', content: 'run' },
+          {
+            role: 'assistant',
+            content: turn.content,
+            reasoning_content: turn.reasoningContent,
+            tool_calls: turn.toolCalls,
+            replay_state: turn.replayState
+          },
+          { role: 'tool', content: 'done', tool_call_id: 'call_1' }
+        ],
+        context
+      )
+
+      expect(items).toEqual([
+        { type: 'message', role: 'user', content: 'run' },
+        ...output,
+        { type: 'function_call_output', call_id: 'call_1', output: 'done' }
+      ])
+      expect(turn.replayState?.response).toEqual({ id: 'resp_1' })
+    })
+
+    it('falls back to standard history when replay identity does not match', () => {
+      const items = toResponsesInput(
+        [
+          {
+            role: 'assistant',
+            content: 'fallback',
+            replay_state: {
+              version: 1,
+              apiFormat: 'openai-responses',
+              providerId: 'old-provider',
+              model: 'old-model',
+              blocks: [
+                {
+                  type: 'reasoning',
+                  item: { type: 'reasoning', encrypted_content: 'private' }
+                }
+              ]
+            }
+          }
+        ],
+        {
+          apiFormat: 'openai-responses',
+          providerId: 'new-provider',
+          model: 'new-model'
+        }
+      )
+
+      expect(items).toEqual([{ type: 'message', role: 'assistant', content: 'fallback' }])
     })
 
     it('returns an empty turn when the output is missing', () => {
