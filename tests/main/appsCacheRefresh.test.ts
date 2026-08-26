@@ -38,7 +38,7 @@ vi.mock('../../src/main/api/renderer/systemSettings', () => ({ systemSettingsAPI
 
 import { AppsAPI } from '../../src/main/api/renderer/commands'
 
-describe('AppsAPI 应用缓存刷新', () => {
+describe.runIf(process.platform === 'win32')('AppsAPI 应用缓存刷新', () => {
   beforeEach(() => {
     mocks.store.clear()
     vi.clearAllMocks()

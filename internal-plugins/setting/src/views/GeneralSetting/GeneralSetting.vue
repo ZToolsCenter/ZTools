@@ -115,6 +115,8 @@ const superPanelMouseButtonOptions = [
 
 // 当前平台（与 window.ztools.getPlatform 返回类型保持一致）
 const platform = ref<'darwin' | 'win32' | 'linux'>('darwin')
+// 当前会话是否为原生 Wayland（仅 Linux 下用于悬浮球置顶限制说明）
+const isWayland = ref(false)
 
 // 终端打开设置
 const terminal = ref<TerminalType>('default')
@@ -180,6 +182,8 @@ const autoClear = ref<AutoClearOption>('immediately')
 const autoBackToSearch = ref<AutoBackToSearchOption>('never')
 const hideMainWindowOnPluginEsc = ref(false)
 const windowPositionStrategy = ref<WindowPositionStrategy>('remember')
+// Wayland 下由系统接管搜索框区域拖拽（仅 Linux 平台显示）
+const useCssAppRegionDrag = ref(false)
 const showRecentInSearch = ref(true)
 const showMatchRecommendation = ref(true)
 const localAppSearch = ref(true)
@@ -630,6 +634,21 @@ async function handleWindowPositionStrategyChange(): Promise<void> {
     console.log('窗口呼出位置策略已更新:', windowPositionStrategy.value)
   } catch (error) {
     console.error('保存窗口呼出位置策略失败:', error)
+  }
+}
+
+/**
+ * 处理 CSS app-region 拖拽开关变化：先持久化，再通知主渲染进程切换拖拽方式。
+ * @returns 保存和通知完成后结束的 Promise
+ */
+async function handleUseCssAppRegionDragChange(): Promise<void> {
+  try {
+    await saveSettings()
+    // 通知主渲染进程实时切换拖拽方式
+    await window.ztools.internal.updateCssAppRegionDrag(useCssAppRegionDrag.value)
+    console.log('CSS app-region 拖拽配置已更新:', useCssAppRegionDrag.value)
+  } catch (error) {
+    console.error('保存 CSS app-region 拖拽配置失败:', error)
   }
 }
 
@@ -1324,13 +1343,18 @@ function isValidProxyUrl(url: string): boolean {
 
 // ==================== 自定义颜色相关辅助函数 ====================
 
-// 获取平台信息（用于快捷键文案）
+/**
+ * 获取平台信息并探测 Wayland 会话（用于快捷键文案与悬浮球置顶限制说明）。
+ * @returns 平台与会话信息获取完成后结束的 Promise
+ */
 async function getPlatformInfo(): Promise<void> {
   try {
     const pf = await window.ztools.internal.getPlatform()
     if (pf === 'darwin' || pf === 'win32' || pf === 'linux') {
       platform.value = pf
     }
+    const session = window.ztools.internal.getLinuxSession()
+    isWayland.value = session?.isWayland === true
   } catch (error) {
     console.error('获取平台信息失败:', error)
   }
@@ -1363,6 +1387,7 @@ async function loadSettings(): Promise<void> {
         ? 'immediately'
         : (data.autoBackToSearch ?? 'never')
       windowPositionStrategy.value = data.windowPositionStrategy ?? 'remember'
+      useCssAppRegionDrag.value = data.useCssAppRegionDrag ?? false
       showRecentInSearch.value = data.showRecentInSearch ?? true
       showMatchRecommendation.value = data.showMatchRecommendation ?? true
       localAppSearch.value = data.localAppSearch ?? true
@@ -1461,6 +1486,7 @@ async function saveSettings(): Promise<void> {
       autoBackToSearch: autoBackToSearch.value,
       hideMainWindowOnPluginEsc: hideMainWindowOnPluginEsc.value,
       windowPositionStrategy: windowPositionStrategy.value,
+      useCssAppRegionDrag: useCssAppRegionDrag.value,
       showRecentInSearch: showRecentInSearch.value,
       showMatchRecommendation: showMatchRecommendation.value,
       localAppSearch: localAppSearch.value,
@@ -2219,6 +2245,25 @@ onUnmounted(() => {
         </div>
       </div>
 
+      <div v-if="platform === 'linux'" class="setting-item">
+        <div class="setting-label">
+          <span>使用 CSS -webkit-app-region 拖拽</span>
+          <span class="setting-desc"
+            >Wayland 下自定义拖拽可能失效，开启后由系统接管搜索框区域拖拽窗口</span
+          >
+        </div>
+        <div class="setting-control">
+          <label class="toggle">
+            <input
+              v-model="useCssAppRegionDrag"
+              type="checkbox"
+              @change="handleUseCssAppRegionDragChange"
+            />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+      </div>
+
       <div class="setting-item">
         <div class="setting-label">
           <span>插件默认高度</span>
@@ -2417,6 +2462,19 @@ onUnmounted(() => {
             />
             <span class="toggle-slider"></span>
           </label>
+        </div>
+      </div>
+
+      <div v-if="floatingBallEnabled && platform === 'linux' && isWayland" class="setting-item">
+        <div class="setting-label">
+          <span>Wayland 置顶说明</span>
+          <span class="setting-desc"
+            >原生 Wayland 协议没有置顶接口，悬浮球无法保持在其它窗口之上（X11 会话不受影响）。KDE
+            Plasma：系统设置 → 窗口管理 → 窗口规则 → 新建规则，检测窗口属性选中「ZTools
+            悬浮球」，将「在其他窗口上方」设为「强制」。GNOME：系统未内置置顶功能，可安装第三方「始终置顶」类扩展，或改用
+            X11/XWayland 会话运行 ZTools。Hyprland / Sway 等 wlroots
+            系合成器：多数不支持置顶协议，建议使用 X11/XWayland 会话。</span
+          >
         </div>
       </div>
 

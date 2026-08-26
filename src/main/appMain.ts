@@ -23,6 +23,7 @@ import httpServer from './core/httpServer'
 import mcpServer from './core/mcpServer'
 import { registerIconProtocolForSession, registerIconScheme } from './core/iconProtocol'
 import { getLogsPath } from './core/appData/appDataPaths'
+import { isZToolsCliWake } from './core/cliWake'
 import { loadInternalPlugins } from './core/internalPluginLoader'
 import pluginManager from './managers/pluginManager'
 import windowManager from './managers/windowManager'
@@ -39,6 +40,10 @@ if (platform.isMacOS) {
 }
 
 app.on('second-instance', (_event, argv) => {
+  if (isZToolsCliWake(argv)) {
+    console.log('[Main] 第二实例携带命令行唤起参数 --ztools-wake')
+  }
+
   // Windows: 检查命令行参数中是否有 .zpx 文件路径
   const zpxPath = argv.find((arg) => arg.endsWith('.zpx'))
   if (zpxPath) {
@@ -147,6 +152,9 @@ app.whenReady().then(async () => {
 
   if (isE2ETest) {
     // 测试模式直接展示窗口，让自动化驱动无需依赖全局快捷键。
+    mainWindow.once('ready-to-show', () => windowManager.showWindow())
+  } else if (isZToolsCliWake(process.argv)) {
+    // 命令行唤起启动：应用未运行时由 CLI 直接启动，就绪后自动显示窗口。
     mainWindow.once('ready-to-show', () => windowManager.showWindow())
   }
 

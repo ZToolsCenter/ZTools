@@ -127,6 +127,17 @@
         animation: border-spin 2s linear infinite;
       }
 
+      /* 移动模式：整球作为合成器拖拽区域（Wayland CSS app-region） */
+      .floating-ball.move-mode {
+        -webkit-app-region: drag;
+        cursor: move;
+      }
+
+      /* 移动模式内圈高亮，提示当前处于系统拖拽状态 */
+      .floating-ball.move-mode .floating-ball-inner {
+        background: rgba(80, 130, 255, 0.4);
+      }
+
       /* 文件拖入悬停效果 */
       .floating-ball.file-hover::before {
         animation: border-spin 1s linear infinite;
@@ -153,6 +164,7 @@
       let isDragging = false
       let startScreenX = 0
       let startScreenY = 0
+      let moveMode = false // 移动模式：整球交给合成器拖拽，跳过手动拖拽与点击逻辑
       const DRAG_THRESHOLD = 5
 
       // 双击检测
@@ -160,7 +172,7 @@
       const DOUBLE_CLICK_DELAY = 300 // 双击间隔 300ms
 
       ball.addEventListener('mousedown', (e) => {
-        if (e.button !== 0) return
+        if (e.button !== 0 || moveMode) return
         isMouseDown = true
         isDragging = false
         startScreenX = e.screenX
@@ -170,7 +182,7 @@
       })
 
       document.addEventListener('mousemove', (e) => {
-        if (!isMouseDown) return
+        if (!isMouseDown || moveMode) return
         const dx = e.screenX - startScreenX
         const dy = e.screenY - startScreenY
         if (!isDragging && Math.sqrt(dx * dx + dy * dy) >= DRAG_THRESHOLD) {
@@ -198,6 +210,9 @@
         if (isDragging) {
           isDragging = false
           ipcRenderer.send('floating-ball-drag-end')
+        } else if (moveMode) {
+          // 移动模式下不派发单击/双击，等待主进程退出移动模式
+          return
         } else {
           // 检测双击
           const now = Date.now()
@@ -217,6 +232,17 @@
       ball.addEventListener('contextmenu', (e) => {
         e.preventDefault()
         ipcRenderer.send('floating-ball-contextmenu')
+      })
+
+      // ==================== 移动模式（Wayland 合成器拖拽） ====================
+      ipcRenderer.on('floating-ball-enter-move-mode', () => {
+        moveMode = true
+        ball.classList.add('move-mode')
+      })
+
+      ipcRenderer.on('floating-ball-exit-move-mode', () => {
+        moveMode = false
+        ball.classList.remove('move-mode')
       })
 
       // ==================== 接收文字配置 ====================

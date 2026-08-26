@@ -1086,6 +1086,18 @@ export class InternalPluginAPI {
       return { success: true }
     })
 
+    // 通知主渲染进程切换 CSS app-region 拖拽（Wayland 下由系统接管窗口移动）
+    ipcMain.handle('internal:update-css-app-region-drag', async (event, enabled: boolean) => {
+      if (!requireInternalPlugin(this.pluginManager, event)) {
+        throw new PermissionDeniedError('internal:update-css-app-region-drag')
+      }
+      // 广播到主渲染进程
+      this.mainWindow?.webContents.send('update-css-app-region-drag', enabled)
+      // 同步主进程状态，供 Linux blur 自动隐藏决策使用
+      windowAPI.setCssAppRegionDrag(enabled)
+      return { success: true }
+    })
+
     // 通知主渲染进程更新显示最近使用配置
     ipcMain.handle(
       'internal:update-show-recent-in-search',
@@ -1246,6 +1258,19 @@ export class InternalPluginAPI {
         return
       }
       event.returnValue = process.platform
+    })
+
+    /**
+     * 返回当前会话是否为原生 Wayland（供设置页判断悬浮球置顶限制）。
+     * @param event IPC 事件对象
+     * @returns 无返回值，结果通过 event.returnValue 同步返回
+     */
+    ipcMain.on('internal:get-linux-session', (event) => {
+      if (!requireInternalPlugin(this.pluginManager, event)) {
+        event.returnValue = null
+        return
+      }
+      event.returnValue = { isWayland: !!process.env.WAYLAND_DISPLAY }
     })
 
     // ==================== 应用更新 API ====================

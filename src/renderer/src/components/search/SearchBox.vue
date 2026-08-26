@@ -2,7 +2,10 @@
   <div
     ref="searchBoxRef"
     class="search-box"
-    :class="{ 'is-compact': windowStore.compactMainWindowHeader }"
+    :class="{
+      'css-app-region-drag': useCssAppRegionDrag && currentView === 'plugin',
+      'is-compact': windowStore.compactMainWindowHeader
+    }"
     :style="{ height: `${mainWindowHeaderHeight}px` }"
     @mousedown="handleMouseDown"
     @dblclick="handleDoubleClick"
@@ -918,6 +921,10 @@ interface DragHandlers {
   cleanup: () => void
 }
 
+// CSS app-region 拖拽开关（Wayland 兼容，由设置插件实时通知）
+const useCssAppRegionDrag = ref(false)
+let cleanupCssAppRegionDragListener: (() => void) | null = null
+
 const useDrag = (): DragHandlers => {
   let isDragging = false
   let dragReady = false
@@ -952,6 +959,10 @@ const useDrag = (): DragHandlers => {
   }
 
   const onStart = async (e: MouseEvent): Promise<void> => {
+    // 仅插件页面启用 CSS app-region 时由系统接管窗口移动；
+    // 主搜索界面始终回退到旧 mousemove 拖拽，避免 Wayland 合成器拖拽引发 blur 误隐藏。
+    if (useCssAppRegionDrag.value && props.currentView === 'plugin') return
+
     const target = e.target as HTMLElement
     if (target === inputRef.value || target.closest('.search-actions')) return
 
@@ -1062,6 +1073,19 @@ onMounted(() => {
     searchBoxRef.value.addEventListener('dragleave', handleDragLeave)
     searchBoxRef.value.addEventListener('drop', handleDrop)
   }
+
+  // 读取 CSS app-region 拖拽开关初始值，并订阅设置插件的实时更新
+  window.ztools
+    .dbGet('settings-general')
+    .then((data: any) => {
+      useCssAppRegionDrag.value = Boolean(data?.useCssAppRegionDrag)
+    })
+    .catch((error) => {
+      console.error('读取 CSS app-region 拖拽配置失败:', error)
+    })
+  cleanupCssAppRegionDragListener = window.ztools.onUpdateCssAppRegionDrag((enabled) => {
+    useCssAppRegionDrag.value = enabled
+  })
 
   // 监听 AI 状态变化
   window.ztools.onAiStatusChanged?.((change) => {
@@ -1262,6 +1286,8 @@ onUnmounted(() => {
   pluginUpdateRequestSequence++
   resizeObserver?.disconnect()
   cleanupDrag()
+  cleanupCssAppRegionDragListener?.()
+  cleanupCssAppRegionDragListener = null
 
   // 清理右键菜单命令监听
   cleanupContextMenuListener?.()
@@ -1298,6 +1324,11 @@ defineExpose({
   user-select: none; /* 禁止选取文本 */
   border-radius: 0; /* 组件本身不要圆角 */
   height: 58px;
+}
+
+/* 插件页面开启后由系统（合成器）接管搜索框区域拖拽，适用于 Wayland 等无法自行定位窗口的环境 */
+.search-box.css-app-region-drag {
+  -webkit-app-region: drag;
 }
 
 .search-box.is-compact {

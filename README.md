@@ -124,6 +124,27 @@ pnpm build:linux:arm64 # Linux (按 arm64 架构打包)
 2. 输入应用名称或命令进行搜索
 3. 按 `↑` `↓` `←` `→` 选择，`Enter` 确认，`Esc` 退出
 
+### 命令行唤起
+
+在终端执行 `ztools` 可以唤起已运行的 ZTools 实例并显示主窗口；如果应用尚未运行，则会先启动应用再显示窗口。命令会立即返回，不阻塞终端。
+
+```bash
+# Linux（deb 安装包）与 macOS 手动安装后可直接使用
+ztools
+
+# 开发环境中运行（先执行 pnpm build 构建主程序）
+pnpm ztools
+
+# 通过环境变量指定可执行文件
+ZTOOLS_BIN=/path/to/ZTools ztools
+```
+
+不同安装方式下的可用性：
+
+- **Linux deb**：安装包会自动创建 `/usr/bin/ztools` 命令，卸载时自动移除
+- **macOS dmg**：首次使用需手动建立软链接：`sudo ln -s "/Applications/ZTools.app/Contents/Resources/ztools/ztools-launcher.sh" /usr/local/bin/ztools`
+- **Windows**：仅覆盖开发环境（`pnpm ztools`）
+
 ## 🧩 插件开发
 
 ZTools 是一个强大、可扩展的插件平台，使用自定义插件提升您的生产力。通过简单的配置、丰富的 API 以及跨平台支持，您可以轻松开发出功能强大的插件。
@@ -222,6 +243,9 @@ pnpm build:linux        # 打包 Linux 应用 (当前主机架构)
 pnpm build:linux:x64    # 打包 Linux 应用 (amd64/x64)
 pnpm build:linux:arm64  # 打包 Linux 应用 (arm64)
 pnpm build:unpack       # 打包但不生成安装包（调试用）
+
+# 命令行唤起
+pnpm ztools             # 唤起已运行的实例（或启动应用）
 ```
 
 ### 调试

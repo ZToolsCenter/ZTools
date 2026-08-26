@@ -307,6 +307,7 @@ declare global {
       onUpdateAcrylicOpacity?: (
         callback: (data: { lightOpacity: number; darkOpacity: number }) => void
       ) => void
+      onUpdateCssAppRegionDrag: (callback: (enabled: boolean) => void) => () => void
       // 软件更新
       updater: {
         checkUpdate: () => Promise<{

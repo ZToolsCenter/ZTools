@@ -104,12 +104,15 @@ describe('launchApp 传递工作目录 (#603)', () => {
     expect(opts.workingDirectory).toBeUndefined()
   })
 
-  it('PATH 中的裸 exe 走 shell.openPath，不进入原生启动器', async () => {
-    await launchApp('calc.exe')
+  it.runIf(process.platform === 'win32')(
+    'PATH 中的裸 exe 走 shell.openPath，不进入原生启动器',
+    async () => {
+      await launchApp('calc.exe')
 
-    expect(mockLaunch).not.toHaveBeenCalled()
-    expect(mockOpenPath).toHaveBeenCalledWith('calc.exe')
-  })
+      expect(mockLaunch).not.toHaveBeenCalled()
+      expect(mockOpenPath).toHaveBeenCalledWith('calc.exe')
+    }
+  )
 })
 
 describe('launchApp 启动 UWP 应用', () => {

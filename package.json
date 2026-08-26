@@ -37,6 +37,7 @@
     "build:linux:x64": "cross-env ZTOOLS_TARGET_PLATFORM=linux pnpm build && electron-builder --linux --x64",
     "build:linux:arm64": "cross-env ZTOOLS_TARGET_PLATFORM=linux pnpm build && electron-builder --linux --arm64",
     "updater": "node scripts/updater.mjs",
+    "ztools": "node scripts/ztools-cli.mjs",
     "test": "vitest run",
     "test:e2e": "pnpm exec electron-vite build && playwright test --config=playwright.e2e.config.ts",
     "test:windows-scanner": "electron scripts/compare-windows-scanner.cjs",
@@ -46,6 +47,9 @@
     "check-api-types": "node -p \"require('./ztools-api-types/package.json')['utools-version']\"",
     "hooks:install": "git config core.hooksPath .githooks",
     "postinstall": "pnpm run hooks:install || true"
+  },
+  "bin": {
+    "ztools": "scripts/ztools-cli.mjs"
   },
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.2",

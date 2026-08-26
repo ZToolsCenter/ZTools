@@ -400,6 +400,7 @@ declare global {
           enabled: boolean
         ) => Promise<{ success: boolean; error?: string }>
         updateWindowPositionStrategy: (strategy: string) => Promise<void>
+        updateCssAppRegionDrag: (enabled: boolean) => Promise<void>
         updateShowRecentInSearch: (showRecentInSearch: boolean) => Promise<void>
         updateMatchRecommendation: (showMatchRecommendation: boolean) => Promise<void>
         updateLocalAppSearch: (enabled: boolean) => Promise<void>
@@ -431,6 +432,7 @@ declare global {
         getAppName: () => Promise<string>
         getSystemVersions: () => Promise<NodeJS.ProcessVersions>
         getPlatform: () => NodeJS.Platform
+        getLinuxSession: () => { isWayland: boolean }
         isWindows11: () => Promise<boolean>
 
         // 软件更新

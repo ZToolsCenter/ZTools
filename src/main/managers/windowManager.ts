@@ -36,6 +36,11 @@ import {
 type WindowMaterial = 'mica' | 'acrylic' | 'none'
 const WINDOW_BLUR_DRAG_INPUT_CONSUMER = 'window-blur-drag'
 const DEFAULT_MODAL_DIALOG_BLUR_HIDE_RELEASE_DELAY_MS = 500
+// Wayland CSS 拖拽 blur 分类使用的光标轮询与判定阈值
+const CURSOR_POLL_INTERVAL_MS = 100
+const POINTER_MOVING_THRESHOLD_MS = 200
+const LINUX_BLUR_HIDE_CONFIRM_MS = 500
+const DRAG_MOVE_DEFER_MS = 1200
 
 /**
  * 应用快捷键触发时携带的文件输入
@@ -99,12 +104,17 @@ class WindowManager {
   private lastFocusTarget: 'mainWindow' | 'plugin' | null = null // 窗口隐藏前的焦点状态
   private isRestoringFocus: boolean = false // 是否正在恢复焦点状态（防止 focus 事件监听器干扰）
   private suppressBlurHide: boolean = false // 临时抑制 blur 事件隐藏窗口（文件关联打开等场景）
+  private cssAppRegionDragEnabled: boolean = false // Linux 是否启用了 CSS app-region 系统拖拽
   // 原生模态对话框关闭前后可能发出排队的 blur/mouseup 事件。
   private modalDialogBlurHideSuppressed: boolean = false
   private modalDialogBlurHideReleaseTimer: ReturnType<typeof setTimeout> | null = null
   private modalDialogBlurHideSuppressionDepth: number = 0
   private lastBlurHideTime: number = 0 // blur 导致隐藏窗口的时间戳（用于解决托盘点击竞态）
-  private blurHideTimer: ReturnType<typeof setTimeout> | null = null // Linux blur 延迟隐藏定时器
+  private blurHideTimer: ReturnType<typeof setTimeout> | null = null // Linux blur 确认隐藏定时器
+  private deferredBlurHideTimer: ReturnType<typeof setTimeout> | null = null // Linux blur 拖拽移动复核定时器
+  private cursorPollTimer: ReturnType<typeof setInterval> | null = null // 窗口可见期间的光标轮询定时器
+  private lastCursorPoint: { x: number; y: number } | null = null // 最近一次采样到的全局光标位置
+  private lastCursorMoveAt: number = 0 // 最近一次检测到光标移动的时间戳
   // Double-tap 唤醒窗口时，Windows 可能紧跟一个短暂 blur；这两个 timer 用于跳过误关闭并补一次焦点。
   private doubleTapFocusTimer: ReturnType<typeof setTimeout> | null = null
   private windowsHotkeyFocusTimer: ReturnType<typeof setTimeout> | null = null
@@ -180,6 +190,167 @@ class WindowManager {
       clearTimeout(this.pendingBlurHideTimer)
       this.pendingBlurHideTimer = null
     }
+  }
+
+  /**
+   * 清除 Linux blur 相关的确认/复核定时器。
+   *
+   * @returns 无返回值。
+   */
+  private clearLinuxBlurHideTimers(): void {
+    if (this.blurHideTimer) {
+      clearTimeout(this.blurHideTimer)
+      this.blurHideTimer = null
+    }
+    if (this.deferredBlurHideTimer) {
+      clearTimeout(this.deferredBlurHideTimer)
+      this.deferredBlurHideTimer = null
+    }
+  }
+
+  /**
+   * 更新最近一次光标位置与移动时间。
+   *
+   * 窗口可见期间由轮询定时器调用；blur 分类前也会主动调用一次，
+   * 避免基于过期位置做判断。
+   *
+   * @returns 无返回值。
+   */
+  private updateCursorPoint(): void {
+    const point = screen.getCursorScreenPoint()
+    if (
+      this.lastCursorPoint &&
+      (point.x !== this.lastCursorPoint.x || point.y !== this.lastCursorPoint.y)
+    ) {
+      // 检测到位置变化时记录移动时间，供 blur 瞬间判断光标是否正在移动。
+      this.lastCursorMoveAt = Date.now()
+    }
+    this.lastCursorPoint = point
+  }
+
+  /**
+   * 开始轮询全局光标位置。
+   *
+   * 仅在窗口可见期间轮询，窗口隐藏后无需继续采样。
+   *
+   * @returns 无返回值。
+   */
+  private startCursorPolling(): void {
+    if (this.cursorPollTimer) return
+
+    // 重置历史位置后立即采样一次，保证 blur 分类有可用的光标基线。
+    this.lastCursorPoint = null
+    this.lastCursorMoveAt = 0
+    this.updateCursorPoint()
+    this.cursorPollTimer = setInterval(() => {
+      this.updateCursorPoint()
+    }, CURSOR_POLL_INTERVAL_MS)
+  }
+
+  /**
+   * 停止轮询全局光标位置并清理相关定时器。
+   *
+   * 窗口隐藏或销毁时调用，避免隐藏后定时器继续触发。
+   *
+   * @returns 无返回值。
+   */
+  private stopCursorPolling(): void {
+    if (this.cursorPollTimer) {
+      clearInterval(this.cursorPollTimer)
+      this.cursorPollTimer = null
+    }
+    this.lastCursorPoint = null
+    this.lastCursorMoveAt = 0
+    this.clearLinuxBlurHideTimers()
+  }
+
+  /**
+   * 判断光标是否在阈值时间内发生过移动。
+   *
+   * @returns 光标在 POINTER_MOVING_THRESHOLD_MS 内有移动时返回 true。
+   */
+  private isPointerMoving(): boolean {
+    if (!this.lastCursorPoint) return false
+    return Date.now() - this.lastCursorMoveAt <= POINTER_MOVING_THRESHOLD_MS
+  }
+
+  /**
+   * 启动 Linux blur 确认隐藏定时器。
+   *
+   * 用于“光标在窗口外且静止”的常规外部点击场景，确认窗口确实失焦后再隐藏。
+   *
+   * @returns 无返回值。
+   */
+  private scheduleLinuxBlurHideConfirm(): void {
+    this.clearLinuxBlurHideTimers()
+    this.blurHideTimer = setTimeout(() => {
+      this.blurHideTimer = null
+      if (this.isBlurHideSuppressed()) return
+      // 主窗口重新获焦 → 不隐藏
+      if (this.mainWindow?.isFocused()) return
+      // 插件视图持有焦点（应用内部切换）→ 不隐藏
+      if (pluginManager.isPluginViewFocused()) return
+      // 确认是点击了其他窗口，隐藏
+      this.lastBlurHideTime = Date.now()
+      this.hideWindow(false)
+    }, LINUX_BLUR_HIDE_CONFIRM_MS)
+  }
+
+  /**
+   * 启动/顺延 Linux blur 拖拽移动复核定时器。
+   *
+   * 光标在窗口外且仍在移动时使用；复核时重新分类，避免误隐藏正在进行的系统拖拽。
+   *
+   * @returns 无返回值。
+   */
+  private scheduleLinuxBlurHideRecheck(): void {
+    this.clearLinuxBlurHideTimers()
+    this.deferredBlurHideTimer = setTimeout(() => {
+      this.deferredBlurHideTimer = null
+      this.classifyLinuxBlurHide(true)
+    }, DRAG_MOVE_DEFER_MS)
+  }
+
+  /**
+   * 分类处理 Linux 下窗口 blur 是内部场景还是点击外部。
+   *
+   * 拖拽起步的 blur 发生时指针仍停在按下点（窗口内），点击其他窗口时指针必然在窗口外，
+   * 因此以 blur/复核瞬间的光标位置与移动状态区分两者。
+   *
+   * @param isDeferredRecheck 是否由复核定时器触发；复核确认静止后直接隐藏。
+   * @returns 无返回值。
+   */
+  private classifyLinuxBlurHide(isDeferredRecheck: boolean): void {
+    if (this.isBlurHideSuppressed()) return
+
+    // 先刷新光标快照，避免窗口移动后基于过期 bounds 判断。
+    this.updateCursorPoint()
+
+    if (this.lastCursorPoint && this.isPointInsideMainWindow(this.lastCursorPoint)) {
+      // 指针仍在窗口内：拖拽起步、插件视图获焦等内部场景，不启动隐藏定时器。
+      console.log('[Window] Linux blur：光标位于窗口内（疑似 CSS 拖拽起步/插件获焦），跳过隐藏')
+      this.clearLinuxBlurHideTimers()
+      return
+    }
+
+    if (this.isPointerMoving()) {
+      // 指针在窗口外且仍在移动：疑似拖拽进行中，延后到移动停止后再判定。
+      console.log('[Window] Linux blur：光标在窗口外且正在移动（疑似拖拽进行中），延后复核')
+      this.scheduleLinuxBlurHideRecheck()
+      return
+    }
+
+    console.log('[Window] Linux blur：光标在窗口外且静止（疑似点击其他窗口），准备隐藏')
+    if (isDeferredRecheck) {
+      // 复核时指针已静止且仍失焦，直接隐藏，不再额外等待确认定时器。
+      if (this.mainWindow?.isFocused()) return
+      if (pluginManager.isPluginViewFocused()) return
+      this.lastBlurHideTime = Date.now()
+      this.hideWindow(false)
+      return
+    }
+
+    this.scheduleLinuxBlurHideConfirm()
   }
 
   /**
@@ -513,6 +684,18 @@ class WindowManager {
     this.mainWindow.on('blur', () => {
       if (this.isBlurHideSuppressed()) return
 
+      // 插件视图激活且开启 Wayland 原生 CSS 拖拽时，blur 无法与“点击外部”可靠区分
+      // （拖拽停顿期间 bounds 可能已失效），此时跳过 blur 自动隐藏，避免拖动插件窗口被误关。
+      // 主搜索界面不使用 CSS 拖拽，仍按光标位置分类外部点击并隐藏窗口。
+      if (
+        platform.isLinux &&
+        this.cssAppRegionDragEnabled &&
+        pluginManager.getCurrentPluginPath() !== null
+      ) {
+        console.log('[Window] Linux 已开启 CSS app-region 拖拽且插件视图激活，跳过 blur 自动隐藏')
+        return
+      }
+
       // 左键仍按下时可能是从外部拖文件进窗口，先等 mouseup 再决定是否隐藏。
       if (this.leftMouseDown) {
         this.deferBlurHideUntilMouseUp()
@@ -520,23 +703,9 @@ class WindowManager {
       }
 
       if (platform.isLinux) {
-        // Linux 上去掉了 type:'panel'，现在 blur 只会在真正点击其他窗口时触发。
-        // 但插件 WebContentsView 获焦仍会触发 blur，需延迟排除。
-        if (this.blurHideTimer) {
-          clearTimeout(this.blurHideTimer)
-          this.blurHideTimer = null
-        }
-        this.blurHideTimer = setTimeout(() => {
-          this.blurHideTimer = null
-          if (this.isBlurHideSuppressed()) return
-          // 主窗口重新获焦 → 不隐藏
-          if (this.mainWindow?.isFocused()) return
-          // 插件视图持有焦点（应用内部切换）→ 不隐藏
-          if (pluginManager.isPluginViewFocused()) return
-          // 确认是点击了其他窗口，隐藏
-          this.lastBlurHideTime = Date.now()
-          this.hideWindow(false)
-        }, 150)
+        // Linux（Wayland/X11 拖拽）在 blur 触发瞬间用光标位置与移动状态分类，
+        // 不再依赖延迟后可能已失效的窗口 bounds。
+        this.classifyLinuxBlurHide(false)
       } else {
         // macOS / Windows：原有行为不变
         this.lastBlurHideTime = Date.now()
@@ -550,6 +719,9 @@ class WindowManager {
     }
 
     this.mainWindow.on('show', () => {
+      // 窗口显示期间持续追踪光标位置，供 blur 触发瞬间判断拖拽/点击外部。
+      this.startCursorPolling()
+
       // 开始恢复焦点流程，防止 focus 事件监听器修改 lastFocusTarget
       this.isRestoringFocus = true
       const savedFocusTarget = this.lastFocusTarget
@@ -569,6 +741,15 @@ class WindowManager {
 
       // 恢复完成，清除标志位
       this.isRestoringFocus = false
+    })
+
+    this.mainWindow.on('hide', () => {
+      // 窗口隐藏后停止光标轮询，避免隐藏期间继续采样并残留 blur 定时器。
+      this.stopCursorPolling()
+    })
+
+    this.mainWindow.on('closed', () => {
+      this.stopCursorPolling()
     })
 
     // 阻止窗口被销毁（Command+W 时隐藏而不是关闭）
@@ -596,6 +777,7 @@ class WindowManager {
 
     // 从数据库加载唤醒黑名单
     const initSettings = databaseAPI.dbGet('settings-general')
+    this.cssAppRegionDragEnabled = Boolean(initSettings?.useCssAppRegionDrag)
     if (initSettings?.wakeupBlacklist) {
       this.wakeupBlacklist = initSettings.wakeupBlacklist
     }
@@ -1202,6 +1384,21 @@ class WindowManager {
   public async updateWindowPositionStrategy(strategy: string): Promise<void> {
     this.windowPositionStrategy = strategy
     console.log('[Window] 更新窗口呼出位置策略:', strategy)
+  }
+
+  /**
+   * 更新 Linux CSS app-region 拖拽开关状态。
+   *
+   * @param enabled 是否启用 CSS app-region 系统拖拽。
+   * @returns 无返回值。
+   */
+  public setCssAppRegionDragEnabled(enabled: boolean): void {
+    this.cssAppRegionDragEnabled = enabled
+    // 启用 CSS 系统拖拽后不再使用 blur 自动隐藏，清掉可能残留的确认/复核定时器。
+    if (enabled) {
+      this.clearLinuxBlurHideTimers()
+    }
+    console.log('[Window] CSS app-region 拖拽:', enabled ? '已启用' : '已禁用')
   }
 
   /**
