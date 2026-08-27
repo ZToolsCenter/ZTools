@@ -66,6 +66,7 @@ import chokidar from 'chokidar'
 import path from 'path'
 import appsAPI from '../../src/main/api/renderer/commands'
 import {
+  getLinuxApplicationPaths,
   getWindowsFlatScanPaths,
   getWindowsRecursiveScanPaths
 } from '../../src/main/utils/systemPaths'
@@ -199,5 +200,52 @@ describe('AppWatcher 双 watcher 接线', () => {
     expect(recursiveWatcher.close).toHaveBeenCalledTimes(1)
     expect(flatWatcher.close).toHaveBeenCalledTimes(1)
     expect(uwpMonitorMock.stop).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('AppWatcher Linux 监听', () => {
+  it('Linux 仅创建递归 watcher，路径来自 getLinuxApplicationPaths（depth:1）', () => {
+    Object.defineProperty(process, 'platform', { value: 'linux', configurable: true })
+    appWatcher.init({} as never)
+
+    const watchMock = vi.mocked(chokidar.watch)
+    expect(watchMock).toHaveBeenCalledTimes(1)
+    const [recursivePaths, recursiveOpts] = watchMock.mock.calls[0]
+    expect(recursiveOpts?.depth).toBe(1)
+    expect(recursivePaths).toEqual(getLinuxApplicationPaths())
+  })
+
+  it('.desktop add/unlink 事件路由到防抖 notifyChange → refreshAppsCache', () => {
+    Object.defineProperty(process, 'platform', { value: 'linux', configurable: true })
+    appWatcher.init({} as never)
+
+    const watchMock = vi.mocked(chokidar.watch)
+    const recursiveWatcher = watchMock.mock.results[0].value as MockWatcherApi
+    const desktopPath = path.join(getLinuxApplicationPaths()[0], 'NewApp.desktop')
+
+    // add 事件：防抖未到时不刷新
+    recursiveWatcher.__emit('add', desktopPath)
+    expect(appsAPI.refreshAppsCache).not.toHaveBeenCalled()
+
+    // 推进防抖窗口（DEBOUNCE_DELAY = 1000ms）后刷新
+    vi.advanceTimersByTime(1000)
+    expect(appsAPI.refreshAppsCache).toHaveBeenCalledTimes(1)
+
+    // unlink 事件同样触发刷新
+    recursiveWatcher.__emit('unlink', desktopPath)
+    vi.advanceTimersByTime(1000)
+    expect(appsAPI.refreshAppsCache).toHaveBeenCalledTimes(2)
+  })
+
+  it('非 .desktop 文件事件不触发刷新', () => {
+    Object.defineProperty(process, 'platform', { value: 'linux', configurable: true })
+    appWatcher.init({} as never)
+    const watchMock = vi.mocked(chokidar.watch)
+    const recursiveWatcher = watchMock.mock.results[0].value as MockWatcherApi
+
+    recursiveWatcher.__emit('add', path.join(getLinuxApplicationPaths()[0], 'notes.txt'))
+    recursiveWatcher.__emit('unlink', path.join(getLinuxApplicationPaths()[0], 'notes.txt'))
+    vi.advanceTimersByTime(1000)
+    expect(appsAPI.refreshAppsCache).not.toHaveBeenCalled()
   })
 })
