@@ -265,6 +265,36 @@ class AppWatcher {
       })
     }
 
+    // 监听内容修改事件。
+    // 关键：用户编辑已有 .desktop 文件（例如把 NoDisplay 从 true 改成 false、
+    // 重新跑 update-desktop-database）只会触发 chokidar 的 'change' 事件，
+    // 不会触发 add / unlink。原实现漏了这个分支，导致编辑已有 .desktop
+    // 文件后 ZTools 的应用缓存永远不刷新。
+    // 这里按平台只监听对应后缀，避免被 Windows 的 .lnk / macOS 的 .app 干扰。
+    if (process.platform === 'win32') {
+      watcher.on('change', (filePath: string) => {
+        if (filePath.endsWith('.lnk')) {
+          console.log('[AppWatcher] 检测到快捷方式修改:', filePath)
+          this.notifyChange('add', filePath)
+        }
+      })
+    } else if (process.platform === 'darwin') {
+      // macOS 没有可识别的文件级“应用”句柄，监听顶层 .app 容器目录即可。
+      watcher.on('change', (filePath: string) => {
+        if (filePath.endsWith('.app')) {
+          console.log('[AppWatcher] 检测到应用目录修改:', filePath)
+          this.notifyChange('add', filePath)
+        }
+      })
+    } else if (process.platform === 'linux') {
+      watcher.on('change', (filePath: string) => {
+        if (filePath.endsWith('.desktop')) {
+          console.log('[AppWatcher] 检测到 .desktop 文件修改:', filePath)
+          this.notifyChange('add', filePath)
+        }
+      })
+    }
+
     // 监听删除事件
     if (process.platform === 'win32') {
       // Windows: 监听 .lnk 文件删除
