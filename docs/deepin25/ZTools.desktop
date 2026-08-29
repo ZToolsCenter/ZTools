@@ -1,0 +1,12 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=ZTools
+Comment=ZTools application launcher
+Exec=/opt/ZTools/ztools %U
+Icon=/opt/ZTools/resources/app.asar.unpacked/resources/icons/icon-ztools.png
+Terminal=false
+StartupNotify=true
+StartupWMClass=ZTools
+Categories=Utility;
+MimeType=application/x-ztools-plugin;
