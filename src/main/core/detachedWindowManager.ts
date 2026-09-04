@@ -347,6 +347,9 @@ class DetachedWindowManager {
 
           // 升级期间的 0 高度是临时状态，不得覆盖用户保存的窗口尺寸。
           if (!this.suppressedSizePersistenceWindows.has(windowId)) {
+            // 最大化/全屏状态触发的 resize 不算用户偏好尺寸，
+            // 否则会把屏幕工作区尺寸误存为下次 Ctrl+D 的“默认尺寸”。
+            if (win.isMaximized() || win.isFullScreen()) return
             this.schedulePersistWindowSize(
               windowId,
               pluginName,
@@ -356,6 +359,33 @@ class DetachedWindowManager {
           }
         }
       })
+
+      // 仅同步 pluginView 位置，不写数据库。
+      // 用于 maximize/unmaximize 兜底：Linux 上 WM 走 _NET_WM_STATE_MAXIMIZED_*
+      // 时常不触发 ConfigureNotify，resize 事件可能不发生，导致 pluginView
+      // 保持旧 bounds、看起来“窗口最大化但内容没放大”。
+      const syncPluginViewBoundsOnly = (): void => {
+        if (win.isDestroyed() || pluginView.webContents.isDestroyed()) return
+        const bounds = win.getContentBounds()
+        pluginView.setBounds({
+          x: 0,
+          y: DETACHED_TITLEBAR_HEIGHT,
+          width: bounds.width,
+          height: Math.max(0, bounds.height - DETACHED_TITLEBAR_HEIGHT)
+        })
+      }
+
+      // maximize/unmaximize 兜底：WM 异步处理状态切换时，多次同步 pluginView，
+      // 确保 WM 完成几何变更后视图尺寸一定跟上。
+      // 注意：这里**绝不**调用 schedulePersistWindowSize，也不修改 BrowserWindow
+      // 几何；持久化和窗口几何全部由 resize 事件处理，避免引入新的副作用。
+      const syncAfterStateChange = (): void => {
+        syncPluginViewBoundsOnly()
+        setImmediate(syncPluginViewBoundsOnly)
+        setTimeout(syncPluginViewBoundsOnly, 100)
+      }
+      win.on('maximize', syncAfterStateChange)
+      win.on('unmaximize', syncAfterStateChange)
 
       // 保存窗口信息
       const windowInfo: DetachedWindowInfo = {
