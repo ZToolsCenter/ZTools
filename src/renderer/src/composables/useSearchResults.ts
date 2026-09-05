@@ -1,5 +1,6 @@
 import { computed, ref, watch } from 'vue'
 import { useCommandDataStore } from '../stores/commandDataStore'
+import { matchCommand } from '../utils/tokenSearch'
 import { useWindowStore } from '../stores/windowStore'
 
 /**
@@ -256,7 +257,31 @@ export function useSearchResults(props: {
     // 无搜索词（如仅粘贴文本）时，返回去重后的原始顺序结果
     if (!query) return deduped
 
-    // 排序：完全匹配 > 前缀匹配 > 系统应用 > 其他
+    // 分词搜索开启时：按分词匹配分数排序，同分按使用频率降序
+    if (windowStore.tokenSearchEnabled) {
+      const matchInsideWord = windowStore.matchInsideWord
+      return deduped
+        .map((cmd) => {
+          const outcome = matchCommand(cmd.name, query, { matchInsideWord })
+          const isApp = cmd.type === 'direct' && cmd.subType === 'app'
+          // matchCommand 只看 name，系统应用加权在集合层补一次（对齐 tokenSearch）
+          const score = outcome
+            ? outcome.pattern === 'exact'
+              ? outcome.score
+              : outcome.score + (isApp ? 300 : 0)
+            : -1
+          return { cmd, score }
+        })
+        .sort((a, b) => {
+          if (a.score !== b.score) return b.score - a.score
+          const keyA = `${a.cmd.path}:${a.cmd.featureCode || ''}`
+          const keyB = `${b.cmd.path}:${b.cmd.featureCode || ''}`
+          return (usageStatsMap.value.get(keyB) || 0) - (usageStatsMap.value.get(keyA) || 0)
+        })
+        .map((item) => item.cmd)
+    }
+
+    // 原有排序：完全匹配 > 前缀匹配 > 系统应用 > 其他
     return deduped.sort((a, b) => {
       const nameA = a.name.toLowerCase()
       const nameB = b.name.toLowerCase()

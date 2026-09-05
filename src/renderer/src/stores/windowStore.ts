@@ -107,6 +107,9 @@ export const useWindowStore = defineStore('window', () => {
   const pinnedRows = ref(2)
   // 搜索框模式
   const searchMode = ref<SearchMode>('aggregate')
+  // 分词搜索
+  const tokenSearchEnabled = ref(false)
+  const matchInsideWord = ref(false)
 
   const theme = ref('system') // system, light, dark
   const primaryColor = ref('green') // blue, purple, green, orange, red, pink, custom
@@ -242,6 +245,14 @@ export const useWindowStore = defineStore('window', () => {
 
   function updateSearchMode(mode: SearchMode): void {
     searchMode.value = mode
+  }
+
+  function updateTokenSearchEnabled(value: boolean): void {
+    tokenSearchEnabled.value = value
+  }
+
+  function updateMatchInsideWord(value: boolean): void {
+    matchInsideWord.value = value
   }
 
   function updateTabTargetCommand(value: string): void {
@@ -694,6 +705,12 @@ export const useWindowStore = defineStore('window', () => {
         if (data.searchMode) {
           searchMode.value = data.searchMode
         }
+        if (data.tokenSearchEnabled !== undefined) {
+          tokenSearchEnabled.value = data.tokenSearchEnabled
+        }
+        if (data.matchInsideWord !== undefined) {
+          matchInsideWord.value = data.matchInsideWord
+        }
         if (data.tabKeyFunction !== undefined) {
           tabKeyFunction.value = data.tabKeyFunction
         } else {
@@ -774,6 +791,10 @@ export const useWindowStore = defineStore('window', () => {
     updatePinnedRows,
     searchMode,
     updateSearchMode,
+    tokenSearchEnabled,
+    updateTokenSearchEnabled,
+    matchInsideWord,
+    updateMatchInsideWord,
     tabKeyFunction,
     updateTabKeyFunction,
     tabTargetCommand,

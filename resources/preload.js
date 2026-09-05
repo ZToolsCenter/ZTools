@@ -1218,6 +1218,12 @@ window.ztools = {
     // 通知主渲染进程更新搜索框模式
     updateSearchMode: async (mode) =>
       await electron.ipcRenderer.invoke('internal:update-search-mode', mode),
+    // 通知主渲染进程更新分词搜索开关
+    updateTokenSearchEnabled: async (enabled) =>
+      await electron.ipcRenderer.invoke('internal:update-token-search-enabled', enabled),
+    // 通知主渲染进程更新匹配单词内部开关
+    updateMatchInsideWord: async (enabled) =>
+      await electron.ipcRenderer.invoke('internal:update-match-inside-word', enabled),
     // 通知主渲染进程更新 Tab 键功能配置
     updateTabKeyFunction: async (mode) =>
       await electron.ipcRenderer.invoke('internal:update-tab-key-function', mode),

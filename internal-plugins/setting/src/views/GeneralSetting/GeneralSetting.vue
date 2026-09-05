@@ -186,6 +186,8 @@ const localAppSearch = ref(true)
 const recentRows = ref(2)
 const pinnedRows = ref(2)
 const searchMode = ref<'aggregate' | 'list'>('aggregate')
+const tokenSearchEnabled = ref(false)
+const matchInsideWord = ref(false)
 const clipboardRetentionDays = ref(180)
 
 const availableAutoBackToSearchOptions = computed(() =>
@@ -704,7 +706,6 @@ async function handlePinnedRowsChange(): Promise<void> {
   }
 }
 
-// 处理搜索框模式变化
 async function handleSearchModeChange(): Promise<void> {
   try {
     await saveSettings()
@@ -713,6 +714,28 @@ async function handleSearchModeChange(): Promise<void> {
     console.log('搜索框模式已更新:', searchMode.value)
   } catch (error) {
     console.error('保存搜索框模式配置失败:', error)
+  }
+}
+
+// 处理分词搜索开关变化
+async function handleTokenSearchEnabledChange(): Promise<void> {
+  try {
+    await saveSettings()
+    await window.ztools.internal.updateTokenSearchEnabled(tokenSearchEnabled.value)
+    console.log('分词搜索配置已更新:', tokenSearchEnabled.value)
+  } catch (error) {
+    console.error('保存分词搜索配置失败:', error)
+  }
+}
+
+// 处理匹配单词内部开关变化
+async function handleMatchInsideWordChange(): Promise<void> {
+  try {
+    await saveSettings()
+    await window.ztools.internal.updateMatchInsideWord(matchInsideWord.value)
+    console.log('匹配单词内部配置已更新:', matchInsideWord.value)
+  } catch (error) {
+    console.error('保存匹配单词内部配置失败:', error)
   }
 }
 
@@ -1371,6 +1394,8 @@ async function loadSettings(): Promise<void> {
       theme.value = data.theme ?? 'system'
       primaryColor.value = data.primaryColor ?? 'green'
       searchMode.value = data.searchMode ?? 'aggregate'
+      tokenSearchEnabled.value = data.tokenSearchEnabled ?? false
+      matchInsideWord.value = data.matchInsideWord ?? false
       autoCheckUpdate.value = data.autoCheckUpdate ?? true
       tabKeyFunction.value =
         data.tabKeyFunction ?? (data.tabTargetCommand ? 'target-command' : 'navigate')
@@ -1467,6 +1492,8 @@ async function saveSettings(): Promise<void> {
       recentRows: recentRows.value,
       pinnedRows: pinnedRows.value,
       searchMode: searchMode.value,
+      tokenSearchEnabled: tokenSearchEnabled.value,
+      matchInsideWord: matchInsideWord.value,
       tabKeyFunction: tabKeyFunction.value,
       tabTargetCommand: tabTargetCommand.value,
       spaceOpenCommand: spaceOpenCommand.value,
@@ -1976,6 +2003,42 @@ onUnmounted(() => {
             :options="searchModeOptions"
             @change="handleSearchModeChange"
           />
+        </div>
+      </div>
+
+      <div class="setting-item">
+        <div class="setting-label">
+          <span>分词模式</span>
+          <span class="setting-desc">开启后支持更丰富的词首匹配，例如 tasm 匹配 Task Manager</span>
+        </div>
+        <div class="setting-control">
+          <label class="toggle">
+            <input
+              v-model="tokenSearchEnabled"
+              type="checkbox"
+              @change="handleTokenSearchEnabledChange"
+            />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+      </div>
+
+      <div v-if="tokenSearchEnabled" class="setting-item">
+        <div class="setting-label">
+          <span>匹配单词内部</span>
+          <span class="setting-desc"
+            >开启后允许非词首匹配，例如 ps 和 shop 都可以匹配 Photoshop (噪音较多不建议开启)</span
+          >
+        </div>
+        <div class="setting-control">
+          <label class="toggle">
+            <input
+              v-model="matchInsideWord"
+              type="checkbox"
+              @change="handleMatchInsideWordChange"
+            />
+            <span class="toggle-slider"></span>
+          </label>
         </div>
       </div>
 

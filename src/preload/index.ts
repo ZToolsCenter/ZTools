@@ -305,6 +305,12 @@ const api = {
   onUpdateSearchMode: (callback: (mode: string) => void) => {
     ipcRenderer.on('update-search-mode', (_event, mode) => callback(mode))
   },
+  onUpdateTokenSearchEnabled: (callback: (enabled: boolean) => void) => {
+    ipcRenderer.on('update-token-search-enabled', (_event, enabled) => callback(enabled))
+  },
+  onUpdateMatchInsideWord: (callback: (enabled: boolean) => void) => {
+    ipcRenderer.on('update-match-inside-word', (_event, enabled) => callback(enabled))
+  },
   onUpdatePrimaryColor: (
     callback: (data: { primaryColor: string; customColor?: string }) => void
   ) => {
@@ -762,6 +768,8 @@ declare global {
       onUpdateSubInputPlaceholder: (
         callback: (data: { pluginPath: string; placeholder: string }) => void
       ) => void
+      onUpdateTokenSearchEnabled: (callback: (enabled: boolean) => void) => void
+      onUpdateMatchInsideWord: (callback: (enabled: boolean) => void) => void
       onUpdateSubInputVisible: (callback: (visible: boolean) => void) => void
       onUpdateTabTarget: (callback: (target: string) => void) => void
       onUpdateTabKeyFunction: (callback: (mode: 'navigate' | 'target-command') => void) => void
