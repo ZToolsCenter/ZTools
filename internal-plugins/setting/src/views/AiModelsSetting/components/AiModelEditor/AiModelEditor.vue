@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
-import { BaseDialog, DetailPanel, Select, type SelectModelValue } from '@/components'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { DetailPanel, Select, type SelectModelValue } from '@/components'
 import {
   AI_API_FORMAT_OPTIONS,
   AI_REASONING_EFFORTS,
@@ -15,7 +15,11 @@ import {
   type AiProvider,
   type AiProviderInput,
   type AiProviderModelInput,
+  type AiModelCapability,
+  type AiProviderCredentialView,
   type AiRemoteModel,
+  isOrcaRouterProvider,
+  ORCAROUTER_CONSOLE_URL,
   normalizeAiApiFormat,
   normalizeAiModelCapabilities
 } from '@shared/aiProviderShared'
@@ -43,12 +47,43 @@ const selectedModelIds = ref<Set<string>>(new Set())
 const selectedModelConfigs = ref<Record<string, AiProviderModelInput>>({})
 const pendingModelIds = ref<Set<string>>(new Set())
 const showModelDialog = ref(false)
+/** 下拉浮层的定位样式；右边缘与触发按钮对齐，避免被滚动容器裁剪。 */
+const modelDropdownStyle = ref<Record<string, string>>({})
 const formData = ref({
   name: '',
   apiUrl: '',
   apiKey: '',
   apiFormat: DEFAULT_AI_API_FORMAT as AiApiFormat
 })
+
+/** OrcaRouter 具名供应商：模型控件改为从真实目录生成的能力过滤下拉。 */
+const isOrcaProvider = computed(() => isOrcaRouterProvider(formData.value))
+/** 当前 AI 入口实际需要的能力；OrcaRouter 目录按它过滤。 */
+const orcaCapability = ref<AiModelCapability>('chat')
+/** 当前入口实际上传的非 text 模态（由附件开关驱动）。 */
+const requiredModalities = ref<AiInputModality[]>([])
+/** 目录是否退回到已验证的冷启动种子。 */
+const catalogDegraded = ref(false)
+/** 目录降级原因，用于界面提示。 */
+const catalogNotice = ref('')
+/** 当前保存的凭据状态（脱敏，不含密钥本体）。 */
+const credentialView = ref<AiProviderCredentialView | null>(null)
+/** 认证方式：手填 API Key 或 OAuth 2.0 + PKCE。 */
+const authMethod = ref<'api-key' | 'pkce'>('api-key')
+/** 待提交的统一凭据；两种认证入口都只写入这一个字段。 */
+const pendingCredential = ref<AiProviderInput['credential']>(undefined)
+/** PKCE 登录会话；verifier 只在主进程，这里只保留会话 ID 与授权地址。 */
+const pkceSession = ref<{
+  attemptId: string
+  authorizeUrl: string
+  flow: 'loopback' | 'oob'
+} | null>(null)
+/** OOB 流程用户粘贴的一次性授权码。 */
+const pkceCode = ref('')
+const pkceBusy = ref(false)
+const pkceError = ref('')
+/** 单调递增的登录代次：迟到的响应不得覆盖新登录。 */
+let pkceGeneration = 0
 
 /**
  * Select 的 v-model 代理：Select 发出的值类型宽于窄字面量 AiApiFormat，
@@ -119,23 +154,275 @@ function resetEditor(provider: AiProvider | null): void {
   saveError.value = ''
   showModelDialog.value = false
   showPassword.value = false
+  resetOrcaState(provider)
+}
+
+/**
+ * 重置 OrcaRouter 专有状态：认证方式、凭据视图与目录降级标记。
+ *
+ * 两种认证入口都要在界面上并列可用，因此默认展示手填 API Key，同时保留 PKCE 入口。
+ * @param provider 当前编辑的供应商；null 表示新建
+ * @returns 无返回值
+ */
+function resetOrcaState(provider: AiProvider | null): void {
+  authMethod.value = provider?.credential?.source === 'pkce' ? 'pkce' : 'api-key'
+  pendingCredential.value = undefined
+  credentialView.value = null
+  catalogDegraded.value = false
+  catalogNotice.value = ''
+  orcaCapability.value = 'chat'
+  requiredModalities.value = ['text']
+  cancelPkceLogin()
+  if (provider && isOrcaRouterProvider(provider)) void loadCredentialView(provider.id)
+}
+
+/**
+ * 读取供应商凭据的脱敏状态。
+ * @param providerId 供应商内部 ID
+ * @returns 操作完成后结束的 Promise
+ */
+async function loadCredentialView(providerId: string): Promise<void> {
+  try {
+    const result = await window.ztools.internal.aiProviders.orcaGetCredential(providerId)
+    if (result.success && result.data) credentialView.value = result.data
+  } catch (error) {
+    console.error('读取 OrcaRouter 凭据状态失败:', error)
+  }
+}
+
+/**
+ * 通过 API Key 入口保存密钥；密钥只在渲染进程短暂停留后交给主进程。
+ * @returns 操作完成后结束的 Promise
+ */
+async function saveApiKeyCredential(): Promise<void> {
+  saveError.value = ''
+  if (!formData.value.apiKey.trim()) {
+    saveError.value = '请填写 OrcaRouter API Key'
+    return
+  }
+  if (!props.editingProvider) {
+    // 新建供应商时随保存提交，由主进程按统一凭据结构写入。
+    pendingCredential.value = {
+      source: 'api-key',
+      key: formData.value.apiKey.trim(),
+      scope: 'api',
+      generation: 1,
+      status: 'active',
+      updatedAt: Date.now()
+    }
+    return
+  }
+  const result = await window.ztools.internal.aiProviders.orcaApplyApiKey(
+    props.editingProvider.id,
+    formData.value.apiKey.trim()
+  )
+  if (!result.success) {
+    saveError.value = result.error || '保存 API Key 失败'
+    return
+  }
+  await loadCredentialView(props.editingProvider.id)
+}
+
+/**
+ * 开始一次 PKCE 登录并把授权地址展示给用户。
+ * @returns 操作完成后结束的 Promise
+ */
+async function startPkceLogin(): Promise<void> {
+  pkceGeneration += 1
+  const generation = pkceGeneration
+  pkceBusy.value = true
+  pkceError.value = ''
+  try {
+    const result = await window.ztools.internal.aiProviders.orcaLoginStart(pkceFlow.value)
+    // 迟到的响应不得覆盖更新的一次登录尝试。
+    if (generation !== pkceGeneration) return
+    if (!result.success || !result.data) {
+      pkceError.value = result.error || '无法开始 OrcaRouter 登录'
+      return
+    }
+    pkceSession.value = result.data
+    if (result.data.flow === 'loopback') {
+      void waitForPkceCallback(result.data.attemptId, generation)
+    }
+  } catch (error) {
+    if (generation !== pkceGeneration) return
+    pkceError.value = error instanceof Error ? error.message : '无法开始 OrcaRouter 登录'
+  } finally {
+    if (generation === pkceGeneration) pkceBusy.value = false
+  }
+}
+
+/**
+ * 等待 loopback 回调完成兑换并刷新凭据状态。
+ * @param attemptId 会话 ID
+ * @param generation 发起本次登录时的代次
+ * @returns 操作完成后结束的 Promise
+ */
+async function waitForPkceCallback(attemptId: string, generation: number): Promise<void> {
+  try {
+    const result = await window.ztools.internal.aiProviders.orcaLoginWait(
+      attemptId,
+      props.editingProvider?.id
+    )
+    if (generation !== pkceGeneration) return
+    if (!result.success) {
+      pkceError.value = result.error || 'OrcaRouter 登录失败'
+      return
+    }
+    pkceSession.value = null
+    if (props.editingProvider) await loadCredentialView(props.editingProvider.id)
+    emit('back')
+  } catch (error) {
+    if (generation !== pkceGeneration) return
+    pkceError.value = error instanceof Error ? error.message : 'OrcaRouter 登录失败'
+  }
+}
+
+/**
+ * 使用用户粘贴的一次性授权码完成 PKCE 兑换。
+ * @returns 操作完成后结束的 Promise
+ */
+async function completePkceLogin(): Promise<void> {
+  if (!pkceSession.value || !pkceCode.value.trim()) {
+    pkceError.value = '请填写授权码'
+    return
+  }
+  pkceBusy.value = true
+  pkceError.value = ''
+  try {
+    const acquired = await window.ztools.internal.aiProviders.orcaLoginComplete(
+      pkceSession.value.attemptId,
+      pkceCode.value.trim()
+    )
+    if (!acquired.success) {
+      pkceError.value = acquired.error || 'OrcaRouter 登录失败'
+      return
+    }
+    // 新建供应商时把兑换结果作为统一凭据随保存提交。
+    const credential = acquired.data?.providers.find(
+      (provider) => provider.id === props.editingProvider?.id
+    )?.credential
+    if (!props.editingProvider && credential) pendingCredential.value = credential
+    pkceCode.value = ''
+    pkceSession.value = null
+    if (props.editingProvider) await loadCredentialView(props.editingProvider.id)
+  } catch (error) {
+    pkceError.value = error instanceof Error ? error.message : 'OrcaRouter 登录失败'
+  } finally {
+    pkceBusy.value = false
+  }
+}
+
+/**
+ * 取消进行中的 PKCE 登录并释放主进程监听器。
+ * @returns 无返回值
+ */
+function cancelPkceLogin(): void {
+  pkceGeneration += 1
+  const session = pkceSession.value
+  pkceSession.value = null
+  pkceCode.value = ''
+  pkceBusy.value = false
+  pkceError.value = ''
+  if (!session) return
+  void window.ztools.internal.aiProviders.orcaLoginCancel(session.attemptId).catch(() => undefined)
+}
+
+/**
+ * 切换图片附件模态，并按当前入口能力重算可选模型。
+ * @returns 无返回值
+ */
+function toggleImageModality(): void {
+  requiredModalities.value = requiredModalities.value.includes('image')
+    ? requiredModalities.value.filter((modality) => modality !== 'image')
+    : [...requiredModalities.value, 'image']
+}
+
+/** PKCE 流程：桌面端可监听 loopback，同时保留一次性代码入口。 */
+const pkceFlow = ref<'loopback' | 'oob'>('loopback')
+
+/**
+ * 切换认证方式时释放上一条路径的登录状态，避免锁被一直持有。
+ * @returns 无返回值
+ */
+function handleAuthMethodChange(): void {
+  cancelPkceLogin()
+  saveError.value = ''
+}
+
+/**
+ * 清除已保存的 OrcaRouter 凭据（退出登录）。
+ * @returns 操作完成后结束的 Promise
+ */
+async function clearCredential(): Promise<void> {
+  if (!props.editingProvider) return
+  cancelPkceLogin()
+  const result = await window.ztools.internal.aiProviders.orcaClearCredential(
+    props.editingProvider.id
+  )
+  if (!result.success) {
+    saveError.value = result.error || '退出登录失败'
+    return
+  }
+  formData.value.apiKey = ''
+  await loadCredentialView(props.editingProvider.id)
 }
 
 watch(() => props.editingProvider, resetEditor, { immediate: true })
+
+// 入口能力或附件模态变化时必须重算目录：不兼容的旧值会被清空并要求重新选择。
+watch([orcaCapability, requiredModalities], () => {
+  if (!isOrcaProvider.value) return
+  const allowed = new Set(fetchedModels.value.map((model) => model.id))
+  if (allowed.size === 0) return
+  const next = new Set(Array.from(selectedModelIds.value).filter((id) => allowed.has(id)))
+  if (next.size === selectedModelIds.value.size) return
+  for (const removed of Array.from(selectedModelIds.value)) {
+    if (!next.has(removed)) delete selectedModelConfigs.value[removed]
+  }
+  selectedModelIds.value = next
+  fetchError.value = '当前入口能力已变化，不兼容的已选模型已移除，请重新选择'
+})
 
 /**
  * 从当前供应商的 OpenAI 兼容接口拉取模型并打开选择弹窗。
  * @returns 操作完成后结束的 Promise
  */
 async function fetchModels(): Promise<void> {
-  if (!formData.value.apiUrl.trim() || !formData.value.apiKey.trim()) {
+  if (!formData.value.apiUrl.trim()) {
+    fetchError.value = '请先填写 API 地址'
+    return
+  }
+  if (!isOrcaProvider.value && !formData.value.apiKey.trim()) {
     fetchError.value = '请先填写 API 地址和密钥'
     return
   }
 
   fetching.value = true
   fetchError.value = ''
+  catalogNotice.value = ''
   try {
+    // OrcaRouter 使用真实目录接口并按当前入口能力过滤；其他供应商保持原有行为。
+    if (isOrcaProvider.value) {
+      // 目录请求由主进程持有密钥：渲染进程不把密钥交给发现路径。
+      const discovery = await window.ztools.internal.aiProviders.discoverModels({
+        providerId: props.editingProvider?.id,
+        apiUrl: formData.value.apiUrl,
+        capability: orcaCapability.value,
+        requiredModalities: requiredModalities.value
+      })
+      if (!discovery.success || !discovery.data) {
+        fetchError.value = discovery.error || '获取模型列表失败'
+        return
+      }
+      catalogDegraded.value = discovery.data.degraded
+      if (discovery.data.degraded) {
+        catalogNotice.value = `实时目录不可用，已切换到已验证的降级目录：${discovery.data.error || ''}`
+      }
+      applyFetchedModels(discovery.data.models)
+      return
+    }
+
     const result = await window.ztools.internal.aiProviders.fetchModels(
       formData.value.apiUrl,
       formData.value.apiKey
@@ -144,16 +431,35 @@ async function fetchModels(): Promise<void> {
       fetchError.value = result.error || '获取模型列表失败'
       return
     }
-
-    // 拉取结果仅用于本次弹窗选择，不直接改变已选模型。
-    fetchedModels.value = [...result.data].sort((left, right) => left.id.localeCompare(right.id))
-    pendingModelIds.value = new Set()
-    remoteModelQuery.value = ''
-    showModelDialog.value = true
+    catalogDegraded.value = false
+    applyFetchedModels(result.data)
   } catch (error) {
     fetchError.value = error instanceof Error ? error.message : '获取模型列表失败'
   } finally {
     fetching.value = false
+  }
+}
+
+/**
+ * 应用一次目录结果并打开选择弹窗。
+ * @param models 目录返回的模型列表
+ * @returns 无返回值
+ */
+function applyFetchedModels(models: AiRemoteModel[]): void {
+  const ids = new Set(models.map((model) => model.id))
+  fetchedModels.value = [...models].sort((left, right) => left.id.localeCompare(right.id))
+  pendingModelIds.value = new Set()
+  remoteModelQuery.value = ''
+  openModelDropdown()
+  // 目录重新计算后不再兼容的旧值必须清空，不能静默保留错误模型。
+  const nextSelected = new Set(Array.from(selectedModelIds.value).filter((id) => ids.has(id)))
+  if (nextSelected.size !== selectedModelIds.value.size) {
+    for (const removed of Array.from(selectedModelIds.value)) {
+      if (nextSelected.has(removed)) continue
+      delete selectedModelConfigs.value[removed]
+    }
+    selectedModelIds.value = nextSelected
+    fetchError.value = '部分已选模型不再符合当前入口能力，已移除，请重新选择'
   }
 }
 
@@ -181,8 +487,39 @@ function confirmFetchedModels(): void {
   closeModelDialog()
 }
 
+/** 下拉浮层宽度；与触发按钮右对齐时使用同一常量便于断言。 */
+const MODEL_DROPDOWN_WIDTH = 360
+
 /**
- * 关闭远端模型选择弹窗并清理临时选择。
+ * 打开锚定在触发按钮右侧的模型下拉浮层。
+ *
+ * 使用 fixed 定位并按视口计算右偏移，保证浮层右边缘与触发按钮右边缘对齐，
+ * 同时不被编辑器滚动容器裁剪。
+ * @returns 无返回值
+ */
+function openModelDropdown(): void {
+  const trigger = document.querySelector('[data-testid="fetch-models"]')
+  // 先把触发按钮滚动到可见区域，避免浮层贴着视口边缘被裁掉。
+  trigger?.scrollIntoView({ block: 'center' })
+  const rect = trigger?.getBoundingClientRect()
+  const viewportWidth = window.innerWidth || 1280
+  const viewportHeight = window.innerHeight || 800
+  const right = rect ? Math.max(8, Math.round(viewportWidth - rect.right)) : 24
+  const top = rect ? Math.round(rect.bottom + 6) : 120
+  // 剩余空间不足时收缩浮层高度，保证整块面板都在视口内。
+  const maxHeight = Math.max(240, Math.round(viewportHeight - top - 12))
+  modelDropdownStyle.value = {
+    position: 'fixed',
+    top: `${top}px`,
+    right: `${right}px`,
+    width: `${MODEL_DROPDOWN_WIDTH}px`,
+    maxHeight: `${maxHeight}px`
+  }
+  showModelDialog.value = true
+}
+
+/**
+ * 关闭远端模型选择浮层并清理临时选择。
  * @returns 无返回值
  */
 function closeModelDialog(): void {
@@ -565,9 +902,21 @@ function handleSave(): void {
     apiUrl: formData.value.apiUrl,
     apiKey: formData.value.apiKey,
     apiFormat: formData.value.apiFormat,
+    ...(isOrcaProvider.value
+      ? {
+          presetId: 'orcarouter' as const,
+          // 两种认证入口产出的都是同一种普通 OrcaRouter API key。
+          ...(pendingCredential.value === undefined ? {} : { credential: pendingCredential.value })
+        }
+      : {}),
     selectedModels
   })
 }
+
+// 组件卸载时释放进行中的登录，避免主进程监听器被遗留占用。
+onBeforeUnmount(() => {
+  cancelPkceLogin()
+})
 </script>
 
 <template>
@@ -606,7 +955,144 @@ function handleSave(): void {
             />
           </div>
 
-          <div class="form-group full-width-field">
+          <div v-if="isOrcaProvider" class="orca-auth-section">
+            <div class="section-header">
+              <div>
+                <h3>认证方式</h3>
+                <span>两种方式最终都保存同一把 OrcaRouter API Key</span>
+              </div>
+            </div>
+
+            <div v-if="credentialView?.configured" class="orca-credential-status">
+              <span class="orca-credential-label">
+                {{ credentialView.source === 'pkce' ? 'OrcaRouter - Auth' : 'OrcaRouter - API' }}
+              </span>
+              <span class="orca-credential-key">{{ credentialView.maskedKey }}</span>
+              <span
+                class="orca-credential-state"
+                :class="{ 'orca-credential-state-warn': credentialView.status === 'needsReauth' }"
+              >
+                {{ credentialView.status === 'needsReauth' ? '需要重新登录' : '可用' }}
+              </span>
+              <a class="btn" :href="ORCAROUTER_CONSOLE_URL" target="_blank" rel="noreferrer">
+                管理密钥
+              </a>
+              <button class="btn" type="button" @click="clearCredential">退出登录</button>
+            </div>
+
+            <div class="orca-auth-methods" role="radiogroup" aria-label="OrcaRouter 认证方式">
+              <div
+                class="orca-auth-method"
+                :class="{ 'orca-auth-method-active': authMethod === 'api-key' }"
+              >
+                <input
+                  id="orca-auth-api-key"
+                  v-model="authMethod"
+                  type="radio"
+                  name="orca-auth"
+                  value="api-key"
+                  @change="handleAuthMethodChange"
+                />
+                <label for="orca-auth-api-key">
+                  <strong>OrcaRouter - API</strong>
+                  <span>粘贴已有的 sk-orca-… 密钥</span>
+                </label>
+              </div>
+              <div
+                class="orca-auth-method"
+                :class="{ 'orca-auth-method-active': authMethod === 'pkce' }"
+              >
+                <input
+                  id="orca-auth-pkce"
+                  v-model="authMethod"
+                  type="radio"
+                  name="orca-auth"
+                  value="pkce"
+                  @change="handleAuthMethodChange"
+                />
+                <label for="orca-auth-pkce">
+                  <strong>OrcaRouter - Auth</strong>
+                  <span>使用 OrcaRouter 账号授权（OAuth 2.0 + PKCE）</span>
+                </label>
+                <button
+                  class="btn orca-connect-button"
+                  type="button"
+                  :disabled="pkceBusy"
+                  @click="startPkceLogin"
+                >
+                  Connect with OrcaRouter
+                </button>
+              </div>
+            </div>
+
+            <div v-if="authMethod === 'api-key'" class="form-group full-width-field">
+              <label class="form-label">OrcaRouter API Key *</label>
+              <div class="input-wrapper">
+                <input
+                  v-model="formData.apiKey"
+                  type="password"
+                  class="input input-with-icon"
+                  placeholder="sk-orca-…"
+                  autocomplete="off"
+                />
+                <button
+                  type="button"
+                  class="toggle-password"
+                  :title="showPassword ? '隐藏 API 密钥' : '显示 API 密钥'"
+                  :aria-label="showPassword ? '隐藏 API 密钥' : '显示 API 密钥'"
+                  @click="showPassword = !showPassword"
+                >
+                  <span aria-hidden="true">{{ showPassword ? '隐藏' : '显示' }}</span>
+                </button>
+              </div>
+              <span class="field-hint">
+                密钥保存在 ZTools 现有的供应商配置中，不会写入日志、错误或遥测。
+              </span>
+              <button class="btn" type="button" @click="saveApiKeyCredential">保存 API Key</button>
+            </div>
+
+            <div v-else class="orca-pkce-panel">
+              <div class="orca-pkce-flow">
+                <label>
+                  <input v-model="pkceFlow" type="radio" value="loopback" />
+                  浏览器回调（本机 127.0.0.1 随机端口）
+                </label>
+                <label>
+                  <input v-model="pkceFlow" type="radio" value="oob" />
+                  一次性代码（在授权页复制后粘贴）
+                </label>
+              </div>
+
+              <div v-if="pkceSession" class="orca-pkce-session">
+                <span class="field-hint">
+                  在浏览器中完成授权{pkceSession.flow === 'oob' ? '，然后复制授权页显示的代码' : ''}
+                </span>
+                <input
+                  class="input"
+                  type="text"
+                  readonly
+                  :value="pkceSession.authorizeUrl"
+                  aria-label="OrcaRouter 授权地址"
+                />
+                <div v-if="pkceSession.flow === 'oob'" class="orca-pkce-code">
+                  <input
+                    v-model="pkceCode"
+                    class="input"
+                    type="text"
+                    placeholder="粘贴授权码"
+                    aria-label="OrcaRouter 授权码"
+                  />
+                  <button class="btn btn-solid" type="button" @click="completePkceLogin">
+                    完成登录
+                  </button>
+                </div>
+                <button class="btn" type="button" @click="cancelPkceLogin">取消</button>
+              </div>
+              <span v-if="pkceError" class="fetch-error">{{ pkceError }}</span>
+            </div>
+          </div>
+
+          <div v-if="!isOrcaProvider" class="form-group full-width-field">
             <label class="form-label">API 密钥 *</label>
             <div class="input-wrapper">
               <input
@@ -674,16 +1160,45 @@ function handleSave(): void {
               <h3>模型</h3>
               <span>{{ selectedModelIds.size }} 个已选择</span>
             </div>
-            <button
-              class="btn fetch-models-button"
-              type="button"
-              title="从供应商拉取模型"
-              :disabled="fetching"
-              @click="fetchModels"
-            >
-              <div class="i-z-refresh font-size-16px" :class="{ spinning: fetching }" />
-              <span>{{ fetching ? '获取中...' : '从API获取模型' }}</span>
-            </button>
+            <div class="model-dropdown-anchor">
+              <button
+                class="btn fetch-models-button"
+                type="button"
+                title="从供应商拉取模型"
+                :disabled="fetching"
+                data-testid="fetch-models"
+                @click="fetchModels"
+              >
+                <div class="i-z-refresh font-size-16px" :class="{ spinning: fetching }" />
+                <span>{{ fetching ? '获取中...' : '从API获取模型' }}</span>
+              </button>
+            </div>
+          </div>
+
+          <div v-if="isOrcaProvider" class="orca-capability-row">
+            <label class="orca-capability-field">
+              <span>入口能力</span>
+              <select v-model="orcaCapability" class="input" data-testid="orca-capability">
+                <option value="chat">文本对话 / Agent</option>
+                <option value="embedding">向量检索 (embedding)</option>
+                <option value="image">图片生成</option>
+                <option value="video">视频生成</option>
+                <option value="rerank">重排序 (rerank)</option>
+              </select>
+            </label>
+            <label class="orca-capability-field orca-modality-toggle">
+              <input
+                type="checkbox"
+                :checked="requiredModalities.includes('image')"
+                data-testid="orca-image-attachment"
+                @change="toggleImageModality"
+              />
+              <span>已附加图片（仅显示声明 image 输入的对话模型）</span>
+            </label>
+          </div>
+
+          <div v-if="catalogNotice" class="fetch-error" data-testid="orca-catalog-notice">
+            {{ catalogNotice }}
           </div>
 
           <div v-if="fetchError" class="fetch-error">{{ fetchError }}</div>
@@ -1021,43 +1536,51 @@ function handleSave(): void {
       </div>
     </div>
 
-    <BaseDialog
-      v-model:visible="showModelDialog"
-      title="选择供应商模型"
-      :subtitle="`共 ${fetchedModels.length} 个模型`"
-      max-width="620px"
-      @close="closeModelDialog"
+    <!-- 模型下拉浮层：锚定在触发按钮右侧，右边缘与按钮对齐。 -->
+    <div
+      v-if="showModelDialog"
+      class="model-dropdown-panel"
+      :style="modelDropdownStyle"
+      role="listbox"
+      aria-expanded="true"
+      aria-multiselectable="true"
+      :aria-label="`供应商模型列表（共 ${filteredRemoteModels.length} 个）`"
+      data-testid="model-dropdown"
     >
-      <div class="remote-model-dialog">
-        <input
-          v-model="remoteModelQuery"
-          class="input dialog-search"
-          type="search"
-          placeholder="搜索供应商模型"
-        />
+      <div class="model-dropdown-header">
+        <strong>{{ isOrcaProvider ? 'OrcaRouter 模型' : '供应商模型' }}</strong>
+        <span>{{ filteredRemoteModels.length }} / {{ fetchedModels.length }} 个</span>
+      </div>
+      <input
+        v-model="remoteModelQuery"
+        class="input dialog-search"
+        type="search"
+        placeholder="搜索供应商模型"
+      />
 
-        <div class="model-picker">
-          <label
-            v-for="model in filteredRemoteModels"
-            :key="model.id"
-            class="model-option"
-            :class="{ 'model-option-added': selectedModelIds.has(model.id) }"
-          >
-            <input
-              type="checkbox"
-              :checked="selectedModelIds.has(model.id) || pendingModelIds.has(model.id)"
-              :disabled="selectedModelIds.has(model.id)"
-              @change="togglePendingModel(model.id)"
-            />
-            <span>{{ model.id }}</span>
-            <span v-if="selectedModelIds.has(model.id)" class="added-label">已添加</span>
-          </label>
-          <div v-if="fetchedModels.length === 0" class="model-empty">供应商未返回模型</div>
-          <div v-else-if="filteredRemoteModels.length === 0" class="model-empty">没有匹配模型</div>
-        </div>
+      <div class="model-picker">
+        <label
+          v-for="model in filteredRemoteModels"
+          :key="model.id"
+          class="model-option"
+          :class="{ 'model-option-added': selectedModelIds.has(model.id) }"
+          role="option"
+          :aria-selected="selectedModelIds.has(model.id) || pendingModelIds.has(model.id)"
+        >
+          <input
+            type="checkbox"
+            :checked="selectedModelIds.has(model.id) || pendingModelIds.has(model.id)"
+            :disabled="selectedModelIds.has(model.id)"
+            @change="togglePendingModel(model.id)"
+          />
+          <span>{{ model.id }}</span>
+          <span v-if="selectedModelIds.has(model.id)" class="added-label">已添加</span>
+        </label>
+        <div v-if="fetchedModels.length === 0" class="model-empty">供应商未返回模型</div>
+        <div v-else-if="filteredRemoteModels.length === 0" class="model-empty">没有匹配模型</div>
       </div>
 
-      <template #footer>
+      <div class="model-dropdown-footer">
         <button class="btn" type="button" @click="closeModelDialog">取消</button>
         <button
           class="btn btn-solid"
@@ -1067,8 +1590,8 @@ function handleSave(): void {
         >
           添加{{ pendingModelIds.size > 0 ? ` ${pendingModelIds.size} 个模型` : '' }}
         </button>
-      </template>
-    </BaseDialog>
+      </div>
+    </div>
   </DetailPanel>
 </template>
 
@@ -1384,12 +1907,167 @@ function handleSave(): void {
   margin-bottom: 12px;
 }
 
+.model-dropdown-anchor {
+  position: relative;
+}
+
+.model-dropdown-panel {
+  /* 浮层必须有可见背景与边框，并与触发按钮右边缘对齐。 */
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  background: var(--color-bg-elevated, #ffffff);
+  border: 1px solid var(--color-border, #d0d5dd);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(16, 24, 40, 0.18);
+}
+
+.model-dropdown-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  font-size: 13px;
+}
+
+.model-dropdown-header span {
+  color: var(--color-text-secondary, #667085);
+}
+
+.model-dropdown-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .model-picker {
+  /* 选项列表可滚动，浮层本身保持固定尺寸。 */
+  max-height: 420px;
+  overflow-y: auto;
+  background: var(--color-bg-elevated, #ffffff);
+  border: 1px solid var(--color-border, #d0d5dd);
+  border-radius: 8px;
+  padding: 4px;
   min-height: 220px;
   max-height: min(360px, 50vh);
   overflow-y: auto;
   border: 1px solid var(--divider-color);
   border-radius: 6px;
+}
+
+.orca-auth-section {
+  margin-bottom: 16px;
+}
+
+.orca-auth-methods {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.orca-auth-method {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border, #d0d5dd);
+  border-radius: 8px;
+  background: var(--color-bg-elevated, #fff);
+}
+
+.orca-auth-method-active {
+  border-color: var(--color-primary, #4f46e5);
+}
+
+.orca-auth-method label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  cursor: pointer;
+}
+
+.orca-auth-method label span {
+  font-size: 12px;
+  color: var(--color-text-secondary, #667085);
+}
+
+.orca-auth-method input[type='radio'] {
+  width: 16px;
+  height: 16px;
+}
+
+.orca-connect-button {
+  white-space: nowrap;
+}
+
+.orca-credential-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  font-size: 13px;
+}
+
+.orca-credential-key {
+  font-family: monospace;
+  color: var(--color-text-secondary, #667085);
+}
+
+.orca-credential-state-warn {
+  color: #d97706;
+  font-weight: 600;
+}
+
+.orca-pkce-panel {
+  display: grid;
+  gap: 8px;
+}
+
+.orca-pkce-flow {
+  display: flex;
+  gap: 16px;
+  font-size: 13px;
+}
+
+.orca-pkce-session {
+  display: grid;
+  gap: 8px;
+}
+
+.orca-pkce-code {
+  display: flex;
+  gap: 8px;
+}
+
+.field-hint {
+  font-size: 12px;
+  color: var(--color-text-secondary, #667085);
+}
+
+.orca-capability-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.orca-capability-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.orca-capability-field .input {
+  width: auto;
+  min-width: 180px;
+}
+
+.orca-modality-toggle {
+  cursor: pointer;
 }
 
 .model-option {

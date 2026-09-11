@@ -98,6 +98,113 @@ export interface LegacyAiModel {
   cost?: number
 }
 
+/** OrcaRouter 官方推理 origin（含 `/v1`）；认证使用不同的 origin。 */
+export const ORCAROUTER_API_BASE_URL = 'https://api.orcarouter.ai/v1'
+
+/** OrcaRouter 官方认证 origin；授权与授权码兑换都发往这里。 */
+export const ORCAROUTER_AUTH_BASE_URL = 'https://www.orcarouter.ai'
+
+/** OrcaRouter 密钥控制台地址，供设置页展示。 */
+export const ORCAROUTER_CONSOLE_URL = 'https://www.orcarouter.ai/console/authorized-apps'
+
+/** 已声明为 first-class 的供应商预设 ID。 */
+export type AiProviderPresetId = 'custom' | 'orcarouter'
+
+/** 供应商预设：用于把具名供应商接入配置与模型发现。 */
+export interface AiProviderPreset {
+  id: AiProviderPresetId
+  /** 预设展示名称，作为新建供应商时的默认名称。 */
+  name: string
+  /** 默认接口地址。 */
+  apiUrl: string
+  apiFormat: AiApiFormat
+  /** 支持的认证入口；空数组表示仅支持手填密钥。 */
+  authMethods: OrcaCredentialSource[]
+}
+
+/** 凭据来源：手填 API Key，或 OAuth 2.0 + PKCE 授权。 */
+export type OrcaCredentialSource = 'api-key' | 'pkce'
+
+/** 凭据状态；`needsReauth` 表示上游已拒绝该代次凭据。 */
+export type OrcaCredentialStatus = 'active' | 'needsReauth'
+
+/**
+ * 一条已持久化的 OrcaRouter 凭据。
+ *
+ * 两种认证入口都只产生同一个普通 OrcaRouter API key，下游不区分来源。
+ */
+export interface AiProviderCredential {
+  source: OrcaCredentialSource
+  key: string
+  scope: string
+  userId?: string
+  /** 单调递增的代次；迟到的失败不得污染重新登录后的新凭据。 */
+  generation: number
+  status: OrcaCredentialStatus
+  updatedAt: number
+}
+
+/** 暴露给界面的凭据状态；永远不包含密钥本体。 */
+export interface AiProviderCredentialView {
+  providerId: string
+  /** 是否已配置可用凭据。 */
+  configured: boolean
+  presetId?: AiProviderPresetId
+  /** 当前凭据来自哪个认证入口。 */
+  source?: OrcaCredentialSource
+  status?: OrcaCredentialStatus
+  scope?: string
+  /** 已脱敏的密钥，仅用于确认“已保存了哪一把”。 */
+  maskedKey?: string
+  updatedAt?: number
+}
+
+/** 供应商预设注册表；OrcaRouter 在此作为具名供应商出现。 */
+export const AI_PROVIDER_PRESETS: readonly AiProviderPreset[] = [
+  {
+    id: 'custom',
+    name: '',
+    apiUrl: '',
+    apiFormat: DEFAULT_AI_API_FORMAT,
+    authMethods: []
+  },
+  {
+    id: 'orcarouter',
+    name: 'OrcaRouter',
+    apiUrl: ORCAROUTER_API_BASE_URL,
+    apiFormat: 'openai-chat',
+    // 两种入口始终并列可用：没有浏览器也能用手填密钥，没有密钥也能用 PKCE 登录。
+    authMethods: ['api-key', 'pkce']
+  }
+]
+
+/**
+ * 判断供应商是否为 OrcaRouter 预设（按预设 ID，或按官方接口地址兜底）。
+ * @param provider 供应商或其配置片段
+ * @returns 是否为 OrcaRouter 供应商
+ */
+export function isOrcaRouterProvider(provider: { presetId?: string; apiUrl?: string }): boolean {
+  if (provider?.presetId === 'orcarouter') return true
+  return normalizeAiApiUrl(provider?.apiUrl ?? '') === ORCAROUTER_API_BASE_URL
+}
+
+/**
+ * 判断未知值是否为已持久化的 OrcaRouter 凭据。
+ * @param value 待判断的持久化数据
+ * @returns 是否为合法的凭据结构
+ */
+export function isAiProviderCredential(value: unknown): value is AiProviderCredential {
+  if (!value || typeof value !== 'object') return false
+  const credential = value as Partial<AiProviderCredential>
+  return (
+    (credential.source === 'api-key' || credential.source === 'pkce') &&
+    typeof credential.key === 'string' &&
+    credential.key.length > 0 &&
+    typeof credential.generation === 'number' &&
+    (credential.status === 'active' || credential.status === 'needsReauth')
+  )
+}
+
 /** 供应商中已选中的单个远端模型。 */
 export interface AiProviderModel {
   /** 插件选择模型时使用的稳定、不透明标识。 */
@@ -126,6 +233,10 @@ export interface AiProvider {
   /** 是否允许插件发现和调用该供应商的模型。 */
   enabled: boolean
   selectedModels: AiProviderModel[]
+  /** 命中的预设 ID；OrcaRouter 由此在配置中保持 first-class。 */
+  presetId?: AiProviderPresetId
+  /** 统一凭据；API Key 与 PKCE 两种入口都写入这里，下游不区分来源。 */
+  credential?: AiProviderCredential
 }
 
 /** AI 供应商持久化文档。 */
@@ -142,6 +253,8 @@ export interface AiProviderModelInput {
   cost?: number
   contextWindow?: number
   inputModalities?: AiInputModality[]
+  /** 供应商目录中该模型声明的端点类型，用于能力过滤。 */
+  supportedEndpointTypes?: string[]
   /** null 表示显式清除旧推理配置并恢复供应商默认。 */
   reasoning?: AiReasoningCapability | null
   temperature?: AiTemperatureCapability | null
@@ -155,12 +268,49 @@ export interface AiProviderInput {
   apiKey: string
   /** 供应商采用的接口格式；缺省时回退到默认格式。 */
   apiFormat?: AiApiFormat
+  /** 供应商预设 ID；OrcaRouter 由此获得具名供应商身份。 */
+  presetId?: AiProviderPresetId
+  /** 统一凭据；null 表示显式清除（例如退出登录）。 */
+  credential?: AiProviderCredential | null
   selectedModels: AiProviderModelInput[]
+}
+
+/** 模型目录发现使用的 AI 入口能力。 */
+export type AiModelCapability = 'chat' | 'embedding' | 'image' | 'video' | 'rerank'
+
+/** 模型目录发现请求。 */
+export interface AiModelDiscoveryRequest {
+  /** 目标供应商内部 ID；缺省时按接口地址识别。 */
+  providerId?: string
+  apiUrl: string
+  /** 可选密钥；缺省时从供应商已保存的凭据读取。 */
+  apiKey?: string
+  /** 当前入口能力，决定下拉中可出现的模型。 */
+  capability?: AiModelCapability
+  /** 该入口实际上传的非 text 模态；未声明能力的模型会被排除。 */
+  requiredModalities?: AiInputModality[]
+}
+
+/** 模型目录发现结果。 */
+export interface AiModelDiscoveryResult {
+  models: AiRemoteModel[]
+  /** 是否退回到已验证的冷启动种子。 */
+  degraded: boolean
+  /** 目录是否来自实时请求。 */
+  live: boolean
+  /** 降级原因，仅在 degraded 时提供。 */
+  error?: string
 }
 
 /** 从供应商接口拉取到的远端模型摘要。 */
 export interface AiRemoteModel {
   id: string
+  /** 供应商声明的端点类型；未声明时为空数组，能力过滤必须 fail closed。 */
+  supportedEndpointTypes?: string[]
+  /** 供应商声明的输入模态；未声明时为空数组。 */
+  inputModalities?: string[]
+  /** 该模型是否通过当前入口的能力过滤。 */
+  compatible?: boolean
 }
 
 /** 暴露给插件用于构建模型选择器的条目。 */
@@ -465,6 +615,50 @@ export function normalizeAiTemperatureCapability(
   }
   if (mode === 'unsupported') return false
   return undefined
+}
+
+/**
+ * 冷启动种子模型已验证的能力元数据。
+ *
+ * 仅在实时目录不可用时用于生成降级目录；条目不冒充完整实时列表，且始终标记 degraded。
+ * 保留已验证的上下文窗口、输入模态与推理档位，避免降级时丢失能力信息。
+ */
+export const ORCAROUTER_SEED_MODEL_METADATA: Readonly<
+  Record<string, Pick<AiProviderModel, 'contextWindow' | 'inputModalities' | 'reasoning'>>
+> = {
+  'openai/gpt-5.5': {
+    contextWindow: 400_000,
+    inputModalities: ['text', 'image'],
+    // 已验证的推理档位；协议值由宿主持有，插件只看到标准档位。
+    reasoning: {
+      protocol: 'openai-compatible',
+      efforts: { low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh' },
+      defaultEffort: 'medium',
+      responseField: 'auto'
+    }
+  },
+  'anthropic/claude-opus-4.8': {
+    contextWindow: 200_000,
+    inputModalities: ['text', 'image'],
+    reasoning: {
+      protocol: 'auto',
+      efforts: { low: 'low', medium: 'medium', high: 'high' },
+      defaultEffort: 'medium',
+      responseField: 'auto'
+    }
+  },
+  'google/gemini-3.5-flash': {
+    contextWindow: 1_000_000,
+    inputModalities: ['text', 'image']
+  },
+  'deepseek/deepseek-v4-pro': {
+    contextWindow: 128_000,
+    inputModalities: ['text']
+  },
+  'orcarouter/auto': {
+    contextWindow: 262_144,
+    inputModalities: ['text']
+  }
 }
 
 /** AI 供应商管理操作的统一结果。 */

@@ -1576,7 +1576,90 @@ window.ztools = {
        * @returns 远端模型查询结果
        */
       fetchModels: async (apiUrl, apiKey) =>
-        await electron.ipcRenderer.invoke('internal:ai-providers-fetch-models', apiUrl, apiKey)
+        await electron.ipcRenderer.invoke('internal:ai-providers-fetch-models', apiUrl, apiKey),
+      /**
+       * 按当前 AI 入口能力发现供应商模型。
+       * @param {object} request 供应商地址、入口能力与要求模态
+       * @returns {Promise<unknown>} 能力过滤后的模型查询结果
+       */
+      discoverModels: async (request) =>
+        await electron.ipcRenderer.invoke(
+          'internal:ai-providers-discover-models',
+          toIpcCloneable(request)
+        ),
+      /**
+       * 开始一次 OrcaRouter PKCE 登录。
+       * @param {'loopback'|'oob'} flow 回调入口形态
+       * @returns {Promise<unknown>} 授权地址与会话 ID
+       */
+      orcaLoginStart: async (flow) =>
+        await electron.ipcRenderer.invoke('internal:ai-providers-orca-login-start', flow),
+      /**
+       * 用授权码完成 PKCE 兑换。
+       * @param {string} attemptId 会话 ID
+       * @param {string} code 授权码
+       * @returns {Promise<unknown>} 凭据保存结果
+       */
+      orcaLoginComplete: async (attemptId, code) =>
+        await electron.ipcRenderer.invoke('internal:ai-providers-orca-login-complete', attemptId, code),
+      /**
+       * 等待 loopback 回调完成兑换。
+       * @param {string} attemptId 会话 ID
+       * @param {string} [providerId] 目标供应商内部 ID
+       * @returns {Promise<unknown>} 凭据保存结果
+       */
+      orcaLoginWait: async (attemptId, providerId) =>
+        await electron.ipcRenderer.invoke(
+          'internal:ai-providers-orca-login-wait',
+          attemptId,
+          providerId
+        ),
+      /**
+       * 取消进行中的 PKCE 登录并释放监听器。
+       * @param {string} attemptId 会话 ID
+       * @returns {Promise<unknown>} 取消结果
+       */
+      orcaLoginCancel: async (attemptId) =>
+        await electron.ipcRenderer.invoke('internal:ai-providers-orca-login-cancel', attemptId),
+      /**
+       * 通过 API Key 入口保存手填密钥。
+       * @param {string} providerId 目标供应商内部 ID
+       * @param {string} apiKey 用户填写的密钥
+       * @returns {Promise<unknown>} 凭据保存结果
+       */
+      orcaApplyApiKey: async (providerId, apiKey) =>
+        await electron.ipcRenderer.invoke('internal:ai-providers-orca-apply-api-key', providerId, apiKey),
+      /**
+       * 读取供应商凭据的脱敏状态。
+       * @param {string} providerId 供应商内部 ID
+       * @returns {Promise<unknown>} 不含密钥本体的凭据状态
+       */
+      orcaGetCredential: async (providerId) =>
+        await electron.ipcRenderer.invoke('internal:ai-providers-get-credential', providerId),
+      /**
+       * 清除供应商凭据（退出登录）。
+       * @param {string} providerId 供应商内部 ID
+       * @returns {Promise<unknown>} 凭据清除结果
+       */
+      orcaClearCredential: async (providerId) =>
+        await electron.ipcRenderer.invoke('internal:ai-providers-orca-clear-credential', providerId),
+      /**
+       * 标记指定代次凭据需要重新认证。
+       * @param {string} providerId 供应商内部 ID
+       * @param {number} generation 被拒请求使用的凭据代次
+       * @returns {Promise<unknown>} 状态更新结果
+       */
+      orcaMarkReauth: async (providerId, generation) =>
+        await electron.ipcRenderer.invoke(
+          'internal:ai-providers-orca-mark-reauth',
+          providerId,
+          generation
+        ),
+      /**
+       * 获取可用供应商预设。
+       * @returns {Promise<unknown>} 预设注册表查询结果
+       */
+      getPresets: async () => await electron.ipcRenderer.invoke('internal:ai-providers-get-presets')
     },
 
     // ==================== Provider（翻译 / OCR 等）管理 API ====================

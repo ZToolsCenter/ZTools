@@ -700,6 +700,105 @@ export class InternalPluginAPI {
       }
     )
 
+    ipcMain.handle('internal:ai-providers-get-presets', async (event) => {
+      if (!requireInternalPlugin(this.pluginManager, event)) {
+        throw new PermissionDeniedError('internal:ai-providers-get-presets')
+      }
+      return { success: true, data: aiModelsAPI.getPresets() }
+    })
+
+    ipcMain.handle('internal:ai-providers-get-credential', async (event, providerId: string) => {
+      if (!requireInternalPlugin(this.pluginManager, event)) {
+        throw new PermissionDeniedError('internal:ai-providers-get-credential')
+      }
+      try {
+        return { success: true, data: aiModelsAPI.getCredential(providerId) }
+      } catch (error: unknown) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : '读取凭据状态失败'
+        }
+      }
+    })
+
+    ipcMain.handle('internal:ai-providers-discover-models', async (event, request: any) => {
+      if (!requireInternalPlugin(this.pluginManager, event)) {
+        throw new PermissionDeniedError('internal:ai-providers-discover-models')
+      }
+      try {
+        return { success: true, data: await aiModelsAPI.discoverModels(request) }
+      } catch (error: unknown) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : '模型目录查询失败'
+        }
+      }
+    })
+
+    ipcMain.handle('internal:ai-providers-orca-login-start', async (event, flow: any) => {
+      if (!requireInternalPlugin(this.pluginManager, event)) {
+        throw new PermissionDeniedError('internal:ai-providers-orca-login-start')
+      }
+      return aiModelsAPI.startOrcaLogin(flow === 'oob' ? 'oob' : 'loopback')
+    })
+
+    ipcMain.handle(
+      'internal:ai-providers-orca-login-complete',
+      async (event, attemptId: string, code: string) => {
+        if (!requireInternalPlugin(this.pluginManager, event)) {
+          throw new PermissionDeniedError('internal:ai-providers-orca-login-complete')
+        }
+        return aiModelsAPI.completeOrcaLogin(attemptId, code)
+      }
+    )
+
+    ipcMain.handle(
+      'internal:ai-providers-orca-login-wait',
+      async (event, attemptId: string, providerId?: string) => {
+        if (!requireInternalPlugin(this.pluginManager, event)) {
+          throw new PermissionDeniedError('internal:ai-providers-orca-login-wait')
+        }
+        return aiModelsAPI.waitForOrcaLogin(attemptId, providerId)
+      }
+    )
+
+    ipcMain.handle('internal:ai-providers-orca-login-cancel', async (event, attemptId: string) => {
+      if (!requireInternalPlugin(this.pluginManager, event)) {
+        throw new PermissionDeniedError('internal:ai-providers-orca-login-cancel')
+      }
+      return aiModelsAPI.cancelOrcaLogin(attemptId)
+    })
+
+    ipcMain.handle(
+      'internal:ai-providers-orca-apply-api-key',
+      async (event, providerId: string, apiKey: string) => {
+        if (!requireInternalPlugin(this.pluginManager, event)) {
+          throw new PermissionDeniedError('internal:ai-providers-orca-apply-api-key')
+        }
+        return aiModelsAPI.applyOrcaApiKey(providerId, apiKey)
+      }
+    )
+
+    ipcMain.handle(
+      'internal:ai-providers-orca-clear-credential',
+      async (event, providerId: string) => {
+        if (!requireInternalPlugin(this.pluginManager, event)) {
+          throw new PermissionDeniedError('internal:ai-providers-orca-clear-credential')
+        }
+        return aiModelsAPI.clearCredential(providerId)
+      }
+    )
+
+    ipcMain.handle(
+      'internal:ai-providers-orca-mark-reauth',
+      async (event, providerId: string, generation: number) => {
+        if (!requireInternalPlugin(this.pluginManager, event)) {
+          throw new PermissionDeniedError('internal:ai-providers-orca-mark-reauth')
+        }
+        return aiModelsAPI.markCredentialNeedsReauth(providerId, generation)
+      }
+    )
+
     // ==================== Provider（翻译 / OCR 等）管理 API ====================
     ipcMain.handle('internal:providers-get-all', async (event, type?: string) => {
       if (!requireInternalPlugin(this.pluginManager, event)) {

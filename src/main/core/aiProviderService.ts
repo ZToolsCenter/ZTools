@@ -5,13 +5,20 @@ import { HOST_STORAGE_KEYS } from '../../shared/storageKeys.js'
 import {
   AI_PROVIDER_STORE_VERSION,
   DEFAULT_AI_API_FORMAT,
+  ORCAROUTER_SEED_MODEL_METADATA,
+  isAiProviderCredential,
   isAiProviderStore,
+  isOrcaRouterProvider,
   normalizeAiApiFormat,
   normalizeAiModelCapabilities,
   normalizeAiApiUrl,
   toAiModelReasoningInfo,
   type AiModelChoice,
+  type AiModelCapability,
+  type AiModelDiscoveryRequest,
+  type AiModelDiscoveryResult,
   type AiProvider,
+  type AiProviderCredentialView,
   type AiProviderInput,
   type AiProviderModel,
   type AiProviderMutationResult,
@@ -19,11 +26,61 @@ import {
   type AiRemoteModel,
   type LegacyAiModel
 } from '../../shared/aiProviderShared.js'
+import {
+  fetchOrcaCatalog,
+  filterOrcaCatalog,
+  ORCAROUTER_VERIFIED_SEED,
+  type OrcaModelCapability
+} from './provider/orcaCatalog.js'
+import {
+  markOrcaCredentialNeedsReauth,
+  maskOrcaKey,
+  persistOrcaCredential,
+  type OrcaCredentialSource,
+  type OrcaCredentialStore
+} from './provider/orcaCredentials.js'
+import type { OrcaCredentialResult, OrcaFetch } from './provider/orcaAuth.js'
 
 /** 已解析的供应商和模型调用配置。 */
 export interface ResolvedAiModel {
   provider: AiProvider
   model: AiProviderModel
+}
+
+/**
+ * 将入口能力映射为 OrcaRouter 目录的 capability 查询参数。
+ * @param capability 当前 AI 入口能力
+ * @returns 目录接口接受的 capability 值
+ */
+function toOrcaCapability(capability?: AiModelCapability): OrcaModelCapability {
+  return (capability ?? 'chat') as OrcaModelCapability
+}
+
+/**
+ * 读取供应商当前有效的下游凭据。
+ *
+ * 两种认证入口（手填 API Key 与 PKCE）最终都写入同一个 credential 字段，
+ * 因此下游请求与模型发现不关心凭据来源。
+ *
+ * @param provider 目标供应商
+ * @returns 有效密钥及其代次；无可用凭据时返回 null
+ */
+export function resolveProviderCredential(
+  provider: AiProvider
+): { key: string; generation: number; needsReauth: boolean } | null {
+  if (isAiProviderCredential(provider.credential) && provider.credential.key.trim()) {
+    return {
+      key: provider.credential.key,
+      generation: provider.credential.generation,
+      needsReauth: provider.credential.status === 'needsReauth'
+    }
+  }
+  const legacyKey = provider.apiKey?.trim()
+  if (legacyKey) {
+    // 历史供应商只保存了 apiKey；按第 0 代凭据处理，保持原有调用能力。
+    return { key: legacyKey, generation: 0, needsReauth: false }
+  }
+  return null
 }
 
 /**
@@ -173,7 +230,8 @@ class AiProviderService {
       apiKey: input.apiKey.trim(),
       apiFormat: normalizeAiApiFormat(input.apiFormat),
       enabled: true,
-      selectedModels: this.buildSelectedModels(input, [])
+      selectedModels: this.buildSelectedModels(input, []),
+      ...this.buildPresetFields(input)
     }
     store.providers.push(provider)
     this.saveStore(store)
@@ -224,10 +282,43 @@ class AiProviderService {
       apiKey: input.apiKey.trim(),
       apiFormat: normalizeAiApiFormat(input.apiFormat),
       enabled: previous.enabled,
-      selectedModels: nextModels
+      selectedModels: nextModels,
+      ...this.buildPresetFields(input, previous)
     }
     this.saveStore(store)
     return { success: true, data: store }
+  }
+
+  /**
+   * 构建供应商的预设与凭据字段。
+   *
+   * 两种认证入口产出的凭据都写入同一个 credential 字段；apiKey 同步为当前密钥，
+   * 保证既有读取 apiKey 的下游路径继续可用。
+   *
+   * @param input 待保存的供应商数据
+   * @param previous 更新前的供应商，用于保留未提交的凭据
+   * @returns 需要合并进供应商对象的可选字段
+   */
+  private buildPresetFields(
+    input: AiProviderInput,
+    previous?: AiProvider
+  ): Pick<AiProvider, 'presetId' | 'credential'> {
+    const fields: Pick<AiProvider, 'presetId' | 'credential'> = {}
+
+    const presetId = input.presetId ?? previous?.presetId
+    if (presetId) fields.presetId = presetId
+
+    // 显式 null 表示退出登录/清除密钥；字段缺省表示保留现有凭据。
+    if (input.credential === null) {
+      fields.credential = undefined
+      return fields
+    }
+    if (isAiProviderCredential(input.credential)) {
+      fields.credential = { ...input.credential, key: input.credential.key.trim() }
+      return fields
+    }
+    if (previous?.credential) fields.credential = previous.credential
+    return fields
   }
 
   /**
@@ -243,6 +334,113 @@ class AiProviderService {
     store.providers.splice(index, 1)
     this.saveStore(store)
     return { success: true, data: store }
+  }
+
+  /**
+   * 读取供应商凭据的公开视图；永远不返回密钥本体。
+   * @param providerId 供应商内部 ID
+   * @returns 脱敏后的凭据状态；未配置时 configured 为 false
+   */
+  public getCredential(providerId: string): AiProviderCredentialView {
+    const provider = this.getStore().providers.find((candidate) => candidate.id === providerId)
+    if (!provider) return { providerId, configured: false }
+    const credential = isAiProviderCredential(provider.credential) ? provider.credential : null
+    const key = credential?.key ?? provider.apiKey?.trim() ?? ''
+    if (!key) return { providerId, configured: false, presetId: provider.presetId }
+    return {
+      providerId,
+      configured: true,
+      presetId: provider.presetId,
+      source: credential?.source ?? 'api-key',
+      status: credential?.status ?? 'active',
+      scope: credential?.scope,
+      maskedKey: maskOrcaKey(key),
+      updatedAt: credential?.updatedAt
+    }
+  }
+
+  /**
+   * 用一条凭据结果写入供应商配置（API Key 与 PKCE 两种入口共用）。
+   * @param providerId 供应商内部 ID
+   * @param source 凭据来源
+   * @param result adapter 返回的统一凭据结果
+   * @param requiredScope 当前用途要求的最小 scope
+   * @returns 操作结果及最新供应商文档
+   * @throws 实际授予的 scope 不满足要求时抛出错误
+   */
+  public applyCredentialResult(
+    providerId: string,
+    source: OrcaCredentialSource,
+    result: OrcaCredentialResult,
+    requiredScope?: string
+  ): AiProviderMutationResult {
+    const store = this.getStore()
+    const provider = store.providers.find((candidate) => candidate.id === providerId)
+    if (!provider) return { success: false, error: '未找到该供应商' }
+
+    const credential = persistOrcaCredential(
+      this.credentialStoreFor(provider),
+      source,
+      result,
+      requiredScope
+    )
+    // apiKey 与 credential 保持同一份密钥，兼容既有读取 apiKey 的下游路径。
+    provider.apiKey = credential.key
+    this.saveStore(store)
+    return { success: true, data: store }
+  }
+
+  /**
+   * 将指定代次的凭据标记为需要重新认证。
+   * @param providerId 供应商内部 ID
+   * @param generation 发出被拒请求时使用的凭据代次
+   * @returns 操作结果及最新供应商文档
+   */
+  public markCredentialNeedsReauth(
+    providerId: string,
+    generation: number
+  ): AiProviderMutationResult {
+    const store = this.getStore()
+    const provider = store.providers.find((candidate) => candidate.id === providerId)
+    if (!provider) return { success: false, error: '未找到该供应商' }
+
+    const changed = markOrcaCredentialNeedsReauth(this.credentialStoreFor(provider), generation)
+    if (!changed) return { success: true, data: store }
+    this.saveStore(store)
+    return { success: true, data: store }
+  }
+
+  /**
+   * 清除供应商凭据；新登录成功前不会由其他路径隐式调用。
+   * @param providerId 供应商内部 ID
+   * @returns 操作结果及最新供应商文档
+   */
+  public clearCredential(providerId: string): AiProviderMutationResult {
+    const store = this.getStore()
+    const provider = store.providers.find((candidate) => candidate.id === providerId)
+    if (!provider) return { success: false, error: '未找到该供应商' }
+
+    delete provider.credential
+    provider.apiKey = ''
+    this.saveStore(store)
+    return { success: true, data: store }
+  }
+
+  /**
+   * 为某个供应商构造凭据存储适配器。
+   * @param provider 目标供应商（按引用修改）
+   * @returns 供统一凭据流程使用的存储接口
+   */
+  private credentialStoreFor(provider: AiProvider): OrcaCredentialStore {
+    return {
+      read: () => (isAiProviderCredential(provider.credential) ? provider.credential : null),
+      write: (credential) => {
+        provider.credential = credential
+      },
+      clear: () => {
+        delete provider.credential
+      }
+    }
   }
 
   /**
@@ -293,6 +491,71 @@ class AiProviderService {
     return Array.from(uniqueIds)
       .sort((left, right) => left.localeCompare(right))
       .map((id) => ({ id }))
+  }
+
+  /**
+   * 发现某个供应商在当前入口能力下可用的模型。
+   *
+   * OrcaRouter 走目录接口并按能力过滤（未声明能力的模型 fail closed）；
+   * 其他供应商保持原有的 `/models` 行为，不会因为新增供应商而改变交互。
+   *
+   * @param request 供应商地址、密钥、入口能力与要求模态
+   * @param options 可注入的 fetch 实现，便于测试；生产路径使用全局 fetch
+   * @returns 与入口匹配的模型列表及降级状态
+   */
+  public async discoverModels(
+    request: AiModelDiscoveryRequest,
+    options: { fetchImpl?: OrcaFetch } = {}
+  ): Promise<AiModelDiscoveryResult> {
+    const provider = request.providerId
+      ? this.getStore().providers.find((candidate) => candidate.id === request.providerId)
+      : undefined
+    const apiUrl = normalizeAiApiUrl(request.apiUrl ?? provider?.apiUrl ?? '')
+    const apiKey =
+      request.apiKey?.trim() || (provider ? resolveProviderCredential(provider)?.key : '')
+    const orca = provider ? isOrcaRouterProvider(provider) : isOrcaRouterProvider({ apiUrl })
+
+    if (!orca) {
+      const models = await this.fetchRemoteModels(apiUrl, apiKey ?? '')
+      return { models, degraded: false, live: true }
+    }
+
+    const capability = toOrcaCapability(request.capability)
+    const requiredModalities = request.requiredModalities ?? []
+    try {
+      const entries = await fetchOrcaCatalog({
+        apiKey: apiKey ?? '',
+        capability,
+        requiredModalities,
+        fetchImpl: options.fetchImpl
+      })
+      return {
+        models: entries.map((entry) => ({
+          id: entry.id,
+          supportedEndpointTypes: entry.supportedEndpointTypes,
+          inputModalities: entry.inputModalities,
+          compatible: true
+        })),
+        degraded: false,
+        live: true
+      }
+    } catch (cause) {
+      // 实时目录失败时退回已验证的冷启动种子，并明确标注降级状态；
+      // 绝不退回自由文本输入，也不把种子混入实时权威结果。
+      const entries = filterOrcaCatalog(ORCAROUTER_VERIFIED_SEED, capability, requiredModalities)
+      return {
+        models: entries.map((entry) => ({
+          id: entry.id,
+          supportedEndpointTypes: entry.supportedEndpointTypes,
+          inputModalities: entry.inputModalities,
+          compatible: true,
+          ...ORCAROUTER_SEED_MODEL_METADATA[entry.id]
+        })),
+        degraded: true,
+        live: false,
+        error: cause instanceof Error ? cause.message : '模型目录暂不可用'
+      }
+    }
   }
 
   /**

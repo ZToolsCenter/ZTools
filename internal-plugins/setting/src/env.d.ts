@@ -3,8 +3,12 @@
 
 import type { SearchWallpaperConfig } from '@shared/searchWallpaper'
 import type {
+  AiModelDiscoveryRequest,
+  AiModelDiscoveryResult,
+  AiProviderCredentialView,
   AiProviderInput,
   AiProviderMutationResult,
+  AiProviderPreset,
   AiProviderStore,
   OfficialAiProviderStatus,
   OfficialAiCreditAccount,
@@ -866,6 +870,30 @@ declare global {
             apiUrl: string,
             apiKey: string
           ) => Promise<{ success: boolean; data?: AiRemoteModel[]; error?: string }>
+          getPresets: () => Promise<{ success: boolean; data?: AiProviderPreset[]; error?: string }>
+          discoverModels: (
+            request: AiModelDiscoveryRequest
+          ) => Promise<{ success: boolean; data?: AiModelDiscoveryResult; error?: string }>
+          orcaLoginStart: (flow: 'loopback' | 'oob') => Promise<{
+            success: boolean
+            data?: { attemptId: string; authorizeUrl: string; flow: 'loopback' | 'oob' }
+            error?: string
+          }>
+          orcaLoginComplete: (attemptId: string, code: string) => Promise<AiProviderMutationResult>
+          orcaLoginWait: (
+            attemptId: string,
+            providerId?: string
+          ) => Promise<AiProviderMutationResult>
+          orcaLoginCancel: (attemptId: string) => Promise<{ success: boolean }>
+          orcaApplyApiKey: (providerId: string, apiKey: string) => Promise<AiProviderMutationResult>
+          orcaGetCredential: (
+            providerId: string
+          ) => Promise<{ success: boolean; data?: AiProviderCredentialView; error?: string }>
+          orcaClearCredential: (providerId: string) => Promise<AiProviderMutationResult>
+          orcaMarkReauth: (
+            providerId: string,
+            generation: number
+          ) => Promise<AiProviderMutationResult>
         }
 
         // Provider（翻译 / OCR 等）管理

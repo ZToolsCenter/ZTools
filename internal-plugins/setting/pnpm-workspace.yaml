@@ -1,3 +1,5 @@
+packages:
+  - "."
 allowBuilds:
-  esbuild: set this to true or false
-  less: set this to true or false
+  esbuild: true
+  less: true
