@@ -19,6 +19,16 @@ import api from '../index'
 import databaseAPI from '../shared/database'
 import { normalizeCompactMainWindowHeader } from '../../../shared/mainWindowLayout'
 import detachedWindowManager from '../../core/detachedWindowManager'
+import {
+  buildLoginItemSettings,
+  isLaunchAtLoginActive,
+  readStoredLaunchAtLoginPreference,
+  resolveDisplayedLaunchAtLogin,
+  resolveStartupLaunchAtLoginSync,
+  WINDOWS_LOGIN_ITEM_NAME
+} from '../../core/launchAtLogin'
+import { applyWindowsStartupApproved } from '../../core/windowsStartupApproved'
+import { applyWindowsDelayedStartup } from '../../core/windowsDelayedStartup'
 
 /**
  * 快捷键触发时携带的文件输入
@@ -331,6 +341,9 @@ export class SettingsAPI {
       // 窗口位置现在由 windowManager.moveWindowToCursor() 处理
       // 每个显示器会自动恢复该显示器上次保存的位置
 
+      // 按保存的偏好重新写入系统登录项，修复被 Windows 禁用或覆盖安装清掉的开机启动。
+      this.syncLaunchAtLoginOnStartup(data)
+
       // 加载并注册全局快捷键
       await this.loadAndRegisterGlobalShortcuts()
       // 加载并注册应用快捷键
@@ -391,19 +404,104 @@ export class SettingsAPI {
     console.log('[Settings] 设置主题:', theme)
   }
 
-  // 设置开机启动
+  /**
+   * 写入开机启动偏好，并在正式打包环境下同步系统登录项。
+   * @param enable 是否在登录系统时自动启动应用。
+   * @returns 无返回值
+   */
   public setLaunchAtLogin(enable: boolean): void {
-    app.setLoginItemSettings({
-      openAtLogin: enable,
-      openAsHidden: true
-    })
+    // 先落库，避免只写注册表后被覆盖安装或 StartupApproved 清掉后无法恢复。
+    this.persistLaunchAtLoginPreference(enable)
+    this.applyLaunchAtLoginToOs(enable)
     console.log('[Settings] 设置开机启动:', enable)
   }
 
-  // 获取开机启动状态
+  /**
+   * 读取开机启动开关应展示的状态。
+   * 已保存的用户偏好优先于系统当前是否真正会启动。
+   * @returns 用户希望开机启动时为 true。
+   */
   public getLaunchAtLogin(): boolean {
-    const settings = app.getLoginItemSettings()
-    return settings.openAtLogin
+    const stored = readStoredLaunchAtLoginPreference(databaseAPI.dbGet('settings-general'))
+    return resolveDisplayedLaunchAtLogin(
+      stored,
+      isLaunchAtLoginActive(this.readOsLoginItemSnapshot(), process.platform)
+    )
+  }
+
+  /**
+   * 把开机启动偏好合并写入通用设置，避免覆盖其他页面管理的字段。
+   * @param enable 是否在登录时启动。
+   * @returns 无返回值
+   */
+  private persistLaunchAtLoginPreference(enable: boolean): void {
+    const existing = databaseAPI.dbGet('settings-general') || {}
+    databaseAPI.dbPut('settings-general', { ...existing, launchAtLogin: enable })
+  }
+
+  /**
+   * 读取当前系统登录项快照，查询参数与写入时保持一致。
+   * @returns Electron 登录项查询结果。
+   */
+  private readOsLoginItemSnapshot(): Electron.LoginItemSettings {
+    if (process.platform === 'win32') {
+      return app.getLoginItemSettings({
+        path: process.execPath,
+        args: []
+      })
+    }
+
+    if (process.platform === 'darwin') {
+      return app.getLoginItemSettings({
+        type: 'mainAppService'
+      })
+    }
+
+    return app.getLoginItemSettings()
+  }
+
+  /**
+   * 在打包环境下把登录项写入操作系统；开发态跳过以免覆盖正式版启动项。
+   * @param enable 是否在登录时启动。
+   * @returns 无返回值
+   */
+  private applyLaunchAtLoginToOs(enable: boolean): void {
+    const payload = buildLoginItemSettings(enable, {
+      isPackaged: app.isPackaged,
+      platform: process.platform,
+      execPath: process.execPath,
+      appUserModelId: WINDOWS_LOGIN_ITEM_NAME
+    })
+    if (!payload) {
+      console.log('[Settings] 开发模式跳过写入系统开机启动项:', enable)
+      return
+    }
+
+    app.setLoginItemSettings(payload)
+    applyWindowsStartupApproved(WINDOWS_LOGIN_ITEM_NAME, enable)
+    applyWindowsDelayedStartup(enable, process.execPath)
+  }
+
+  /**
+   * 启动时根据已保存偏好或旧版注册表残留，重新同步系统登录项。
+   * @param settings 当前 `settings-general` 文档。
+   * @returns 无返回值
+   */
+  private syncLaunchAtLoginOnStartup(settings: unknown): void {
+    const action = resolveStartupLaunchAtLoginSync(
+      readStoredLaunchAtLoginPreference(settings),
+      this.readOsLoginItemSnapshot()
+    )
+    if (!action) {
+      return
+    }
+
+    if (typeof action.persist === 'boolean') {
+      this.persistLaunchAtLoginPreference(action.persist)
+    }
+    if (action.apply) {
+      this.applyLaunchAtLoginToOs(action.enable)
+    }
   }
 
   // 更新快捷键
