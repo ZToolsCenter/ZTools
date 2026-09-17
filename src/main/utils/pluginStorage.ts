@@ -88,3 +88,103 @@ export async function removePluginArtifact(plugin: {
   }
   await fs.rm(plugin.path, { recursive: true, force: true })
 }
+
+export type RemovePluginArtifactsByNameOptions = {
+  /** 升级后需要保留的当前实体路径（及其 `.unpacked` sidecar） */
+  keepPaths?: string[]
+  /** 其它已安装插件名；更长前缀优先，避免误删名称前缀相关的插件 */
+  reservedNames?: string[]
+}
+
+/**
+ * 规范化路径后用于 keepPaths 比较（大小写与分隔符不敏感）。
+ * @param value 绝对或相对路径
+ * @returns 规范化后的比较键
+ */
+function normalizePathForCompare(value: string): string {
+  return path.normalize(value).replace(/\\/g, '/').toLowerCase()
+}
+
+/**
+ * 判断插件目录下的某个文件/目录名是否属于指定插件实体。
+ * 匹配目录名、`name.asar`、以及 `name-version-installId.asar` / `.asar.unpacked`。
+ * @param entryName 插件目录内的条目名
+ * @param pluginName 目标插件名
+ * @param reservedNames 需要避让的其它插件名
+ * @returns 属于目标插件时返回 true
+ */
+export function isOwnedPluginArtifact(
+  entryName: string,
+  pluginName: string,
+  reservedNames: string[] = []
+): boolean {
+  assertSafePluginArtifactPart(pluginName, '插件名称')
+
+  let artifactBase = entryName
+  if (artifactBase.endsWith('.asar.unpacked')) {
+    artifactBase = artifactBase.slice(0, -'.unpacked'.length)
+  }
+
+  // 目录实体仅精确匹配插件名，避免误删无关目录。
+  if (artifactBase === pluginName) return true
+
+  if (!artifactBase.endsWith('.asar')) return false
+  const base = artifactBase.slice(0, -'.asar'.length)
+
+  // 兼容 `name.asar` 与版本化 `name-version-id.asar`。
+  if (base !== pluginName && !base.startsWith(`${pluginName}-`)) return false
+
+  // 更长的保留插件名优先，例如卸载 he-calendar 时保留 he-calendar-extra。
+  for (const reserved of reservedNames) {
+    if (!reserved || reserved === pluginName) continue
+    try {
+      assertSafePluginArtifactPart(reserved, '保留插件名称')
+    } catch {
+      continue
+    }
+    if (base === reserved || base.startsWith(`${reserved}-`)) return false
+  }
+  return true
+}
+
+/**
+ * 清理插件目录下属于指定插件名的全部物理实体（含历史残留 ASAR）。
+ * @param pluginsDir 插件实体根目录
+ * @param pluginName 插件名称
+ * @param options 保留路径与其它插件名避让选项
+ * @returns 清理完成后结束的 Promise
+ */
+export async function removePluginArtifactsByName(
+  pluginsDir: string,
+  pluginName: string,
+  options: RemovePluginArtifactsByNameOptions = {}
+): Promise<void> {
+  assertSafePluginArtifactPart(pluginName, '插件名称')
+  const fs = physicalFs.promises
+  const keep = new Set((options.keepPaths ?? []).map(normalizePathForCompare))
+  const reservedNames = options.reservedNames ?? []
+
+  let entries: string[]
+  try {
+    entries = await fs.readdir(pluginsDir)
+  } catch (error: unknown) {
+    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return
+    throw error
+  }
+
+  const removals: Promise<void>[] = []
+  for (const entry of entries) {
+    if (!isOwnedPluginArtifact(entry, pluginName, reservedNames)) continue
+    const fullPath = path.join(pluginsDir, entry)
+    if (keep.has(normalizePathForCompare(fullPath))) continue
+    // 保留 ASAR 时同步保留其 `.unpacked` sidecar。
+    if (
+      entry.endsWith('.asar.unpacked') &&
+      keep.has(normalizePathForCompare(fullPath.slice(0, -'.unpacked'.length)))
+    ) {
+      continue
+    }
+    removals.push(fs.rm(fullPath, { recursive: true, force: true }))
+  }
+  await Promise.all(removals)
+}
