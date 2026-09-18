@@ -2,6 +2,7 @@ import { is, platform } from '@electron-toolkit/utils'
 import {
   app,
   BrowserWindow,
+  dialog,
   globalShortcut,
   Menu,
   nativeImage,
@@ -67,6 +68,7 @@ class WindowManager {
   private trayMenu: Menu | null = null // 托盘菜单
   private currentShortcut = 'Option+Z' // 当前注册的快捷键
   private isDoubleTapMode = false // 当前呼出快捷键是否为双击修饰键模式
+  private shortcutRegistrationError: string | null = null // 最近一次快捷键注册失败的原因
   private static readonly MODIFIER_NAMES = ['Command', 'Ctrl', 'Alt', 'Option', 'Shift']
   private isQuitting = false // 是否正在退出应用
   private previousActiveWindow: {
@@ -633,8 +635,13 @@ class WindowManager {
     this.createTrayMenu()
 
     if (platform.isLinux && this.trayMenu) {
-      // Linux 下往往无法触发 click 事件，直接使用原生菜单
+      // Linux 用 StatusNotifierItem：必须显式设置原生菜单，否则托盘不显示菜单
       this.tray.setContextMenu(this.trayMenu)
+
+      // KDE/XFCE 等会发送激活事件；GNOME 下不触发，属于无害的额外绑定
+      this.tray.on('click', () => {
+        this.toggleWindow()
+      })
     } else {
       // 左键点击：切换窗口显示
       this.tray.on('click', () => {
@@ -658,6 +665,20 @@ class WindowManager {
   private createTrayMenu(): void {
     if (!this.tray) return
 
+    // Linux 下应用无法可靠抢占全局快捷键，提供入口交给 GNOME 持有。
+    // 该操作会写入用户的自定义快捷键，故做成菜单项而非启动时静默执行。
+    const linuxShortcutItems: Electron.MenuItemConstructorOptions[] = platform.isLinux
+      ? [
+          {
+            label: '安装系统唤出快捷键…',
+            click: () => {
+              void this.installLinuxShortcut()
+            }
+          },
+          { type: 'separator' as const }
+        ]
+      : []
+
     // 使用普通菜单项显示游戏模式状态，避免原生 checkbox 为整个菜单预留勾选栏。
     this.trayMenu = Menu.buildFromTemplate([
       {
@@ -666,6 +687,7 @@ class WindowManager {
           this.toggleWindow()
         }
       },
+      ...linuxShortcutItems,
       {
         label: dndManager.manualEnabled ? '游戏模式 ✓' : '游戏模式',
         click: () => {
@@ -709,6 +731,23 @@ class WindowManager {
     if (platform.isLinux) {
       this.tray.setContextMenu(this.trayMenu)
     }
+  }
+
+  /**
+   * Linux：把当前唤出快捷键注册为 GNOME 自定义快捷键。
+   */
+  private async installLinuxShortcut(): Promise<void> {
+    const { installGnomeShortcut } = await import('../core/linuxShortcutIntegration')
+    const result = installGnomeShortcut(this.currentShortcut)
+
+    await dialog.showMessageBox({
+      type: result.success ? 'info' : 'warning',
+      title: '系统唤出快捷键',
+      message: result.success ? '设置成功' : '设置失败',
+      detail: result.message,
+      buttons: ['确定'],
+      noLink: true
+    })
   }
 
   /**
@@ -764,7 +803,18 @@ class WindowManager {
     })
 
     if (!ret) {
-      console.error(`快捷键注册失败: ${keyToRegister} 已被占用，回滚到旧快捷键: ${oldShortcut}`)
+      // 仅 Wayland 下区分原因：那里失败多为合成器/portal 拒绝授予绑定，并非「被占用」。
+      // 其它平台保持不设置，设置页仍回落为原有的「快捷键已被占用」提示。
+      if (
+        process.platform === 'linux' &&
+        process.env.ZTOOLS_NATIVE_WAYLAND === '1' &&
+        (process.env.XDG_SESSION_TYPE === 'wayland' || !!process.env.WAYLAND_DISPLAY)
+      ) {
+        this.shortcutRegistrationError = `快捷键 ${keyToRegister} 注册失败：Wayland 不允许应用抢占全局快捷键，可在托盘菜单中安装系统唤出快捷键`
+      }
+      console.error(
+        `快捷键注册失败: ${keyToRegister}${this.shortcutRegistrationError ? '' : ' 已被占用'}，回滚到旧快捷键: ${oldShortcut}`
+      )
       // 注册失败，回滚：重新注册旧的快捷键
       if (oldIsDoubleTapMode) {
         const oldModifier = oldShortcut.split('+')[0]
@@ -778,6 +828,7 @@ class WindowManager {
       }
       return false
     } else {
+      this.shortcutRegistrationError = null
       this.currentShortcut = keyToRegister
       this.isDoubleTapMode = false
       console.log(`快捷键 ${keyToRegister} 注册成功`)
@@ -815,6 +866,13 @@ class WindowManager {
     if (pluginManager.getCurrentPluginPath() === null) {
       this.updateFocusTarget('mainWindow')
     }
+  }
+
+  /**
+   * 对外暴露的显示/隐藏切换入口，供 `--toggle` 第二实例调用。
+   */
+  public toggleWindowVisibility(): void {
+    this.toggleWindow()
   }
 
   /**
@@ -1276,6 +1334,13 @@ class WindowManager {
    */
   public getCurrentShortcut(): string {
     return this.currentShortcut
+  }
+
+  /**
+   * 获取最近一次快捷键注册失败的原因，供设置页给出准确提示。
+   */
+  public getShortcutRegistrationError(): string | null {
+    return this.shortcutRegistrationError
   }
 
   /**

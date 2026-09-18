@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { globalShortcut } from 'electron'
 
 type MockHandler = (...args: any[]) => void
 
@@ -271,5 +272,67 @@ describe('windowManager macOS activation', () => {
     expect(windowManager.getPreviousActiveWindow()).toEqual(currentWindow)
     expect(windowManager.captureCurrentActiveWindow()).toBeNull()
     expect(windowManager.getPreviousActiveWindow()).toBeNull()
+  })
+})
+
+/**
+ * 快捷键注册失败原因的平台差异。
+ *
+ * 只有在「Linux + 主动选择原生 Wayland」时才给出 Wayland 专属说明；
+ * macOS/Windows 必须保持完全原有行为（getShortcutRegistrationError 为 null，
+ * 设置页回落为「快捷键已被占用」），否则就是移植改动泄漏到了其它平台。
+ */
+describe('快捷键注册失败原因的平台隔离', () => {
+  const realPlatform = process.platform
+  const setPlatform = (value: string): void => {
+    Object.defineProperty(process, 'platform', { value, configurable: true })
+  }
+
+  beforeEach(async () => {
+    // windowManager 是单例，失败原因字段会跨用例残留：先做一次成功注册把它清成 null
+    vi.mocked(globalShortcut.register).mockReturnValue(true)
+    const { default: windowManager } = await import('../../src/main/managers/windowManager')
+    windowManager.registerShortcut('Ctrl+Alt+P')
+  })
+
+  afterEach(() => {
+    setPlatform(realPlatform)
+    delete process.env.ZTOOLS_NATIVE_WAYLAND
+    delete process.env.XDG_SESSION_TYPE
+  })
+
+  it.each(['darwin', 'win32'])('%s 下不设置失败原因（保持原有提示）', async (platformName) => {
+    setPlatform(platformName)
+    process.env.XDG_SESSION_TYPE = 'wayland'
+    process.env.ZTOOLS_NATIVE_WAYLAND = '1'
+    vi.mocked(globalShortcut.register).mockReturnValue(false)
+
+    const { default: windowManager } = await import('../../src/main/managers/windowManager')
+    windowManager.registerShortcut('Ctrl+Alt+Q')
+
+    expect(windowManager.getShortcutRegistrationError()).toBeNull()
+  })
+
+  it('Linux + 原生 Wayland 下给出可操作的原因', async () => {
+    setPlatform('linux')
+    process.env.XDG_SESSION_TYPE = 'wayland'
+    process.env.ZTOOLS_NATIVE_WAYLAND = '1'
+    vi.mocked(globalShortcut.register).mockReturnValue(false)
+
+    const { default: windowManager } = await import('../../src/main/managers/windowManager')
+    windowManager.registerShortcut('Ctrl+Alt+Q')
+
+    expect(windowManager.getShortcutRegistrationError()).toContain('Wayland')
+  })
+
+  it('Linux 但未选择原生 Wayland 时同样不设置（回落原有提示）', async () => {
+    setPlatform('linux')
+    process.env.XDG_SESSION_TYPE = 'wayland'
+    vi.mocked(globalShortcut.register).mockReturnValue(false)
+
+    const { default: windowManager } = await import('../../src/main/managers/windowManager')
+    windowManager.registerShortcut('Ctrl+Alt+Q')
+
+    expect(windowManager.getShortcutRegistrationError()).toBeNull()
   })
 })
