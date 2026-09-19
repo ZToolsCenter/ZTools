@@ -16,7 +16,7 @@ import windowsIcon from '../../../resources/icons/windows-icon.png?asset'
 
 import api from '../api'
 import databaseAPI from '../api/shared/database'
-import dndManager from '../core/dndManager.js'
+import dndManager, { isFullscreenWindow } from '../core/dndManager.js'
 import doubleTapManager from '../core/doubleTapManager.js'
 import globalInputManager from '../core/globalInputManager.js'
 import { WindowManager as NativeWindowManager } from '../core/native/index.js'
@@ -874,16 +874,32 @@ class WindowManager {
   }
 
   /**
-   * 强制激活窗口（解决alert等弹窗后无法唤起的问题）
+   * 强制激活窗口（解决alert等弹窗后无法唤起的问题）。
+   *
+   * macOS 上前台应用处于全屏时，非激活 panel 有概率被系统放到桌面 Space，
+   * 表现为呼出窗口一闪而过或需要切到桌面才能看到；此时先激活应用再显示，
+   * 把面板带到当前全屏 Space。其余场景保持非激活 panel，不抢原应用焦点。
+   *
+   * @returns 无返回值
    */
   private forceActivateWindow(): void {
     if (!this.mainWindow) return
 
-    // macOS 使用非激活 panel 保留原应用的前台状态。短暂抑制呼出瞬间的 blur，
-    // 但不要激活整个应用，否则会破坏快捷面板不抢占原应用焦点的交互语义。
     if (platform.isMacOS) {
+      // 抑制呼出瞬间系统补发的 blur，避免窗口刚显示就被误隐藏
       this.suppressBlurHideTransiently(200)
       this.mainWindow.setAlwaysOnTop(true, 'modal-panel', 1)
+
+      // 仅全屏场景需要抢占激活：先激活应用进入当前 Space，再显示并聚焦面板
+      if (this.isForegroundAppFullscreen()) {
+        this.mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+        app.focus({ steal: true })
+        this.mainWindow.show()
+        this.mainWindow.focus()
+        return
+      }
+
+      // 非全屏场景保持非激活 panel，保留原应用的前台状态
       this.mainWindow.show()
       return
     }
@@ -892,6 +908,17 @@ class WindowManager {
     this.mainWindow.show()
     this.mainWindow.setAlwaysOnTop(true)
     this.mainWindow.focus()
+  }
+
+  /**
+   * 判断当前前台应用是否处于全屏。
+   * @returns 前台应用为全屏窗口时返回 true；无法获取或非全屏时返回 false
+   */
+  private isForegroundAppFullscreen(): boolean {
+    const activeWindow = NativeWindowManager.getActiveWindow()
+    if (!activeWindow) return false
+
+    return isFullscreenWindow(activeWindow)
   }
 
   private refocusSearchAfterDoubleTap(): void {

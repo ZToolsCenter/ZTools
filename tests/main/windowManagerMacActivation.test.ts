@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => {
   const globalInputOn = vi.fn()
   const globalInputAcquire = vi.fn()
   const globalInputRelease = vi.fn()
+  const nativeGetActiveWindow = vi.fn()
   const latestWindow = { current: null as any }
 
   const createMockWindow = (): any => {
@@ -74,6 +75,7 @@ const mocks = vi.hoisted(() => {
     globalInputOn,
     globalInputAcquire,
     globalInputRelease,
+    nativeGetActiveWindow,
     latestWindow,
     createMockWindow
   }
@@ -160,7 +162,8 @@ vi.mock('../../src/main/core/globalInputManager.js', () => ({
 
 vi.mock('../../src/main/core/native/index.js', () => ({
   WindowManager: {
-    activateWindow: vi.fn()
+    activateWindow: vi.fn(),
+    getActiveWindow: mocks.nativeGetActiveWindow
   }
 }))
 
@@ -209,6 +212,7 @@ describe('windowManager macOS activation', () => {
     mocks.clipboardGetCurrentWindow.mockReturnValue(null)
     mocks.clipboardActivateApp.mockReturnValue(true)
     mocks.appIsHidden.mockReturnValue(false)
+    mocks.nativeGetActiveWindow.mockReturnValue(null)
     mocks.latestWindow.current = null
   })
 
@@ -242,6 +246,56 @@ describe('windowManager macOS activation', () => {
     mocks.latestWindow.current.emit('blur')
     expect(mocks.latestWindow.current.hide).toHaveBeenCalledTimes(1)
   })
+
+  it('steals activation so the panel reaches the current fullscreen Space', async () => {
+    const { default: windowManager } = await import('../../src/main/managers/windowManager')
+    mocks.nativeGetActiveWindow.mockReturnValue({
+      app: 'Keynote',
+      pid: 4242,
+      isFullscreen: true,
+      x: 0,
+      y: 0,
+      width: 1440,
+      height: 900
+    })
+
+    windowManager.createWindow()
+    windowManager.showWindow()
+
+    expect(mocks.appFocus).toHaveBeenCalledWith({ steal: true })
+    expect(mocks.latestWindow.current.setVisibleOnAllWorkspaces).toHaveBeenLastCalledWith(true, {
+      visibleOnFullScreen: true
+    })
+    expect(mocks.latestWindow.current.show).toHaveBeenCalled()
+    expect(mocks.latestWindow.current.focus).toHaveBeenCalled()
+  })
+
+  it('keeps the non-activating panel when the foreground app is not fullscreen', async () => {
+    const { default: windowManager } = await import('../../src/main/managers/windowManager')
+    mocks.nativeGetActiveWindow.mockReturnValue({
+      app: 'Finder',
+      pid: 4242,
+      isFullscreen: false,
+      x: 0,
+      y: 0,
+      width: 1440,
+      height: 900
+    })
+
+    windowManager.createWindow()
+    windowManager.showWindow()
+
+    expect(mocks.appFocus).not.toHaveBeenCalled()
+    expect(mocks.latestWindow.current.focus).not.toHaveBeenCalled()
+    expect(mocks.latestWindow.current.setVisibleOnAllWorkspaces).toHaveBeenCalledTimes(1)
+    expect(mocks.latestWindow.current.setAlwaysOnTop).toHaveBeenLastCalledWith(
+      true,
+      'modal-panel',
+      1
+    )
+    expect(mocks.latestWindow.current.show).toHaveBeenCalled()
+  })
+
   it('does not restore focus when a hidden main window receives a hide request', async () => {
     const { default: windowManager } = await import('../../src/main/managers/windowManager')
 
