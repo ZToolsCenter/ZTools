@@ -1,0 +1,7 @@
+allowBuilds:
+  electron: true
+  electron-winstaller: true
+  esbuild: true
+  lmdb: true
+  msgpackr-extract: true
+  uiohook-napi: true

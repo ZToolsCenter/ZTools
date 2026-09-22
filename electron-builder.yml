@@ -83,8 +83,24 @@ linux:
   target:
     - AppImage
     - deb
-  maintainer: electronjs.org
+  maintainer: ZToolsCenter
   category: Utility
+  # 固定可执行文件名，同时固定生成的 ztools.desktop 名称（package.json 的 desktopName 需一致）
+  executableName: ztools
+  icon: build/icons
+  synopsis: 高效可扩展的应用启动器与插件平台
+  description: ZTools 是一个高性能、可扩展的应用启动器与插件平台，支持拼音搜索、插件系统、剪贴板管理与主题定制。
+  desktop:
+    entry:
+      StartupWMClass: ZTools
+      StartupNotify: 'true'
+deb:
+  # 托盘图标依赖 StatusNotifier/AppIndicator 宿主，GNOME 上由扩展提供
+  depends:
+    - libayatana-appindicator3-1
+    - libnotify4
+    - libxtst6
+    - libnss3
 appImage:
   artifactName: ${name}-${version}-${os}-${arch}.${ext}
 npmRebuild: false
