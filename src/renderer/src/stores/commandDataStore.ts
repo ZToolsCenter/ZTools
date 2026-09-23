@@ -9,6 +9,8 @@ import {
   applySpecialConfig as _applySpecialConfig,
   calculateMatchScore as _calculateMatchScore
 } from './commandUtils'
+import { tokenSearch } from '../utils/tokenSearch'
+import { useWindowStore } from './windowStore'
 import {
   COMMAND_ALIASES_KEY,
   getLegacyDirectAppCommandId,
@@ -1368,72 +1370,83 @@ export const useCommandDataStore = defineStore('commandData', () => {
     // 如果没有指定搜索范围，使用全局指令
     const searchTarget = commandList || commands.value
 
-    if (!query || !fuse.value) {
+    const windowStore = useWindowStore()
+    const useTokenSearch = windowStore.tokenSearchEnabled
+
+    if (!query || (!fuse.value && !useTokenSearch)) {
       return {
         bestMatches: searchTarget.filter((cmd) => cmd.type === 'direct' && cmd.subType === 'app'), // 无搜索时只显示应用
         regexMatches: []
       }
     }
 
-    // 1. Fuse.js 模糊搜索
-    // 搜索词过长时跳过 Fuse.js（应用名/指令名通常很短，超长输入走模糊搜索无意义且浪费性能）
+    // 1. 命令搜索
+    // 搜索词过长时跳过（应用名/指令名通常很短，超长输入走搜索无意义且浪费性能）
     const FUSE_MAX_QUERY_LENGTH = 32
     let bestMatches: SearchResult[] = []
 
     if (query.length <= FUSE_MAX_QUERY_LENGTH) {
-      // 如果指定了搜索范围，创建临时 Fuse 实例
-      const searchFuse = commandList
-        ? new Fuse(commandList, {
-            keys: [
-              { name: 'name', weight: 2 },
-              { name: 'pinyin', weight: 1.5 },
-              { name: 'pinyinAbbr', weight: 1 },
-              { name: 'acronym', weight: 1.5 }
-            ],
-            threshold: 0,
-            ignoreLocation: true,
-            includeScore: true,
-            includeMatches: true
-          })
-        : fuse.value
+      if (useTokenSearch) {
+        // 分词搜索：直接产出按分词匹配分数排序的命中项
+        bestMatches = tokenSearch(searchTarget, query, {
+          matchInsideWord: windowStore.matchInsideWord
+        }) as unknown as SearchResult[]
+      } else {
+        // Fuse.js 模糊搜索
+        // 如果指定了搜索范围，创建临时 Fuse 实例
+        const searchFuse = commandList
+          ? new Fuse(commandList, {
+              keys: [
+                { name: 'name', weight: 2 },
+                { name: 'pinyin', weight: 1.5 },
+                { name: 'pinyinAbbr', weight: 1 },
+                { name: 'acronym', weight: 1.5 }
+              ],
+              threshold: 0,
+              ignoreLocation: true,
+              includeScore: true,
+              includeMatches: true
+            })
+          : fuse.value!
 
-      const fuseResults = searchFuse.search(query)
-      const scoredMatches: SearchResultScoreMeta[] = fuseResults.map((r) => {
-        const displayMatches = (r.matches || []) as MatchInfo[]
+        const fuseResults = searchFuse.search(query)
+        const scoredMatches: SearchResultScoreMeta[] = fuseResults.map((r) => {
+          const displayMatches = (r.matches || []) as MatchInfo[]
 
-        // 检测匹配类型（用于前端高亮算法选择）
-        let matchType: 'acronym' | 'name' | 'pinyin' | 'pinyinAbbr' | undefined
-        if (displayMatches.length > 0) {
-          // 优先级：acronym > name > pinyin > pinyinAbbr
-          if (displayMatches.some((m) => m.key === 'acronym')) {
-            matchType = 'acronym'
-          } else if (displayMatches.some((m) => m.key === 'name')) {
-            matchType = 'name'
-          } else if (displayMatches.some((m) => m.key === 'pinyin')) {
-            matchType = 'pinyin'
-          } else if (displayMatches.some((m) => m.key === 'pinyinAbbr')) {
-            matchType = 'pinyinAbbr'
+          // 检测匹配类型（用于前端高亮算法选择）
+          let matchType: 'acronym' | 'name' | 'pinyin' | 'pinyinAbbr' | undefined
+          if (displayMatches.length > 0) {
+            // 优先级：acronym > name > pinyin > pinyinAbbr
+            if (displayMatches.some((m) => m.key === 'acronym')) {
+              matchType = 'acronym'
+            } else if (displayMatches.some((m) => m.key === 'name')) {
+              matchType = 'name'
+            } else if (displayMatches.some((m) => m.key === 'pinyin')) {
+              matchType = 'pinyin'
+            } else if (displayMatches.some((m) => m.key === 'pinyinAbbr')) {
+              matchType = 'pinyinAbbr'
+            }
           }
-        }
 
-        return {
-          result: {
-            ...r.item,
-            matches: displayMatches,
-            matchType
-          },
-          scoreText: r.item.name,
-          scoreMatches: displayMatches
-        }
-      })
-      bestMatches = scoredMatches
-        .sort((a, b) => {
-          // 自定义排序：优先连续匹配，系统应用权重略高
-          const scoreA = calculateMatchScore(a.scoreText, query, a.scoreMatches, a.result)
-          const scoreB = calculateMatchScore(b.scoreText, query, b.scoreMatches, b.result)
-          return scoreB - scoreA // 分数高的排前面
+          return {
+            result: {
+              ...r.item,
+              matches: displayMatches,
+              matchType
+            },
+            scoreText: r.item.name,
+            scoreMatches: displayMatches
+          }
         })
-        .map((item) => item.result)
+        bestMatches = scoredMatches
+          .sort((a, b) => {
+            // 自定义排序：优先连续匹配，系统应用权重略高
+            const scoreA = calculateMatchScore(a.scoreText, query, a.scoreMatches, a.result)
+            const scoreB = calculateMatchScore(b.scoreText, query, b.scoreMatches, b.result)
+            return scoreB - scoreA // 分数高的排前面
+          })
+          .map((item) => item.result)
+      }
 
       // 搜索偏好置顶：将上次选中的指令移到第一位
       const prefKey = query.trim().toLowerCase()
