@@ -5,6 +5,15 @@ import { app, clipboard } from 'electron'
 import macZToolsNative from '../../../../resources/lib/mac/ztools_native.node?asset'
 import winZToolsNative from '../../../../resources/lib/win/ztools_native.node?asset'
 
+// 原生日志默认关闭：只有设置里的调试控制台开启时才向临时目录写入日志
+// （NativeLogger.setEnabled 联动）。必须在下方 require 原生模块之前设置——
+// 原生模块加载时会立即读取该环境变量并写会话起始行；off 时起始行被过滤、
+// 日志文件懒创建，临时目录不会出现 ztools-native.log。
+// 用户已显式设置 ZTOOLS_LOG_LEVEL 时尊重其取值（排障后门）。
+if (!process.env.ZTOOLS_LOG_LEVEL) {
+  process.env.ZTOOLS_LOG_LEVEL = 'off'
+}
+
 // 根据平台加载对应的原生模块
 // 注意：?asset 导入是 Vite 构建期转换，只能做静态导入（得到路径字符串）
 // 真正的模块加载在下方 require() 中，按平台各自加载，Linux 不加载任何原生模块
@@ -196,6 +205,10 @@ interface NativeAddon {
   rejectProviderBridge?: (seq: number, error: string) => void
   /** Provider 桥接：查询是否就绪 */
   isProviderBridgeReady?: () => boolean
+  /** 原生日志：设置输出等级（trace/debug/info/warn/error/off） */
+  setLogLevel?: (level: string) => void
+  /** 原生日志：查询当前输出等级 */
+  getLogLevel?: () => string
 }
 
 interface WindowInfo {
@@ -1466,6 +1479,41 @@ function safeParseBridgeJson(inputJson: string): unknown {
     return JSON.parse(inputJson)
   } catch {
     return {}
+  }
+}
+
+/**
+ * 原生层日志控制类
+ *
+ * 原生日志写入系统临时目录（ztools-native.log，10MB 轮转），默认关闭
+ * （见本文件顶部的 ZTOOLS_LOG_LEVEL 默认值），仅当设置里的调试控制台开启时
+ * 由 NativeLogger.setEnabled(true) 打开，关闭调试控制台时停止写入。
+ * 只影响原生层自己的日志，与 JS 侧 logCollector 的调试输出互不干扰。
+ * Linux 无原生模块、旧版二进制无日志导出时，所有方法安全降级为 no-op。
+ */
+export class NativeLogger {
+  /**
+   * 调试控制台开关联动入口：开启时以 debug 等级写入临时目录，关闭时停止写入
+   * @param enabled 调试控制台是否开启
+   */
+  static setEnabled(enabled: boolean): void {
+    NativeLogger.setLevel(enabled ? 'debug' : 'off')
+  }
+
+  /**
+   * 设置原生日志输出等级
+   * @param level 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'off'
+   */
+  static setLevel(level: string): void {
+    ;(addon as NativeAddon | null)?.setLogLevel?.(level)
+  }
+
+  /**
+   * 查询原生日志当前输出等级
+   * @returns 等级字符串；原生模块不可用或无日志导出时返回 'off'
+   */
+  static getLevel(): string {
+    return (addon as NativeAddon | null)?.getLogLevel?.() ?? 'off'
   }
 }
 
