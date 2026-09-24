@@ -57,6 +57,7 @@ import pluginFFmpegAPI from './plugin/ffmpeg'
 import httpServer from '../core/httpServer'
 import mcpServer from '../core/mcpServer'
 import providerManager from '../core/provider/providerManager'
+import { startProviderBridgeHost } from '../core/provider/providerBridgeHost'
 import { runStartupDataMigrations } from '../core/startupDataMigrations'
 import superPanelManager from '../core/superPanelManager'
 import translationManager from '../core/translationManager'
@@ -129,6 +130,8 @@ class APIManager {
     providerManager.init(pluginManager)
     // 暴露给所有插件的 provider 消费入口（查询默认渠道 / 调用），依赖 providerManager 已就绪
     pluginProvidersAPI.init()
+    // Provider 桥接宿主：原生层（截图翻译等）反向调用 ocr/translation provider
+    startProviderBridgeHost()
     pluginAiAPI.init(mainWindow, pluginManager)
     pluginLifecycleAPI.init(mainWindow, pluginManager)
     pluginUIAPI.init(mainWindow, pluginManager)

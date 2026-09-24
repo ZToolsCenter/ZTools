@@ -3,6 +3,7 @@ import type { PluginManager } from '../../managers/pluginManager'
 import windowManager from '../../managers/windowManager.js'
 import dndManager from '../../core/dndManager.js'
 import logCollector from '../../core/logCollector.js'
+import { NativeLogger } from '../../core/native/index.js'
 import clipboardManager from '../../managers/clipboardManager.js'
 import detachedWindowManager from '../../core/detachedWindowManager.js'
 import floatingBallManager from '../../core/floatingBallManager.js'
@@ -1410,6 +1411,8 @@ export class InternalPluginAPI {
         throw new PermissionDeniedError('internal:log-enable')
       }
       logCollector.enable(event.sender)
+      // 联动原生层日志：调试控制台开启后原生日志才写入临时目录
+      NativeLogger.setEnabled(true)
       return { success: true }
     })
 
@@ -1418,6 +1421,8 @@ export class InternalPluginAPI {
         throw new PermissionDeniedError('internal:log-disable')
       }
       logCollector.disable(event.sender)
+      // 联动原生层日志：调试控制台关闭后停止向临时目录写入
+      NativeLogger.setEnabled(false)
       return { success: true }
     })
 

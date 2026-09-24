@@ -5,6 +5,15 @@ import { app, clipboard } from 'electron'
 import macZToolsNative from '../../../../resources/lib/mac/ztools_native.node?asset'
 import winZToolsNative from '../../../../resources/lib/win/ztools_native.node?asset'
 
+// 原生日志默认关闭：只有设置里的调试控制台开启时才向临时目录写入日志
+// （NativeLogger.setEnabled 联动）。必须在下方 require 原生模块之前设置——
+// 原生模块加载时会立即读取该环境变量并写会话起始行；off 时起始行被过滤、
+// 日志文件懒创建，临时目录不会出现 ztools-native.log。
+// 用户已显式设置 ZTOOLS_LOG_LEVEL 时尊重其取值（排障后门）。
+if (!process.env.ZTOOLS_LOG_LEVEL) {
+  process.env.ZTOOLS_LOG_LEVEL = 'off'
+}
+
 // 根据平台加载对应的原生模块
 // 注意：?asset 导入是 Vite 构建期转换，只能做静态导入（得到路径字符串）
 // 真正的模块加载在下方 require() 中，按平台各自加载，Linux 不加载任何原生模块
@@ -81,9 +90,9 @@ export interface ScreenCaptureResult {
   success: boolean
   width?: number
   height?: number
-  /** 截图左上角 x 坐标（成功时，macOS 暂不支持） */
+  /** 截图左上角 x 坐标（成功时，屏幕全局逻辑坐标） */
   x?: number
-  /** 截图左上角 y 坐标（成功时，macOS 暂不支持） */
+  /** 截图左上角 y 坐标（成功时，屏幕全局逻辑坐标） */
   y?: number
   /** 截图 PNG 的 base64（成功时） */
   base64?: string
@@ -186,6 +195,20 @@ interface NativeAddon {
     | { type: 'image'; data: string }
   >
   launchCuiShell: (shell: string, workingDirectory: string) => boolean
+  /** Provider 桥接：注册 JS 分发函数（原生线程经此反向调用 JS，如截图翻译的 OCR/翻译） */
+  startProviderBridge?: (dispatcher: (type: string, inputJson: string, seq: number) => void) => void
+  /** Provider 桥接：停止并让等待中的原生调用立即失败 */
+  stopProviderBridge?: () => void
+  /** Provider 桥接：按 seq 回传成功结果（JSON 字符串） */
+  resolveProviderBridge?: (seq: number, resultJson: string) => void
+  /** Provider 桥接：按 seq 回传失败 */
+  rejectProviderBridge?: (seq: number, error: string) => void
+  /** Provider 桥接：查询是否就绪 */
+  isProviderBridgeReady?: () => boolean
+  /** 原生日志：设置输出等级（trace/debug/info/warn/error/off） */
+  setLogLevel?: (level: string) => void
+  /** 原生日志：查询当前输出等级 */
+  getLogLevel?: () => string
 }
 
 interface WindowInfo {
@@ -946,15 +969,15 @@ export class OptimizedShortcutManager {
 }
 
 /**
- * 区域截图类
+ * 区域截图类（Windows/macOS 原生实现；Linux 无原生模块）
  */
 export class ScreenCapture {
   /**
-   * 预抓取当前虚拟屏幕帧
+   * 预抓取当前虚拟屏幕帧（2 秒 TTL，start 时命中即用）
    */
   static prime(): boolean {
-    if (platform === 'darwin') {
-      throw new Error('ScreenCapture is not yet supported on macOS')
+    if (platform === 'linux') {
+      throw new Error('ScreenCapture is not supported on Linux')
     }
 
     return (addon as NativeAddon).primeScreenshotFrame()
@@ -963,30 +986,28 @@ export class ScreenCapture {
   /**
    * 启动区域截图
    * @param options 截图选项；直接传函数时按旧签名 start(callback) 处理
-   *   - autoConfirm: 选区确定后直接出图，跳过编辑态（工具栏/标注），默认 true
+   *   - autoConfirm: 选区确定后直接出图，跳过编辑态（工具栏/标注/翻译），默认 true
    * @param callback 截图完成时的回调函数
    * - 参数: { success: boolean, width?: number, height?: number, x?: number, y?: number, base64?: string }
    * - success: 是否成功截图
    * - width: 截图宽度（成功时）
    * - height: 截图高度（成功时）
-   * - x: 截图左上角 x 坐标（成功时，macOS 暂不支持）
-   * - y: 截图左上角 y 坐标（成功时，macOS 暂不支持）
+   * - x/y: 截图左上角坐标（成功时，屏幕全局逻辑坐标）
    * - base64: 截图 PNG 的 base64（成功时）
    *
    * @example
    * // 默认：框选/点选完成即出图，不再二次编辑
    * ScreenCapture.start((result) => { ... });
    *
-   * // 进入编辑态：选区确定后停留在工具栏，可标注/调整
+   * // 进入编辑态：选区确定后停留在工具栏，可标注/调整/翻译
    * ScreenCapture.start({ autoConfirm: false }, (result) => { ... });
    */
   static start(
     options: ScreenCaptureOptions | ((result: ScreenCaptureResult) => void),
     callback?: (result: ScreenCaptureResult) => void
   ): void {
-    if (platform === 'darwin') {
-      // macOS 暂不支持
-      throw new Error('ScreenCapture is not yet supported on macOS')
+    if (platform === 'linux') {
+      throw new Error('ScreenCapture is not supported on Linux')
     }
 
     // 兼容旧签名 start(callback)
@@ -1403,6 +1424,94 @@ export class CuiProcess {
       console.error('[CuiProcess] Failed to launch Cmd:', err)
       return false
     }
+  }
+}
+
+/**
+ * Provider 桥接：让原生层（任意 native 线程上的 C++ 代码）反向调用 JS 侧注册的方法。
+ *
+ * 典型用法（主进程把 provider 能力交给原生业务，如 Windows 截图工具栏「翻译」按钮）：
+ *   ProviderBridge.start(async (type, input) => providerManager.invoke(type, input))
+ * 返回值 / 抛错信息会 JSON 序列化后回传给发起调用的原生线程。
+ * 旧版原生模块无此能力时 start 会抛错，调用方需自行捕获降级。
+ */
+export class ProviderBridge {
+  /**
+   * 启动桥接，注册 JS 侧 handler。重复启动会抛错；stop 之后可重新 start。
+   * @param handler (type, input) => Promise 结果；input 为原生传入 JSON 的解析值
+   */
+  static start(handler: (type: string, input: unknown) => unknown): void {
+    if (typeof handler !== 'function') {
+      throw new TypeError('ProviderBridge.start requires a handler function')
+    }
+    const native = addon as NativeAddon
+    if (platform === 'linux' || !native || typeof native.startProviderBridge !== 'function') {
+      throw new Error('ProviderBridge is not supported by the current native module')
+    }
+    native.startProviderBridge((type, inputJson, seq) => {
+      Promise.resolve()
+        .then(() => handler(type, safeParseBridgeJson(inputJson)))
+        .then((result) => {
+          native.resolveProviderBridge?.(seq, JSON.stringify(result === undefined ? null : result))
+        })
+        .catch((err: unknown) => {
+          native.rejectProviderBridge?.(seq, err instanceof Error ? err.message : String(err))
+        })
+    })
+  }
+
+  /** 停止桥接；等待中的原生调用立即收到 "provider bridge stopped" 错误 */
+  static stop(): void {
+    ;(addon as NativeAddon).stopProviderBridge?.()
+  }
+
+  /** 桥接是否已 start 且未 stop */
+  static isReady(): boolean {
+    return Boolean((addon as NativeAddon).isProviderBridgeReady?.())
+  }
+}
+
+/** 桥接入参 JSON 解析：原生侧保证为合法 JSON，异常时兜底空对象避免分发器崩溃 */
+function safeParseBridgeJson(inputJson: string): unknown {
+  try {
+    return JSON.parse(inputJson)
+  } catch {
+    return {}
+  }
+}
+
+/**
+ * 原生层日志控制类
+ *
+ * 原生日志写入系统临时目录（ztools-native.log，10MB 轮转），默认关闭
+ * （见本文件顶部的 ZTOOLS_LOG_LEVEL 默认值），仅当设置里的调试控制台开启时
+ * 由 NativeLogger.setEnabled(true) 打开，关闭调试控制台时停止写入。
+ * 只影响原生层自己的日志，与 JS 侧 logCollector 的调试输出互不干扰。
+ * Linux 无原生模块、旧版二进制无日志导出时，所有方法安全降级为 no-op。
+ */
+export class NativeLogger {
+  /**
+   * 调试控制台开关联动入口：开启时以 debug 等级写入临时目录，关闭时停止写入
+   * @param enabled 调试控制台是否开启
+   */
+  static setEnabled(enabled: boolean): void {
+    NativeLogger.setLevel(enabled ? 'debug' : 'off')
+  }
+
+  /**
+   * 设置原生日志输出等级
+   * @param level 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'off'
+   */
+  static setLevel(level: string): void {
+    ;(addon as NativeAddon | null)?.setLogLevel?.(level)
+  }
+
+  /**
+   * 查询原生日志当前输出等级
+   * @returns 等级字符串；原生模块不可用或无日志导出时返回 'off'
+   */
+  static getLevel(): string {
+    return (addon as NativeAddon | null)?.getLogLevel?.() ?? 'off'
   }
 }
 

@@ -6,7 +6,7 @@ import os from 'os'
 import { ScreenCapture, ScreenCaptureOptions } from './native'
 import windowManager from '../managers/windowManager'
 
-// 截图方法windows
+// 原生截图（Windows/macOS：覆盖层选区 + 编辑态工具栏/标注/翻译）
 export const screenWindow = (
   cb: (image: string, bounds?: { x: number; y: number; width: number; height: number }) => void,
   options?: ScreenCaptureOptions
@@ -24,27 +24,6 @@ export const screenWindow = (
       cb && cb(image.isEmpty() ? '' : image.toDataURL(), bounds)
     } else {
       cb && cb('')
-    }
-  })
-}
-
-// 截图方法mac
-export const handleScreenShots = (
-  cb: (image: string, bounds?: { x: number; y: number; width: number; height: number }) => void
-): void => {
-  const tmpPath = path.join(os.tmpdir(), `screenshot_${Date.now()}.png`)
-  exec(`screencapture -i -r "${tmpPath}"`, () => {
-    if (fs.existsSync(tmpPath)) {
-      try {
-        const imageBuffer = fs.readFileSync(tmpPath)
-        const base64Image = `data:image/png;base64,${imageBuffer.toString('base64')}`
-        cb(base64Image)
-        fs.unlinkSync(tmpPath)
-      } catch {
-        cb('')
-      }
-    } else {
-      cb('')
     }
   })
 }
@@ -174,7 +153,7 @@ export const handleLinuxScreenShot = (cb: (image: string) => void): void => {
 }
 
 export const primeScreenCaptureFrame = (): boolean => {
-  if (process.platform !== 'win32') {
+  if (process.platform !== 'win32' && process.platform !== 'darwin') {
     return false
   }
 
@@ -186,13 +165,27 @@ export const primeScreenCaptureFrame = (): boolean => {
   }
 }
 
+// macOS 主窗口隐藏后，等待 WindowServer 完成合成、窗口真正离开屏幕的缓冲时长。
+// orderOut 只是把窗口从窗口服务器移除，屏幕像素要等下一次合成才更新；
+// 不等待就截屏，选区冻结帧里会残留主窗口（搜索框）画面。
+const MAC_WINDOW_DISMISS_SETTLE_MS = 250
+
+/**
+ * 统一截图入口：隐藏主窗口后启动平台对应的截图流程，结束后恢复窗口显示。
+ * macOS 上主窗口刚隐藏时需先等待屏幕合成完成（见 MAC_WINDOW_DISMISS_SETTLE_MS），
+ * 再启动原生截图，避免冻结帧带上搜索框。
+ * @param mainWindow 截图期间需要隐藏的主窗口；省略或不可见时直接开始截图
+ * @param restoreShowWindow 截图结束后是否恢复主窗口显示
+ * @param options 原生截图选项（如 autoConfirm），透传给原生模块
+ * @returns 截图流程结束后 resolve 为 { image, bounds } 的 Promise；image 为 dataURL 或空串
+ */
 export const screenCapture = (
   mainWindow?: BrowserWindow,
   restoreShowWindow: boolean = true,
   options?: ScreenCaptureOptions
 ): Promise<{ image: string; bounds?: { x: number; y: number; width: number; height: number } }> => {
   return new Promise((resolve) => {
-    // 隐藏主窗口
+    // 隐藏主窗口（记录隐藏前可见性，用于后续恢复与 macOS 等待判断）
     const wasVisible = mainWindow?.isVisible() || false
     if (mainWindow && wasVisible) {
       mainWindow.hide()
@@ -205,24 +198,30 @@ export const screenCapture = (
       }
     }
 
-    // 接收到截图后的执行程序
-    if (process.platform === 'darwin') {
-      handleScreenShots((image, bounds) => {
-        restoreWindow()
-        resolve({ image, bounds })
-      })
-    } else if (process.platform === 'win32') {
-      // Windows 透传 autoConfirm 选项，false 时进入编辑态由用户标注后再出图
-      screenWindow((image, bounds) => {
-        restoreWindow()
-        resolve({ image, bounds })
-      }, options)
-    } else {
-      // Linux
-      handleLinuxScreenShot((image) => {
-        restoreWindow()
-        resolve({ image, bounds: undefined })
-      })
+    // 启动平台截图并透传结果
+    const startCapture = (): void => {
+      if (process.platform === 'darwin' || process.platform === 'win32') {
+        // 原生截图（两平台全功能对等）：透传 autoConfirm 选项，false 时进入编辑态
+        // 由用户标注/翻译后再出图（macOS 会话阻塞主线程直至收束，为原生模块既定行为）
+        screenWindow((image, bounds) => {
+          restoreWindow()
+          resolve({ image, bounds })
+        }, options)
+      } else {
+        // Linux
+        handleLinuxScreenShot((image) => {
+          restoreWindow()
+          resolve({ image, bounds: undefined })
+        })
+      }
     }
+
+    // macOS：主窗口刚被隐藏时，等待其真正离开屏幕再截；窗口本就不可见则无需等待
+    if (process.platform === 'darwin' && wasVisible) {
+      setTimeout(startCapture, MAC_WINDOW_DISMISS_SETTLE_MS)
+      return
+    }
+
+    startCapture()
   })
 }
