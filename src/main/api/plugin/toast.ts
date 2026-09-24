@@ -64,7 +64,11 @@ class ToastManager {
 
     // 设置窗口级别(macOS)
     if (process.platform === 'darwin') {
-      this.containerWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+      // 跳过进程类型变换，避免每条 toast 创建容器窗口时触发异步变换影响主窗口
+      this.containerWindow.setVisibleOnAllWorkspaces(true, {
+        visibleOnFullScreen: true,
+        skipTransformProcessType: true
+      })
       this.containerWindow.setAlwaysOnTop(true, 'screen-saver')
       this.containerWindow.setHasShadow(false)
     }

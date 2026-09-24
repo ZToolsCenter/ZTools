@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => {
   const globalInputOn = vi.fn()
   const globalInputAcquire = vi.fn()
   const globalInputRelease = vi.fn()
+  const nativeGetActiveWindow = vi.fn()
   const latestWindow = { current: null as any }
 
   const createMockWindow = (): any => {
@@ -37,13 +38,16 @@ const mocks = vi.hoisted(() => {
         getURL: vi.fn(() => 'app://ztools')
       },
       setVisibleOnAllWorkspaces: vi.fn(),
+      setParentWindow: vi.fn(),
       setAlwaysOnTop: vi.fn(),
       setPosition: vi.fn(),
       getPosition: vi.fn(() => [100, 100]),
       getBounds: vi.fn(() => ({ x: 100, y: 100, width: 800, height: 600 })),
       isFocused: vi.fn(() => false),
       isVisible: vi.fn(() => false),
+      isDestroyed: vi.fn(() => false),
       show: vi.fn(() => emit('show')),
+      showInactive: vi.fn(() => emit('show')),
       emit,
       hide: vi.fn(),
       minimize: vi.fn(),
@@ -74,6 +78,7 @@ const mocks = vi.hoisted(() => {
     globalInputOn,
     globalInputAcquire,
     globalInputRelease,
+    nativeGetActiveWindow,
     latestWindow,
     createMockWindow
   }
@@ -93,7 +98,8 @@ vi.mock('electron', () => ({
     isHidden: mocks.appIsHidden,
     dock: {
       show: vi.fn(),
-      hide: vi.fn()
+      hide: vi.fn(),
+      isVisible: vi.fn(() => false)
     }
   },
   BrowserWindow: vi.fn(function BrowserWindowMock() {
@@ -114,11 +120,13 @@ vi.mock('electron', () => ({
     }))
   },
   screen: {
-    getCursorScreenPoint: vi.fn(() => ({ x: 300, y: 300 })),
-    getDisplayNearestPoint: vi.fn(() => ({
-      id: 1,
-      workArea: { x: 0, y: 0, width: 1440, height: 900 }
-    }))
+    // 光标固定在“副屏”（x<0），用于验证窗口/锚点的跨显示器同步
+    getCursorScreenPoint: vi.fn(() => ({ x: -600, y: 800 })),
+    getDisplayNearestPoint: vi.fn((point: { x: number; y: number }) =>
+      point.x < 0
+        ? { id: 2, workArea: { x: -1728, y: 254, width: 1728, height: 1117 } }
+        : { id: 1, workArea: { x: 0, y: 0, width: 1440, height: 900 } }
+    )
   },
   Tray: vi.fn(() => ({
     setToolTip: vi.fn(),
@@ -160,7 +168,8 @@ vi.mock('../../src/main/core/globalInputManager.js', () => ({
 
 vi.mock('../../src/main/core/native/index.js', () => ({
   WindowManager: {
-    activateWindow: vi.fn()
+    activateWindow: vi.fn(),
+    getActiveWindow: mocks.nativeGetActiveWindow
   }
 }))
 
@@ -209,6 +218,7 @@ describe('windowManager macOS activation', () => {
     mocks.clipboardGetCurrentWindow.mockReturnValue(null)
     mocks.clipboardActivateApp.mockReturnValue(true)
     mocks.appIsHidden.mockReturnValue(false)
+    mocks.nativeGetActiveWindow.mockReturnValue(null)
     mocks.latestWindow.current = null
   })
 
@@ -224,7 +234,8 @@ describe('windowManager macOS activation', () => {
 
     expect(mocks.latestWindow.current.show).toHaveBeenCalled()
     expect(mocks.latestWindow.current.setVisibleOnAllWorkspaces).toHaveBeenCalledWith(true, {
-      visibleOnFullScreen: true
+      visibleOnFullScreen: true,
+      skipTransformProcessType: true
     })
     expect(mocks.latestWindow.current.setVisibleOnAllWorkspaces).toHaveBeenCalledTimes(1)
     expect(mocks.latestWindow.current.setAlwaysOnTop).toHaveBeenLastCalledWith(
@@ -242,6 +253,70 @@ describe('windowManager macOS activation', () => {
     mocks.latestWindow.current.emit('blur')
     expect(mocks.latestWindow.current.hide).toHaveBeenCalledTimes(1)
   })
+
+  it('re-asserts Spaces behavior for the current fullscreen Space without activating the app', async () => {
+    const { default: windowManager } = await import('../../src/main/managers/windowManager')
+    mocks.nativeGetActiveWindow.mockReturnValue({
+      app: 'Keynote',
+      pid: 4242,
+      isFullscreen: true,
+      x: 0,
+      y: 0,
+      width: 1440,
+      height: 900
+    })
+
+    windowManager.createWindow()
+    const mainWindow = mocks.latestWindow.current
+    windowManager.showWindow()
+
+    expect(mocks.appFocus).not.toHaveBeenCalled()
+    expect(mainWindow.setVisibleOnAllWorkspaces).toHaveBeenLastCalledWith(true, {
+      visibleOnFullScreen: true,
+      skipTransformProcessType: true
+    })
+    expect(mainWindow.setVisibleOnAllWorkspaces).toHaveBeenCalledTimes(2)
+    expect(mainWindow.show).toHaveBeenCalled()
+    expect(mainWindow.focus).toHaveBeenCalled()
+    // 全屏呼出时主窗口应挂到 1x1 空间锚点上（子窗口跟随父窗口进入全屏 Space）
+    expect(mainWindow.setParentWindow).toHaveBeenCalledTimes(1)
+    expect(mainWindow.setParentWindow.mock.calls[0][0]).not.toBe(mainWindow)
+
+    // 再次呼出：锚点已存在，应跟随主窗口同步到目标显示器（否则子窗口会被限制在旧显示器）
+    const anchor = mainWindow.setParentWindow.mock.calls[0][0]
+    anchor.setPosition.mockClear()
+    mainWindow.setPosition.mockClear()
+    windowManager.showWindow()
+    expect(anchor.setPosition).toHaveBeenCalledWith(-1728, 254, false)
+    expect(mainWindow.setPosition).toHaveBeenCalled()
+  })
+
+  it('keeps the non-activating panel when the foreground app is not fullscreen', async () => {
+    const { default: windowManager } = await import('../../src/main/managers/windowManager')
+    mocks.nativeGetActiveWindow.mockReturnValue({
+      app: 'Finder',
+      pid: 4242,
+      isFullscreen: false,
+      x: 0,
+      y: 0,
+      width: 1440,
+      height: 900
+    })
+
+    windowManager.createWindow()
+    windowManager.showWindow()
+
+    expect(mocks.appFocus).not.toHaveBeenCalled()
+    expect(mocks.latestWindow.current.focus).not.toHaveBeenCalled()
+    expect(mocks.latestWindow.current.setVisibleOnAllWorkspaces).toHaveBeenCalledTimes(1)
+    expect(mocks.latestWindow.current.setAlwaysOnTop).toHaveBeenLastCalledWith(
+      true,
+      'modal-panel',
+      1
+    )
+    expect(mocks.latestWindow.current.show).toHaveBeenCalled()
+  })
+
   it('does not restore focus when a hidden main window receives a hide request', async () => {
     const { default: windowManager } = await import('../../src/main/managers/windowManager')
 
