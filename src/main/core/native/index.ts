@@ -90,9 +90,9 @@ export interface ScreenCaptureResult {
   success: boolean
   width?: number
   height?: number
-  /** 截图左上角 x 坐标（成功时，macOS 暂不支持） */
+  /** 截图左上角 x 坐标（成功时，屏幕全局逻辑坐标） */
   x?: number
-  /** 截图左上角 y 坐标（成功时，macOS 暂不支持） */
+  /** 截图左上角 y 坐标（成功时，屏幕全局逻辑坐标） */
   y?: number
   /** 截图 PNG 的 base64（成功时） */
   base64?: string
@@ -969,15 +969,15 @@ export class OptimizedShortcutManager {
 }
 
 /**
- * 区域截图类
+ * 区域截图类（Windows/macOS 原生实现；Linux 无原生模块）
  */
 export class ScreenCapture {
   /**
-   * 预抓取当前虚拟屏幕帧
+   * 预抓取当前虚拟屏幕帧（2 秒 TTL，start 时命中即用）
    */
   static prime(): boolean {
-    if (platform === 'darwin') {
-      throw new Error('ScreenCapture is not yet supported on macOS')
+    if (platform === 'linux') {
+      throw new Error('ScreenCapture is not supported on Linux')
     }
 
     return (addon as NativeAddon).primeScreenshotFrame()
@@ -986,30 +986,28 @@ export class ScreenCapture {
   /**
    * 启动区域截图
    * @param options 截图选项；直接传函数时按旧签名 start(callback) 处理
-   *   - autoConfirm: 选区确定后直接出图，跳过编辑态（工具栏/标注），默认 true
+   *   - autoConfirm: 选区确定后直接出图，跳过编辑态（工具栏/标注/翻译），默认 true
    * @param callback 截图完成时的回调函数
    * - 参数: { success: boolean, width?: number, height?: number, x?: number, y?: number, base64?: string }
    * - success: 是否成功截图
    * - width: 截图宽度（成功时）
    * - height: 截图高度（成功时）
-   * - x: 截图左上角 x 坐标（成功时，macOS 暂不支持）
-   * - y: 截图左上角 y 坐标（成功时，macOS 暂不支持）
+   * - x/y: 截图左上角坐标（成功时，屏幕全局逻辑坐标）
    * - base64: 截图 PNG 的 base64（成功时）
    *
    * @example
    * // 默认：框选/点选完成即出图，不再二次编辑
    * ScreenCapture.start((result) => { ... });
    *
-   * // 进入编辑态：选区确定后停留在工具栏，可标注/调整
+   * // 进入编辑态：选区确定后停留在工具栏，可标注/调整/翻译
    * ScreenCapture.start({ autoConfirm: false }, (result) => { ... });
    */
   static start(
     options: ScreenCaptureOptions | ((result: ScreenCaptureResult) => void),
     callback?: (result: ScreenCaptureResult) => void
   ): void {
-    if (platform === 'darwin') {
-      // macOS 暂不支持
-      throw new Error('ScreenCapture is not yet supported on macOS')
+    if (platform === 'linux') {
+      throw new Error('ScreenCapture is not supported on Linux')
     }
 
     // 兼容旧签名 start(callback)

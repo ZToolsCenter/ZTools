@@ -64,11 +64,23 @@ export interface OcrInput {
   lang?: string
 }
 
+/** OCR 单行/单块结果：带行级坐标（图像像素，截图翻译的原生段落聚类与译文覆盖定位依据） */
+export interface OcrBlock {
+  /** 该行文本 */
+  text: string
+  /** 行框（提交图像内像素坐标，左上原点） */
+  left: number
+  top: number
+  right: number
+  bottom: number
+}
+
 export interface OcrOutput {
   /** 识别到的完整文本 */
   text: string
-  /** 按行或块的文本（可选） */
-  blocks?: string[]
+  /** 按行或块的文本（可选）：优先带坐标对象（原生截图翻译按行框聚类段落）；
+   *  无坐标时回退纯字符串（原生侧按整图兜底整段翻译） */
+  blocks?: Array<string | OcrBlock>
   /** 置信度 0~1（可选） */
   confidence?: number
 }
