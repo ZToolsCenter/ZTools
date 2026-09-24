@@ -394,9 +394,12 @@ class SuperPanelManager {
 
     const win = new BrowserWindow(windowConfig)
 
-    // macOS: 不在 Dock 中显示
+    // macOS: 不在 Dock 中显示。跳过进程类型变换，避免异步变换在面板显示后隐藏/重排窗口。
     if (process.platform === 'darwin') {
-      win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+      win.setVisibleOnAllWorkspaces(true, {
+        visibleOnFullScreen: true,
+        skipTransformProcessType: true
+      })
     }
 
     // 同步窗口材质（Windows）

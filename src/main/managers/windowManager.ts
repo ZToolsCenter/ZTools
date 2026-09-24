@@ -16,7 +16,7 @@ import windowsIcon from '../../../resources/icons/windows-icon.png?asset'
 
 import api from '../api'
 import databaseAPI from '../api/shared/database'
-import dndManager from '../core/dndManager.js'
+import dndManager, { isFullscreenWindow } from '../core/dndManager.js'
 import doubleTapManager from '../core/doubleTapManager.js'
 import globalInputManager from '../core/globalInputManager.js'
 import { WindowManager as NativeWindowManager } from '../core/native/index.js'
@@ -105,6 +105,8 @@ class WindowManager {
   private modalDialogBlurHideSuppressionDepth: number = 0
   private lastBlurHideTime: number = 0 // blur 导致隐藏窗口的时间戳（用于解决托盘点击竞态）
   private blurHideTimer: ReturnType<typeof setTimeout> | null = null // Linux blur 延迟隐藏定时器
+  // macOS 全屏场景的 1x1 隐形“空间锚点”窗口（子窗口跟随父窗口进入全屏 Space）
+  private macSpaceAnchor: BrowserWindow | null = null
   // Double-tap 唤醒窗口时，Windows 可能紧跟一个短暂 blur；这两个 timer 用于跳过误关闭并补一次焦点。
   private doubleTapFocusTimer: ReturnType<typeof setTimeout> | null = null
   private windowsHotkeyFocusTimer: ReturnType<typeof setTimeout> | null = null
@@ -406,8 +408,14 @@ class WindowManager {
 
     this.mainWindow = new BrowserWindow(windowConfig)
 
-    // 强化置顶层级并允许在所有桌面和全屏应用上显示
-    this.mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+    // 强化置顶层级并允许在所有桌面和全屏应用上显示。
+    // 跳过进程类型变换（skipTransformProcessType）：本应用以 LSUIElement + app.dock.hide()
+    // 自行维持 accessory 状态，而该变换是异步的，会在窗口显示后异步隐藏/重排窗口，是面板
+    // “一闪而过”或落到桌面 Space 的根源。
+    this.mainWindow.setVisibleOnAllWorkspaces(true, {
+      visibleOnFullScreen: true,
+      skipTransformProcessType: true
+    })
     if (platform.isMacOS) {
       this.mainWindow.setAlwaysOnTop(true, 'modal-panel', 1)
     } else {
@@ -508,6 +516,14 @@ class WindowManager {
       if (!this.isRestoringFocus) {
         this.updateFocusTarget('mainWindow')
       }
+    })
+
+    // macOS：主窗口被拖到其它显示器时同步“空间锚点”，避免锚点把子窗口限制在旧显示器
+    this.mainWindow.on('move', () => {
+      if (!platform.isMacOS || !this.mainWindow) return
+      if (!this.macSpaceAnchor || this.macSpaceAnchor.isDestroyed()) return
+      const [x, y] = this.mainWindow.getPosition()
+      this.syncAnchorToDisplayOf(x, y)
     })
 
     this.mainWindow.on('blur', () => {
@@ -874,16 +890,39 @@ class WindowManager {
   }
 
   /**
-   * 强制激活窗口（解决alert等弹窗后无法唤起的问题）
+   * 强制激活窗口（解决alert等弹窗后无法唤起的问题）。
+   *
+   * macOS 统一保持非激活 panel 语义：panel 窗口 show() 即成为 key window 且不激活应用
+   * （Spotlight 式面板），因此不调用 app.focus({steal:true})，避免 accessory 应用被激活后
+   * 带着面板切换到桌面 Space。前台应用处于全屏时额外重申“canJoinAllSpaces +
+   * fullScreenAuxiliary”集合行为，让面板进入当前全屏 Space；重申时跳过进程类型变换
+   * （skipTransformProcessType），该变换是异步的，会在显示后异步隐藏/重排窗口。
+   *
+   * @returns 无返回值
    */
   private forceActivateWindow(): void {
     if (!this.mainWindow) return
 
-    // macOS 使用非激活 panel 保留原应用的前台状态。短暂抑制呼出瞬间的 blur，
-    // 但不要激活整个应用，否则会破坏快捷面板不抢占原应用焦点的交互语义。
     if (platform.isMacOS) {
+      const fullscreen = this.isForegroundAppFullscreen()
+      // 抑制呼出瞬间系统补发的 blur，避免窗口刚显示就被误隐藏
       this.suppressBlurHideTransiently(200)
       this.mainWindow.setAlwaysOnTop(true, 'modal-panel', 1)
+
+      // 全屏场景：用“空间锚点”把面板带入当前全屏 Space，再以非激活 panel 语义显示
+      if (fullscreen) {
+        // 重申集合行为（跳过进程类型变换），保证 panel 具有 canJoinAllSpaces + fullScreenAuxiliary
+        this.mainWindow.setVisibleOnAllWorkspaces(true, {
+          visibleOnFullScreen: true,
+          skipTransformProcessType: true
+        })
+        this.ensureMacOSSpaceAnchor()
+        this.mainWindow.show()
+        this.mainWindow.focus()
+        return
+      }
+
+      // 非全屏场景保持非激活 panel，保留原应用的前台状态
       this.mainWindow.show()
       return
     }
@@ -892,6 +931,75 @@ class WindowManager {
     this.mainWindow.show()
     this.mainWindow.setAlwaysOnTop(true)
     this.mainWindow.focus()
+  }
+
+  /**
+   * 确保 macOS 全屏场景使用的“空间锚点”窗口存在，并把主窗口挂为它的子窗口。
+   *
+   * 背景：panel 窗口自带 canJoinAllSpaces + fullScreenAuxiliary 集合行为，但当窗口在某个
+   * 全屏 Space 中被隐藏（orderOut）后，WindowServer 会把它的 Space 归属收敛到当时所在的
+   * Space；若该 Space 后续消失（例如用户退出全屏），窗口会被钉在失效 Space 上，再次呼出时
+   * 无法进入当前全屏 Space，表现为“只在桌面显示、全屏看不到”。Electron 的 ElectronNSPanel
+   * 对集合行为只增不减，重复调用 setVisibleOnAllWorkspaces 也无法恢复归属。
+   *
+   * 方案：创建一个 1x1 不可见 panel 窗口作为锚点。macOS 上子窗口跟随父窗口所在的 Space，
+   * 且 Electron 在每次 show() 时重新挂接父窗口（hide() 时脱开），因此主窗口挂上锚点后，
+   * 无论当前处于哪个全屏 Space 都能可靠显示。锚点只在首次全屏呼出时创建，之后复用。
+   *
+   * @returns 无返回值
+   */
+  private ensureMacOSSpaceAnchor(): void {
+    if (!this.mainWindow) return
+
+    const anchorAlive = !!this.macSpaceAnchor && !this.macSpaceAnchor.isDestroyed()
+    if (!anchorAlive) {
+      // 创建 1x1 透明、不可聚焦、无阴影的锚点窗口，仅用于携带 Space 归属
+      this.macSpaceAnchor = new BrowserWindow({
+        type: 'panel',
+        width: 1,
+        height: 1,
+        x: 0,
+        y: 0,
+        frame: false,
+        transparent: true,
+        opacity: 0,
+        show: false,
+        skipTaskbar: true,
+        focusable: false,
+        hasShadow: false,
+        resizable: false,
+        minimizable: false,
+        maximizable: false
+      })
+      // 锚点同样声明全 Space + 全屏辅助，保证其子窗口可以出现在任何全屏 Space
+      this.macSpaceAnchor.setVisibleOnAllWorkspaces(true, {
+        visibleOnFullScreen: true,
+        skipTransformProcessType: true
+      })
+      // 与主窗口保持一致的置顶层级，避免子窗口层级被压低
+      this.macSpaceAnchor.setAlwaysOnTop(true, 'modal-panel', 1)
+      // 锚点与主窗口放在同一显示器，避免子窗口被限制到其它屏幕
+      const [mainX, mainY] = this.mainWindow.getPosition()
+      this.syncAnchorToDisplayOf(mainX, mainY)
+      // 以非激活方式登记到当前 Space，且不抢占焦点
+      this.macSpaceAnchor.showInactive()
+    }
+
+    const anchor = this.macSpaceAnchor
+    if (!anchor) return
+    // 把主窗口挂为锚点子窗口（Electron 在每次 show() 时自动重新挂接）
+    this.mainWindow.setParentWindow(anchor)
+  }
+
+  /**
+   * 判断当前前台应用是否处于全屏。
+   * @returns 前台应用为全屏窗口时返回 true；无法获取或非全屏时返回 false
+   */
+  private isForegroundAppFullscreen(): boolean {
+    const activeWindow = NativeWindowManager.getActiveWindow()
+    if (!activeWindow) return false
+
+    return isFullscreenWindow(activeWindow)
   }
 
   private refocusSearchAfterDoubleTap(): void {
@@ -991,7 +1099,7 @@ class WindowManager {
         const { width, height, x: displayX, y: displayY, id: displayId } = this.getDisplayAtCursor()
         const savedPosition = this.windowPositionsByDisplay[displayId]
         if (savedPosition) {
-          this.mainWindow.setPosition(savedPosition.x, savedPosition.y, false)
+          this.applyMainWindowPosition(savedPosition.x, savedPosition.y)
           return
         }
         target = { width, height, x: displayX, y: displayY, id: displayId }
@@ -1001,7 +1109,47 @@ class WindowManager {
 
     const x = target.x + Math.floor((target.width - WINDOW_WIDTH) / 2)
     const y = target.y + Math.floor((target.height - WINDOW_DEFAULT_HEIGHT) / 2)
+    this.applyMainWindowPosition(x, y)
+  }
+
+  /**
+   * 应用主窗口位置，并同步“空间锚点”到同一显示器。
+   *
+   * macOS 上子窗口会被限制在父窗口所在显示器，因此若锚点仍在旧显示器，主窗口会被拉回旧屏；
+   * 这里先把锚点移到目标显示器（隐藏状态下主窗口与锚点是脱开的，不会拖拽主窗口），再定位主窗口。
+   *
+   * @param x 目标位置横坐标
+   * @param y 目标位置纵坐标
+   * @returns 无返回值
+   */
+  private applyMainWindowPosition(x: number, y: number): void {
+    if (!this.mainWindow) return
+
+    this.syncAnchorToDisplayOf(x, y)
     this.mainWindow.setPosition(x, y, false)
+  }
+
+  /**
+   * 把“空间锚点”同步到指定坐标所在显示器。
+   *
+   * 子窗口会被限制在父窗口所在显示器，因此锚点必须与主窗口处于同一显示器；仅在显示器发生变化
+   * 时才移动锚点，避免移动锚点时带着子窗口抖动。锚点移到目标显示器工作区左上角即可（1x1 不可见
+   * 窗口，位置本身无视觉影响）。
+   *
+   * @param x 参考坐标横坐标
+   * @param y 参考坐标纵坐标
+   * @returns 无返回值
+   */
+  private syncAnchorToDisplayOf(x: number, y: number): void {
+    const anchor = this.macSpaceAnchor
+    if (!anchor || anchor.isDestroyed()) return
+
+    const targetDisplay = screen.getDisplayNearestPoint({ x, y })
+    const [anchorX, anchorY] = anchor.getPosition()
+    const anchorDisplay = screen.getDisplayNearestPoint({ x: anchorX, y: anchorY })
+    if (targetDisplay.id === anchorDisplay.id) return
+
+    anchor.setPosition(targetDisplay.workArea.x, targetDisplay.workArea.y, false)
   }
 
   /**
@@ -1620,11 +1768,14 @@ class WindowManager {
 
       this.moveWindowToCursor()
       if (platform.isMacOS) {
-        // 与 forceActivateWindow 一致的激活顺序：先重申 Spaces/层级、激活应用到当前 Space，
-        // 再 show，避免面板落到桌面 Space。此处不直接调用 forceActivateWindow：本路径已用
-        // 外层手动 suppressBlurHide（500ms 释放）覆盖激活期，forceActivateWindow 内部的瞬时
-        // 抑制(200ms)会把它提前释放。
-        this.mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+        // 先重申 Spaces/层级（跳过进程类型变换），再显示并聚焦，避免面板落到桌面 Space。
+        // 本路径是插件安装页，需要 Dock 图标与常规窗口焦点，因此保留 app.focus({steal:true})。
+        // 不直接调用 forceActivateWindow：本路径已用外层手动 suppressBlurHide（500ms 释放）覆盖
+        // 激活期，forceActivateWindow 内部的瞬时抑制(200ms)会把它提前释放。
+        this.mainWindow.setVisibleOnAllWorkspaces(true, {
+          visibleOnFullScreen: true,
+          skipTransformProcessType: true
+        })
         this.mainWindow.setAlwaysOnTop(true, 'modal-panel', 1)
         app.focus({ steal: true })
         this.mainWindow.show()

@@ -181,8 +181,11 @@ class FloatingBallManager {
 
     // macOS 上设置窗口层级为浮动面板（高于普通窗口）
     this.ballWindow.setAlwaysOnTop(true, 'floating')
-    // 所有工作空间都可见
-    this.ballWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+    // 所有工作空间都可见（跳过进程类型变换，避免异步变换隐藏/重排窗口）
+    this.ballWindow.setVisibleOnAllWorkspaces(true, {
+      visibleOnFullScreen: true,
+      skipTransformProcessType: true
+    })
 
     // 加载悬浮球页面
     this.ballWindow.loadFile(floatingBallHtml)
