@@ -19,6 +19,7 @@ import {
   assertSafePluginArtifactPart,
   createAsarArtifactPath,
   removePluginArtifact,
+  removePluginArtifactsByName,
   resolvePluginStorageKind,
   type PluginStorageKind
 } from '../../utils/pluginStorage.js'
@@ -1026,7 +1027,21 @@ export class PluginInstallerAPI {
   ): Promise<string | undefined> {
     if (!previousPlugin?.path || previousPlugin.path === currentPath) return undefined
     try {
+      // 删除注册表记录的旧路径，并清扫同名历史残留 ASAR。
       await removePluginArtifact(previousPlugin)
+      if (typeof previousPlugin.name === 'string' && previousPlugin.name) {
+        const reservedNames = this.deps
+          .readInstalledPlugins()
+          .map((plugin: { name?: string }) => plugin.name)
+          .filter(
+            (name: string | undefined): name is string =>
+              Boolean(name) && name !== previousPlugin.name
+          )
+        await removePluginArtifactsByName(PLUGIN_DIR, previousPlugin.name, {
+          keepPaths: [currentPath],
+          reservedNames
+        })
+      }
       return undefined
     } catch (error) {
       console.error('[Plugins] 清理旧插件实体失败:', error)

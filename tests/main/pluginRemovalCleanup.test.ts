@@ -4,7 +4,9 @@ const mockDbGet = vi.hoisted(() => vi.fn())
 const mockDbPut = vi.hoisted(() => vi.fn())
 const mockClearPluginData = vi.hoisted(() => vi.fn())
 const mockFsRm = vi.hoisted(() => vi.fn())
+const mockFsReaddir = vi.hoisted(() => vi.fn())
 const mockCleanupForPlugin = vi.hoisted(() => vi.fn())
+const mockGetPluginsPath = vi.hoisted(() => vi.fn(() => 'D:\\plugins'))
 
 vi.mock('electron', () => ({
   dialog: {
@@ -22,6 +24,7 @@ vi.mock('electron', () => ({
 vi.mock('fs', () => ({
   promises: {
     rm: mockFsRm,
+    readdir: mockFsReaddir,
     readFile: vi.fn(),
     writeFile: vi.fn(),
     access: vi.fn(),
@@ -40,6 +43,10 @@ vi.mock('../../src/main/api/shared/database', () => ({
 
 vi.mock('../../src/main/core/internalPlugins', () => ({
   isBundledInternalPlugin: vi.fn(() => false)
+}))
+
+vi.mock('../../src/main/core/appData/appDataPaths', () => ({
+  getPluginsPath: mockGetPluginsPath
 }))
 
 vi.mock('../../src/main/utils/zpxArchive.js', () => ({
@@ -102,6 +109,8 @@ describe('plugin removal cleanup', () => {
     })
     mockClearPluginData.mockResolvedValue({ success: true })
     mockFsRm.mockResolvedValue(undefined)
+    mockFsReaddir.mockResolvedValue([])
+    mockGetPluginsPath.mockReturnValue('D:\\plugins')
   })
   it('removes all matching development entries when deleting a dev project', async () => {
     const registry: DevProjectRegistry = {
@@ -348,5 +357,71 @@ describe('plugin removal cleanup', () => {
     expect(result).toEqual({ success: true })
     // 卸载时应清理该插件在 provider 配置中的启用/默认/参数
     expect(mockCleanupForPlugin).toHaveBeenCalledWith('demo')
+  })
+
+  it('sweeps leftover name-matching ASARs on uninstall', async () => {
+    mockDbGet.mockImplementation((key: string) => {
+      if (key === 'plugins') {
+        return [
+          {
+            name: 'he-calendar',
+            path: 'D:\\plugins\\he-calendar-1.3.0-bd65d78d.asar',
+            storageKind: 'asar',
+            isDevelopment: false
+          },
+          {
+            name: 'he-calendar-extra',
+            path: 'D:\\plugins\\he-calendar-extra-1.0.0-abcd1234.asar',
+            storageKind: 'asar',
+            isDevelopment: false
+          }
+        ]
+      }
+      return []
+    })
+    mockFsReaddir.mockResolvedValue([
+      'he-calendar-1.3.0-bd65d78d.asar',
+      'he-calendar-1.3.0-bd65d78d.asar.unpacked',
+      'he-calendar-1.3.0-c1158ad4.asar',
+      'he-calendar-1.3.0-c1158ad4.asar.unpacked',
+      'he-calendar-extra-1.0.0-abcd1234.asar'
+    ])
+
+    const api = new PluginsAPI()
+    ;(api as any).pluginManager = { killPlugin: vi.fn(() => false) }
+    ;(api as any).devProjects = { removePluginUsageData: vi.fn() }
+    ;(api as any).mainWindow = { webContents: { send: vi.fn() } }
+    ;(api as any).disabledPluginPathSet = new Set<string>()
+
+    const result = await api.deletePlugin('D:\\plugins\\he-calendar-1.3.0-bd65d78d.asar')
+
+    expect(result).toEqual({ success: true })
+    expect(mockDbPut).toHaveBeenCalledWith('plugins', [
+      {
+        name: 'he-calendar-extra',
+        path: 'D:\\plugins\\he-calendar-extra-1.0.0-abcd1234.asar',
+        storageKind: 'asar',
+        isDevelopment: false
+      }
+    ])
+    expect(mockFsRm).toHaveBeenCalledWith('D:\\plugins\\he-calendar-1.3.0-bd65d78d.asar', {
+      force: true
+    })
+    expect(mockFsRm).toHaveBeenCalledWith('D:\\plugins\\he-calendar-1.3.0-bd65d78d.asar.unpacked', {
+      recursive: true,
+      force: true
+    })
+    expect(mockFsRm).toHaveBeenCalledWith('D:\\plugins\\he-calendar-1.3.0-c1158ad4.asar', {
+      recursive: true,
+      force: true
+    })
+    expect(mockFsRm).toHaveBeenCalledWith('D:\\plugins\\he-calendar-1.3.0-c1158ad4.asar.unpacked', {
+      recursive: true,
+      force: true
+    })
+    expect(mockFsRm).not.toHaveBeenCalledWith(
+      'D:\\plugins\\he-calendar-extra-1.0.0-abcd1234.asar',
+      expect.anything()
+    )
   })
 })
