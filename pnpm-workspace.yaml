@@ -1,0 +1,10 @@
+# [ZT-Enhance] pnpm 11 构建脚本决策：这些依赖的安装脚本均不需要运行
+# （原生部分全部有预编译产物，electron 二进制仅在 electron-builder 打安装包时才需要）。
+# 将来要打完整安装包（pnpm build:win 等）时，把 electron / electron-winstaller 改为 true。
+allowBuilds:
+  electron: false
+  electron-winstaller: false
+  esbuild: false
+  lmdb: false
+  msgpackr-extract: false
+  uiohook-napi: false

@@ -13,7 +13,7 @@ import {
   type ThemeType,
   type WindowPositionStrategy
 } from '@/constants'
-import { Dropdown, HotkeyInput, Slider, useToast } from '@/components'
+import { AdaptiveIcon, BaseDialog, Dropdown, HotkeyInput, Slider, useToast } from '@/components'
 import { applyCustomColor, applyPrimaryColor } from '@/utils'
 import {
   DEFAULT_SEARCH_WALLPAPER_BLUR,
@@ -1509,8 +1509,196 @@ async function initializeSettings(): Promise<void> {
     // 平台会影响快捷键默认值和平台专属选项，需在设置表单展示前确定。
     await getPlatformInfo()
     await loadSettings()
+    await loadBatchManageSettings()
   } finally {
     settingsLoaded.value = true
+  }
+}
+
+// [ZT-Enhance] 插件批量管理：可精确勾选插件，或开启全局模式（含未来新装的插件）。
+// 全局模式写入宿主库 batch-plugin-manage 文档（主进程实时读取）；
+// 精确选择写入原生按插件列表（auto-start-plugin / out-kill-plugin / auto-detach-plugin），
+// 与「已安装插件」页里单个插件的开关设置互通。
+const BATCH_MANAGE_KEY = 'batch-plugin-manage'
+
+interface BatchBehavior {
+  key: 'autoStartAll' | 'outKillAll' | 'autoDetachAll'
+  listKey: 'auto-start-plugin' | 'out-kill-plugin' | 'auto-detach-plugin'
+  title: string
+  desc: string
+}
+
+const batchBehaviors: BatchBehavior[] = [
+  {
+    key: 'autoStartAll',
+    listKey: 'auto-start-plugin',
+    title: '跟随启动',
+    desc: 'ZTools 启动时自动后台加载选中的插件（需重启应用生效）'
+  },
+  {
+    key: 'outKillAll',
+    listKey: 'out-kill-plugin',
+    title: '关闭后自动销毁',
+    desc: '插件退出主面板后立即结束其进程并销毁视图，释放资源'
+  },
+  {
+    key: 'autoDetachAll',
+    listKey: 'auto-detach-plugin',
+    title: '自动分离窗口',
+    desc: '点击插件时直接在独立窗口中打开'
+  }
+]
+
+const batchFlags = ref<Record<BatchBehavior['key'], boolean>>({
+  autoStartAll: false,
+  outKillAll: false,
+  autoDetachAll: true
+})
+const batchSelections = ref<Record<BatchBehavior['listKey'], string[]>>({
+  'auto-start-plugin': [],
+  'out-kill-plugin': [],
+  'auto-detach-plugin': []
+})
+const installedPlugins = ref<
+  Array<{ name: string; title: string; logo: string; description: string }>
+>([])
+
+// 选择弹窗状态
+const batchDialogVisible = ref(false)
+const activeBehaviorKey = ref<BatchBehavior['key'] | null>(null)
+const batchDialogGlobal = ref(false)
+const batchDialogChecked = ref<string[]>([])
+const batchDialogSearch = ref('')
+
+const activeBehavior = computed(
+  () => batchBehaviors.find((b) => b.key === activeBehaviorKey.value) ?? null
+)
+
+const filteredBatchPlugins = computed(() => {
+  const query = batchDialogSearch.value.trim().toLowerCase()
+  if (!query) return installedPlugins.value
+  return installedPlugins.value.filter(
+    (p) =>
+      p.title.toLowerCase().includes(query) ||
+      p.name.toLowerCase().includes(query) ||
+      p.description.toLowerCase().includes(query)
+  )
+})
+
+function isPluginChecked(p: { name: string }): boolean {
+  return batchDialogGlobal.value || batchDialogChecked.value.includes(p.name)
+}
+
+function jumpToMarket(p: { name: string }): void {
+  // 通过 sessionStorage 把目标插件名交接给市场页（其列表就绪后会自动打开详情）
+  sessionStorage.setItem('ZT_MARKET_DETAIL', p.name)
+  batchDialogVisible.value = false
+  router.push('/market')
+}
+
+function behaviorSummary(key: BatchBehavior['key']): string {
+  if (batchFlags.value[key]) return '全部（含新装）'
+  const behavior = batchBehaviors.find((b) => b.key === key)
+  if (!behavior) return '未选择'
+  const count = batchSelections.value[behavior.listKey]?.length ?? 0
+  return count > 0 ? `已选 ${count} 个插件` : '未选择'
+}
+
+async function loadBatchManageSettings(): Promise<void> {
+  try {
+    const cfg = await window.ztools.internal.dbGet(BATCH_MANAGE_KEY)
+    batchFlags.value = {
+      autoStartAll: cfg?.autoStartAll === true,
+      outKillAll: cfg?.outKillAll === true,
+      autoDetachAll: cfg?.autoDetachAll !== false
+    }
+    for (const behavior of batchBehaviors) {
+      const list = await window.ztools.internal.dbGet(behavior.listKey)
+      batchSelections.value[behavior.listKey] = Array.isArray(list)
+        ? list.filter((item): item is string => typeof item === 'string')
+        : []
+    }
+  } catch (err) {
+    console.error('加载插件批量管理配置失败:', err)
+  }
+}
+
+async function openBatchDialog(key: BatchBehavior['key']): Promise<void> {
+  activeBehaviorKey.value = key
+  batchDialogGlobal.value = batchFlags.value[key]
+  const behavior = batchBehaviors.find((b) => b.key === key)
+  batchDialogChecked.value = [...(behavior ? batchSelections.value[behavior.listKey] : [])]
+  if (installedPlugins.value.length === 0) {
+    try {
+      const plugins = await window.ztools.internal.dbGet('plugins')
+      installedPlugins.value = (Array.isArray(plugins) ? plugins : [])
+        .filter((p) => p && typeof p.name === 'string')
+        .map((p) => ({
+          name: p.name as string,
+          title: (p.title as string) || (p.name as string),
+          logo: (p.logo as string) || '',
+          description: (p.description as string) || ''
+        }))
+        .sort((a, b) => a.title.localeCompare(b.title, 'zh-CN'))
+    } catch (err) {
+      console.error('读取插件列表失败:', err)
+    }
+  }
+  batchDialogVisible.value = true
+}
+
+function onBatchGlobalChange(): void {
+  if (batchDialogGlobal.value) {
+    batchDialogChecked.value = installedPlugins.value.map((p) => p.name)
+  } else {
+    // 关闭全局模式时回到该行为当前保存的精确选择
+    const behavior = batchBehaviors.find((b) => b.key === activeBehaviorKey.value)
+    batchDialogChecked.value = [...(behavior ? batchSelections.value[behavior.listKey] : [])]
+  }
+}
+
+function toggleBatchPlugin(name: string, checked: boolean): void {
+  // 全局模式下列表仅作展示，不允许逐个改动
+  if (batchDialogGlobal.value) return
+  if (checked) {
+    if (!batchDialogChecked.value.includes(name)) batchDialogChecked.value.push(name)
+  } else {
+    batchDialogChecked.value = batchDialogChecked.value.filter((item) => item !== name)
+  }
+}
+
+function selectAllBatch(): void {
+  batchDialogChecked.value = installedPlugins.value.map((p) => p.name)
+}
+
+function clearBatch(): void {
+  batchDialogChecked.value = []
+}
+
+async function saveBatchDialog(): Promise<void> {
+  const behavior = activeBehavior.value
+  if (!behavior) return
+  try {
+    const selected = batchDialogGlobal.value
+      ? installedPlugins.value.map((p) => p.name)
+      : [...batchDialogChecked.value]
+    const cfg = (await window.ztools.internal.dbGet(BATCH_MANAGE_KEY)) || {}
+    cfg[behavior.key] = batchDialogGlobal.value
+    await window.ztools.internal.dbPut(BATCH_MANAGE_KEY, cfg)
+    if (!batchDialogGlobal.value) {
+      await window.ztools.internal.dbPut(behavior.listKey, selected)
+    }
+    batchFlags.value = { ...batchFlags.value, [behavior.key]: batchDialogGlobal.value }
+    batchSelections.value = { ...batchSelections.value, [behavior.listKey]: selected }
+    batchDialogVisible.value = false
+    if (behavior.key === 'autoStartAll' && batchDialogGlobal.value) {
+      info('跟随启动已保存，重启应用后生效')
+    } else {
+      success('设置已保存')
+    }
+  } catch (err) {
+    error('保存插件批量管理配置失败')
+    console.error('保存插件批量管理配置失败:', err)
   }
 }
 
@@ -1647,6 +1835,108 @@ onUnmounted(() => {
         </div>
       </div>
     </div>
+
+    <!-- ==================== [ZT-Enhance] 插件批量管理 ==================== -->
+    <div class="setting-group">
+      <h3 class="setting-group-title">插件批量管理</h3>
+
+      <div v-for="behavior in batchBehaviors" :key="behavior.key" class="setting-item">
+        <div class="setting-label">
+          <span>{{ behavior.title }}</span>
+          <span class="setting-desc">{{ behavior.desc }}</span>
+        </div>
+        <div class="setting-control">
+          <button
+            type="button"
+            class="zt-bm-manage-btn"
+            :data-testid="`batch-manage-${behavior.key}`"
+            @click="openBatchDialog(behavior.key)"
+          >
+            {{ behaviorSummary(behavior.key) }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- [ZT-Enhance] 插件批量管理选择弹窗 -->
+    <BaseDialog
+      v-model:visible="batchDialogVisible"
+      :title="activeBehavior ? `选择插件：${activeBehavior.title}` : '选择插件'"
+      subtitle="勾选需要应用此行为的插件；开启全局模式后对全部插件（含未来新装）生效"
+      max-width="480px"
+      @close="batchDialogVisible = false"
+    >
+      <div class="zt-bm-dialog">
+        <label class="zt-bm-global-row">
+          <input v-model="batchDialogGlobal" type="checkbox" @change="onBatchGlobalChange" />
+          <span>应用到全部插件（含未来新装的插件）</span>
+        </label>
+        <div class="zt-bm-toolbar">
+          <input
+            v-model="batchDialogSearch"
+            type="text"
+            class="zt-bm-search"
+            placeholder="搜索插件…"
+          />
+          <button
+            type="button"
+            class="zt-bm-mini-btn"
+            :disabled="batchDialogGlobal"
+            @click="selectAllBatch"
+          >
+            全选
+          </button>
+          <button
+            type="button"
+            class="zt-bm-mini-btn"
+            :disabled="batchDialogGlobal"
+            @click="clearBatch"
+          >
+            清空
+          </button>
+          <span class="zt-bm-count"
+            >{{ batchDialogChecked.length }}/{{ installedPlugins.length }}</span
+          >
+        </div>
+        <div class="zt-bm-plugin-list">
+          <div
+            v-for="p in filteredBatchPlugins"
+            :key="p.name"
+            class="zt-bm-plugin-item"
+            :class="{
+              'zt-bm-item-checked': isPluginChecked(p),
+              'zt-bm-item-muted': batchDialogGlobal
+            }"
+            @click="toggleBatchPlugin(p.name, !isPluginChecked(p))"
+          >
+            <span class="zt-bm-check"><span class="zt-bm-check-mark"></span></span>
+            <AdaptiveIcon v-if="p.logo" :src="p.logo" class="zt-bm-icon" alt="" draggable="false" />
+            <span v-else class="zt-bm-icon zt-bm-icon-fallback">{{ p.title.slice(0, 1) }}</span>
+            <span class="zt-bm-plugin-info">
+              <span class="zt-bm-plugin-title">{{ p.title }}</span>
+              <span v-if="p.description" class="zt-bm-plugin-desc">{{ p.description }}</span>
+            </span>
+            <button
+              type="button"
+              class="zt-bm-market-btn"
+              title="在插件市场中打开该插件"
+              @click.stop="jumpToMarket(p)"
+            >
+              市场
+            </button>
+          </div>
+          <div v-if="filteredBatchPlugins.length === 0" class="zt-bm-empty">没有匹配的插件</div>
+        </div>
+      </div>
+      <template #footer>
+        <div class="zt-bm-footer">
+          <button type="button" class="zt-bm-btn" @click="batchDialogVisible = false">取消</button>
+          <button type="button" class="zt-bm-btn zt-bm-btn-primary" @click="saveBatchDialog">
+            保存
+          </button>
+        </div>
+      </template>
+    </BaseDialog>
 
     <!-- ==================== 外观 ==================== -->
     <div class="setting-group">
@@ -2957,5 +3247,272 @@ onUnmounted(() => {
 .blocked-app-remove:hover {
   color: var(--danger-color);
   background: var(--danger-light-bg);
+}
+
+/* [ZT-Enhance] 插件批量管理 */
+.zt-bm-manage-btn {
+  padding: 5px 12px;
+  font-size: 12px;
+  color: var(--text-color);
+  background: var(--control-bg);
+  border: 1px solid var(--control-border);
+  border-radius: 6px;
+  cursor: pointer;
+  transition:
+    border-color 0.2s,
+    background 0.2s;
+}
+
+.zt-bm-manage-btn:hover {
+  border-color: var(--highlight-color);
+}
+
+.zt-bm-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.zt-bm-global-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+  font-weight: 500;
+  background: var(--control-bg);
+  border: 1px solid var(--control-border);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+
+.zt-bm-global-row:hover {
+  border-color: var(--highlight-color);
+}
+
+.zt-bm-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.zt-bm-search {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 10px;
+  font-size: 12px;
+  color: var(--text-color);
+  background: var(--control-bg);
+  border: 1px solid var(--control-border);
+  border-radius: 6px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.zt-bm-search:focus {
+  border-color: var(--highlight-color);
+}
+
+.zt-bm-mini-btn {
+  padding: 5px 10px;
+  font-size: 12px;
+  color: var(--text-color);
+  background: var(--control-bg);
+  border: 1px solid var(--control-border);
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    border-color 0.2s,
+    background 0.2s;
+}
+
+.zt-bm-mini-btn:hover:not(:disabled) {
+  border-color: var(--highlight-color);
+}
+
+.zt-bm-mini-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.zt-bm-count {
+  flex: none;
+  font-size: 12px;
+  opacity: 0.65;
+}
+
+.zt-bm-plugin-list {
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid var(--control-border);
+  border-radius: 10px;
+}
+
+.zt-bm-plugin-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s;
+}
+
+.zt-bm-plugin-item + .zt-bm-plugin-item {
+  border-top: 1px solid var(--divider-color);
+}
+
+.zt-bm-plugin-item:hover {
+  background: var(--control-bg);
+}
+
+.zt-bm-item-checked {
+  background: color-mix(in srgb, var(--highlight-color) 10%, transparent);
+}
+
+.zt-bm-item-checked:hover {
+  background: color-mix(in srgb, var(--highlight-color) 14%, transparent);
+}
+
+.zt-bm-item-muted {
+  opacity: 0.55;
+}
+
+.zt-bm-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 17px;
+  height: 17px;
+  border: 1.5px solid var(--control-border);
+  border-radius: 5px;
+  transition:
+    background 0.15s,
+    border-color 0.15s;
+}
+
+.zt-bm-item-checked .zt-bm-check {
+  background: var(--highlight-color);
+  border-color: var(--highlight-color);
+}
+
+.zt-bm-check-mark {
+  width: 4px;
+  height: 8px;
+  margin-top: -2px;
+  border: solid #fff;
+  border-width: 0 1.5px 1.5px 0;
+  transform: rotate(45deg) scale(0);
+  transition: transform 0.15s;
+}
+
+.zt-bm-item-checked .zt-bm-check-mark {
+  transform: rotate(45deg) scale(1);
+}
+
+.zt-bm-icon {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  object-fit: cover;
+}
+
+.zt-bm-icon-fallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+  background: linear-gradient(135deg, var(--highlight-color), var(--primary-color, #34d399));
+}
+
+.zt-bm-plugin-info {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.zt-bm-plugin-title {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.zt-bm-plugin-desc {
+  overflow: hidden;
+  font-size: 11px;
+  opacity: 0.55;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.zt-bm-market-btn {
+  flex: none;
+  padding: 3px 10px;
+  font-size: 11px;
+  color: var(--highlight-color);
+  background: transparent;
+  border: 1px solid var(--control-border);
+  border-radius: 999px;
+  opacity: 0.6;
+  cursor: pointer;
+  transition:
+    opacity 0.15s,
+    border-color 0.15s,
+    background 0.15s;
+}
+
+.zt-bm-plugin-item:hover .zt-bm-market-btn {
+  opacity: 1;
+  border-color: var(--highlight-color);
+}
+
+.zt-bm-market-btn:hover {
+  background: color-mix(in srgb, var(--highlight-color) 14%, transparent);
+}
+
+.zt-bm-empty {
+  padding: 24px 0;
+  font-size: 12px;
+  text-align: center;
+  opacity: 0.5;
+}
+
+.zt-bm-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.zt-bm-btn {
+  padding: 6px 18px;
+  font-size: 13px;
+  color: var(--text-color);
+  background: var(--control-bg);
+  border: 1px solid var(--control-border);
+  border-radius: 6px;
+  cursor: pointer;
+  transition:
+    border-color 0.2s,
+    background 0.2s;
+}
+
+.zt-bm-btn-primary {
+  color: #fff;
+  background: var(--highlight-color);
+  border-color: transparent;
+}
+
+.zt-bm-btn-primary:hover {
+  opacity: 0.9;
 }
 </style>

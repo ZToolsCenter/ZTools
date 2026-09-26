@@ -8,10 +8,7 @@ describe('SyncCheckpointStore server isolation', () => {
     const store = new SyncCheckpointStore(db as any)
     const legacyServerUrl = `${LEGACY_OFFICIAL_SYNC_SERVER_URLS[0].replace('wss:', 'https:')}/`
 
-    const checkpoint = store.commitPull(
-      store.load('same-user', 'same-device', legacyServerUrl),
-      42
-    )
+    const checkpoint = store.commitPull(store.load('same-user', 'same-device', legacyServerUrl), 42)
     const migratedCheckpoint = store.load('same-user', 'same-device', 'https://z-tools.top/')
 
     expect(checkpoint.serverUrl).toBe(legacyServerUrl)
