@@ -230,6 +230,12 @@ export class AppsAPI {
               process.platform === 'win32' &&
               app.icon.startsWith('file:') &&
               app.icon.endsWith('.png')
+            ) &&
+            // Linux 图标本就是 XDG 图标主题里的 file:// 静态资源，不豁免会导致每次启动全量重扫
+            !(
+              process.platform === 'linux' &&
+              app.icon.startsWith('file:') &&
+              /\.(png|svg|xpm)$/i.test(app.icon)
             )
         )
         const hasStaleUwpIcons = process.platform === 'win32' && hasStaleUwpIconCache(cachedApps)

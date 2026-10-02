@@ -1,9 +1,11 @@
 import fs from 'fs/promises'
+import type { Dirent } from 'fs'
 import path from 'path'
 import os from 'os'
 import { pinyin as getPinyin } from 'pinyin-pro'
 import { extractAcronym } from '../../utils/common'
-import { Command } from './types'
+import { getLinuxApplicationPaths } from '../../utils/systemPaths'
+import { ApplicationScanResult, Command } from './types'
 import { pLimit } from './utils'
 
 // ============================================================
@@ -13,11 +15,17 @@ import { pLimit } from './utils'
 interface DesktopEntry {
   Name?: string
   GenericName?: string
+  Comment?: string
   Exec?: string
+  TryExec?: string
   Icon?: string
   NoDisplay?: string
   Hidden?: string
   Type?: string
+  Terminal?: string
+  DBusActivatable?: string
+  OnlyShowIn?: string
+  NotShowIn?: string
   // 本地化字段
   [key: string]: string | undefined
 }
@@ -56,26 +64,38 @@ function parseDesktopFile(content: string): DesktopEntry {
 }
 
 /**
+ * 按 XDG 规范解析语言优先级列表。
+ * LANGUAGE 是冒号分隔的优先级列表，优先级高于 LC_ALL/LC_MESSAGES/LANG。
+ */
+function getLanguagePriorityList(): string[] {
+  const raw =
+    process.env.LANGUAGE || process.env.LC_ALL || process.env.LC_MESSAGES || process.env.LANG || ''
+
+  const codes: string[] = []
+  for (const item of raw.split(':')) {
+    const code = item.split('.')[0].split('@')[0].trim() // 去掉 .UTF-8 与 @modifier
+    // C/POSIX 表示未本地化，不参与 Name[xx] 匹配
+    if (code && code !== 'C' && code !== 'POSIX') {
+      codes.push(code)
+    }
+  }
+
+  return codes
+}
+
+/**
  * 获取本地化的应用名称
- * 优先级：Name[zh_CN] > Name[zh] > Name[en_US] > Name
+ * 优先级：按 LANGUAGE 列表依次尝试 Name[lang_COUNTRY] > Name[lang]，最后回退 Name
  */
 function getLocalizedName(entry: DesktopEntry): string {
-  // 获取系统语言代码（如 "zh_CN"、"en_US"）
-  const lang = process.env.LANG || process.env.LANGUAGE || ''
-  const langCode = lang.split('.')[0] // 去掉编码部分 (UTF-8)
-  const parts = langCode.split('_')
-  const langBase = parts[0] // 只取语言部分 (zh)
-
-  // 按优先级尝试本地化名称
   const candidates: string[] = []
-  if (langCode) {
-    candidates.push(`Name[${langCode}]`)
-  }
-  if (parts.length > 1 && parts[1]) {
-    candidates.push(`Name[${langBase}_${parts[1]}]`) // 防御性写法
-  }
-  if (langBase) {
-    candidates.push(`Name[${langBase}]`) // Name[zh]
+
+  for (const code of getLanguagePriorityList()) {
+    candidates.push(`Name[${code}]`)
+    const base = code.split('_')[0]
+    if (base && base !== code) {
+      candidates.push(`Name[${base}]`) // Name[zh]
+    }
   }
   candidates.push('Name') // 兜底
 
@@ -94,10 +114,80 @@ function getLocalizedName(entry: DesktopEntry): string {
  * 并提取实际可执行文件路径
  */
 function cleanExecCommand(exec: string): string {
-  return exec
-    .replace(/%[a-zA-Z]/g, '') // 移除 %f %u %F %U 等占位符
-    .replace(/\s+/g, ' ') // 合并多余空格
-    .trim()
+  return (
+    exec
+      // %% 表示字面量 %，其余 %x 占位符（%f %u %F %U %i %c %k）整体移除
+      .replace(/%([%a-zA-Z])/g, (_match, char: string) => (char === '%' ? '%' : ''))
+      .replace(/[ \t]+/g, ' ') // 合并多余空白（用 [ \t] 而非 \s，避免影响后续的引号解析）
+      .trim()
+  )
+}
+
+/**
+ * .desktop 的布尔字段大小写不敏感（规范允许 `true` 与 `True`）。
+ */
+function isTrue(value: string | undefined): boolean {
+  return value?.toLowerCase() === 'true'
+}
+
+/**
+ * 判断条目是否应在当前桌面环境下显示。
+ * OnlyShowIn / NotShowIn 以分号分隔，与 XDG_CURRENT_DESKTOP（冒号分隔）比对。
+ */
+function isShownInCurrentDesktop(entry: DesktopEntry): boolean {
+  const current = (process.env.XDG_CURRENT_DESKTOP || '')
+    .split(':')
+    .map((item) => item.trim())
+    .filter(Boolean)
+
+  // 无法判定当前桌面时不过滤，避免把应用全部误杀
+  if (current.length === 0) return true
+
+  const parseList = (value: string | undefined): string[] =>
+    (value || '')
+      .split(';')
+      .map((item) => item.trim())
+      .filter(Boolean)
+
+  const onlyShowIn = parseList(entry.OnlyShowIn)
+  if (onlyShowIn.length > 0 && !onlyShowIn.some((desktop) => current.includes(desktop))) {
+    return false
+  }
+
+  const notShowIn = parseList(entry.NotShowIn)
+  if (notShowIn.length > 0 && notShowIn.some((desktop) => current.includes(desktop))) {
+    return false
+  }
+
+  return true
+}
+
+/**
+ * 检查命令是否存在于 PATH 中（TryExec 校验用）。
+ */
+async function isExecutableInPath(command: string): Promise<boolean> {
+  if (!command) return false
+
+  if (command.includes('/')) {
+    try {
+      await fs.access(command, fs.constants.X_OK)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  const pathEnv = process.env.PATH || ''
+  for (const dir of pathEnv.split(':').filter(Boolean)) {
+    try {
+      await fs.access(path.join(dir, command), fs.constants.X_OK)
+      return true
+    } catch {
+      // 继续在后续目录中查找
+    }
+  }
+
+  return false
 }
 
 // ============================================================
@@ -215,33 +305,37 @@ function hasChinese(str: string): boolean {
 // ============================================================
 
 /**
- * 获取 Linux 上所有 .desktop 文件的搜索路径（XDG 规范）
+ * 按 XDG 优先级收集 .desktop 文件。
+ *
+ * 规范规定同一 desktop-file ID（文件名）出现在多个目录时排在前面的优先，
+ * 否则用户覆盖安装的条目会和系统条目重复。
  */
-function getLinuxDesktopPaths(): string[] {
-  const home = os.homedir()
-  const xdgDataDirs = process.env.XDG_DATA_DIRS || '/usr/local/share:/usr/share'
-  const baseDirs = xdgDataDirs.split(':').filter(Boolean)
+async function collectDesktopFiles(dirs: string[]): Promise<{
+  files: string[]
+  readableDirs: number
+}> {
+  const byId = new Map<string, string>()
+  let readableDirs = 0
 
-  const paths = [
-    path.join(home, '.local/share/applications'), // 用户级
-    ...baseDirs.map((dir) => path.join(dir, 'applications')) // 系统级
-  ]
+  for (const dirPath of dirs) {
+    let entries: Dirent[]
+    try {
+      entries = await fs.readdir(dirPath, { withFileTypes: true })
+      readableDirs++
+    } catch {
+      continue // 目录不存在或不可读，跳过
+    }
 
-  return [...new Set(paths)] // 去重
-}
-
-/**
- * 扫描单个目录下的所有 .desktop 文件
- */
-async function scanDesktopDir(dirPath: string): Promise<string[]> {
-  try {
-    const entries = await fs.readdir(dirPath, { withFileTypes: true })
-    return entries
-      .filter((e) => e.isFile() && e.name.endsWith('.desktop'))
-      .map((e) => path.join(dirPath, e.name))
-  } catch {
-    return []
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith('.desktop')) continue
+      // 先到先得：高优先级目录已经登记的 ID 不再被覆盖
+      if (!byId.has(entry.name)) {
+        byId.set(entry.name, path.join(dirPath, entry.name))
+      }
+    }
   }
+
+  return { files: [...byId.values()], readableDirs }
 }
 
 /**
@@ -256,12 +350,18 @@ async function parseDesktopFileToCommand(desktopPath: string): Promise<Command |
     // 过滤不应显示的条目
     if (
       entry.Type !== 'Application' ||
-      entry.NoDisplay === 'true' ||
-      entry.Hidden === 'true' ||
+      isTrue(entry.NoDisplay) ||
+      isTrue(entry.Hidden) ||
       !entry.Exec
     ) {
       return null
     }
+
+    // 桌面环境限定（KDE/Unity 专属条目不应出现在 GNOME 下）
+    if (!isShownInCurrentDesktop(entry)) return null
+
+    // TryExec：规范规定它指向的可执行文件不存在时，该条目视为未安装
+    if (entry.TryExec && !(await isExecutableInPath(entry.TryExec))) return null
 
     const name = getLocalizedName(entry)
     if (!name) return null
@@ -269,22 +369,34 @@ async function parseDesktopFileToCommand(desktopPath: string): Promise<Command |
     const exec = cleanExecCommand(entry.Exec)
     if (!exec) return null
 
+    // Terminal=true 直接 spawn 会起一个没有终端宿主的进程（静默消失），
+    // DBusActivatable=true 规范要求走 D-Bus 激活；两者交给 gio launch 处理
+    const needsDesktopLaunch = isTrue(entry.Terminal) || isTrue(entry.DBusActivatable)
+    const launchPath = needsDesktopLaunch ? `gio launch "${desktopPath}"` : exec
+
     // 查找图标
     let iconUrl: string | undefined
     if (entry.Icon) {
       const iconPath = await findIconPath(entry.Icon)
       if (iconPath) {
-        iconUrl = `file://${iconPath}`
+        // 路径可能含空格或中文，需按 URL 规则编码
+        iconUrl = `file://${encodeURI(iconPath)}`
       }
     }
 
-    // 生成搜索别名（英文名 + 拼音首字母）
+    // 生成搜索别名（英文名 + GenericName + 拼音首字母）
     const aliases: string[] = []
 
     // 如果有英文原名（Name 字段与本地化名称不同），添加为搜索别名
     const rawEnglishName = entry['Name']?.trim()
     if (rawEnglishName && rawEnglishName !== name) {
       aliases.push(rawEnglishName)
+    }
+
+    // GenericName 是「网页浏览器」这类通用描述，用户常按它搜索
+    const genericName = entry.GenericName?.trim()
+    if (genericName && genericName !== name && !aliases.includes(genericName)) {
+      aliases.push(genericName)
     }
 
     // 生成缩写：英文首字母缩写
@@ -300,7 +412,7 @@ async function parseDesktopFileToCommand(desktopPath: string): Promise<Command |
 
     return {
       name,
-      path: exec,
+      path: launchPath,
       icon: iconUrl,
       aliases: aliases.length > 0 ? aliases : undefined,
       acronym: acronym || undefined
@@ -312,24 +424,21 @@ async function parseDesktopFileToCommand(desktopPath: string): Promise<Command |
 
 /**
  * 扫描 Linux 系统上安装的所有应用程序
+ *
+ * @returns 应用列表与扫描完整性（不完整时上层会保留旧缓存）。
  */
-export async function scanApplications(): Promise<Command[]> {
+export async function scanApplications(): Promise<ApplicationScanResult> {
+  const errors: string[] = []
+
   try {
     console.time('[LinuxScanner] 扫描应用')
 
-    const searchPaths = getLinuxDesktopPaths()
-    const allDesktopFiles: string[] = []
+    const searchPaths = getLinuxApplicationPaths()
+    const { files: uniqueFiles, readableDirs } = await collectDesktopFiles(searchPaths)
 
-    // 收集所有 .desktop 文件路径
-    for (const dirPath of searchPaths) {
-      const files = await scanDesktopDir(dirPath)
-      allDesktopFiles.push(...files)
-    }
-
-    // 去重（同一个 .desktop 文件可能出现在多个目录）
-    const uniqueFiles = [...new Set(allDesktopFiles)]
-
-    console.log(`[LinuxScanner] 找到 ${uniqueFiles.length} 个 .desktop 文件`)
+    console.log(
+      `[LinuxScanner] 在 ${readableDirs}/${searchPaths.length} 个目录中找到 ${uniqueFiles.length} 个 .desktop 文件`
+    )
 
     // 并发解析（限制并发数）
     const tasks = uniqueFiles.map((filePath) => () => parseDesktopFileToCommand(filePath))
@@ -341,9 +450,21 @@ export async function scanApplications(): Promise<Command[]> {
     console.timeEnd('[LinuxScanner] 扫描应用')
     console.log(`[LinuxScanner] 成功加载 ${apps.length} 个应用`)
 
-    return apps
+    // 一个目录都读不到属于环境异常
+    if (readableDirs === 0) {
+      errors.push('没有可读取的 XDG 应用目录')
+      return { apps, complete: false, errors }
+    }
+
+    // 有 .desktop 却一个都没解析出来说明链路有问题，需报告不完整以免覆盖旧缓存
+    if (uniqueFiles.length > 0 && apps.length === 0) {
+      errors.push(`解析 ${uniqueFiles.length} 个 .desktop 文件后没有得到任何可用应用`)
+      return { apps, complete: false, errors }
+    }
+
+    return { apps, complete: true, errors }
   } catch (error) {
     console.error('[LinuxScanner] 扫描应用失败:', error)
-    return []
+    return { apps: [], complete: false, errors: [String(error)] }
   }
 }

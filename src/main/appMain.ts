@@ -19,6 +19,7 @@ import {
   isLegacyImportWindowActive
 } from './core/firstRunStorageImport'
 import floatingBallManager from './core/floatingBallManager'
+import dndManager from './core/dndManager.js'
 import httpServer from './core/httpServer'
 import mcpServer from './core/mcpServer'
 import { registerIconProtocolForSession, registerIconScheme } from './core/iconProtocol'
@@ -51,6 +52,18 @@ app.on('second-instance', (_event, argv) => {
   }
 
   if (focusAccessibilityPermissionWindow()) return
+
+  // --toggle：由系统级快捷键（Linux 下 GNOME 自定义快捷键）再次启动本程序时传入，
+  // 语义是「显示/隐藏切换」而非「总是显示」
+  if (argv.includes('--toggle')) {
+    if (applicationInitialized && !dndManager.shouldIgnoreHotkeys()) {
+      console.log('[Main] 收到 --toggle，切换主窗口显示状态')
+      windowManager.toggleWindowVisibility()
+    } else {
+      console.log('[Main] 收到 --toggle，但应用尚未初始化或处于游戏模式，忽略')
+    }
+    return
+  }
 
   // 当运行第二个实例时，焦点聚焦到这个实例
   if (applicationInitialized) windowManager.showWindow()
@@ -127,6 +140,13 @@ export function updateShortcut(shortcut: string): boolean {
  */
 export function getCurrentShortcut(): string {
   return windowManager.getCurrentShortcut()
+}
+
+/**
+ * 读取全局快捷键注册失败的原因，供设置页给出准确提示。
+ */
+export function getShortcutRegistrationError(): string | null {
+  return windowManager.getShortcutRegistrationError()
 }
 
 app.whenReady().then(async () => {

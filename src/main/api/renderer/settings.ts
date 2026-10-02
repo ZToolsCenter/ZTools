@@ -7,7 +7,7 @@ import {
   OptimizedShortcutManager,
   WindowManager as NativeWindowManager
 } from '../../core/native/index.js'
-import { getCurrentShortcut, updateShortcut } from '../../appMain.js'
+import { getCurrentShortcut, getShortcutRegistrationError, updateShortcut } from '../../appMain.js'
 
 import dndManager from '../../core/dndManager.js'
 import doubleTapManager from '../../core/doubleTapManager.js'
@@ -413,7 +413,8 @@ export class SettingsAPI {
       if (success) {
         return { success: true }
       } else {
-        return { success: false, error: '快捷键已被占用' }
+        // 透出底层原因：失败可能是被占用，也可能是 Wayland 拒绝绑定
+        return { success: false, error: getShortcutRegistrationError() ?? '快捷键已被占用' }
       }
     } catch (error: unknown) {
       console.error('[Settings] 更新快捷键失败:', error)
