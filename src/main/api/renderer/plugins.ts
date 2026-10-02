@@ -2,7 +2,8 @@ import type { PluginManager } from '../../managers/pluginManager'
 import { ipcMain, type WebContents } from 'electron'
 import path from 'path'
 import { pathToFileURL } from 'url'
-import { removePluginArtifact } from '../../utils/pluginStorage.js'
+import { removePluginArtifact, removePluginArtifactsByName } from '../../utils/pluginStorage.js'
+import { getPluginsPath } from '../../core/appData/appDataPaths'
 import { normalizeIconPath } from '../../common/iconUtils'
 import { isBundledInternalPlugin } from '../../core/internalPlugins'
 import lmdbInstance from '../../core/lmdb/lmdbInstance'
@@ -860,8 +861,14 @@ export class PluginsAPI {
 
       if (!pluginInfo.isDevelopment) {
         try {
-          // ASAR 实体会连同 `.asar.unpacked` 一起删除。
+          // 先删注册路径，再清扫同名历史残留 ASAR，避免卸载后仍被磁盘扫描到。
           await removePluginArtifact(pluginInfo)
+          const reservedNames = plugins
+            .map((plugin: { name?: string }) => plugin.name)
+            .filter((name: string | undefined): name is string => Boolean(name))
+          await removePluginArtifactsByName(getPluginsPath(), pluginInfo.name, {
+            reservedNames
+          })
           console.log('[Plugins] 已删除插件实体:', pluginPath)
         } catch (error) {
           console.error('[Plugins] 删除插件目录失败:', error)

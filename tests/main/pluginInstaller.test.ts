@@ -174,6 +174,26 @@ describe('PluginInstallerAPI package installation', () => {
     await expect(fs.access(second.plugin.path)).resolves.toBeUndefined()
   })
 
+  it('sweeps orphaned same-name ASARs left behind before upgrade', async () => {
+    const firstPackage = await createPackage('1.0.0')
+    const secondPackage = await createPackage('2.0.0')
+    const context = createInstaller()
+    const first = await context.installer.installPluginFromPath(firstPackage)
+    const orphanPath = path.join(state.pluginDir, 'demo-0.9.0-deadbeef.asar')
+    await fs.writeFile(orphanPath, 'orphan')
+    await fs.mkdir(`${orphanPath}.unpacked`)
+
+    const second = await context.installer.installPluginFromPath(secondPackage)
+
+    expect(second.success).toBe(true)
+    await expect(fs.access(first.plugin.path)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(fs.access(orphanPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(fs.access(`${orphanPath}.unpacked`)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(fs.access(second.plugin.path)).resolves.toBeUndefined()
+    const asarFiles = (await fs.readdir(state.pluginDir)).filter((name) => name.endsWith('.asar'))
+    expect(asarFiles).toEqual([path.basename(second.plugin.path)])
+  })
+
   it('keeps ZIP plugins as directories', async () => {
     const packagePath = await createPackage('1.0.0', { zip: true })
     const context = createInstaller()
