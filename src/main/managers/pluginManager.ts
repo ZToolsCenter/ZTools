@@ -38,6 +38,8 @@ import {
   getPluginSessionPartition
 } from '../../shared/pluginRuntimeNamespace'
 import aiRequestStatusTracker from '../core/aiRequestStatusTracker'
+// [ZT-Enhance] 本地增强：插件批量管理（实现见 src/main/enhance/pluginEnhance.ts）
+import { getBatchPluginManageConfig } from '../enhance/pluginEnhance'
 
 console.log('[Plugin] mainPreload', mainPreload)
 
@@ -933,9 +935,13 @@ export class PluginManager {
   // 检查并终止插件
   private checkAndKillPlugin(pluginName: string, pluginPath: string): void {
     try {
+      // [ZT-Enhance] 批量管理：outKillAll 开启时所有插件退出即销毁
+      const batchKill = getBatchPluginManageConfig().outKillAll
       const data = api.dbGet('out-kill-plugin')
-      if (Array.isArray(data) && data.includes(pluginName)) {
-        console.log(`插件 ${pluginName} 配置为退出后立即结束，销毁 view`)
+      if (batchKill || (Array.isArray(data) && data.includes(pluginName))) {
+        console.log(
+          `插件 ${pluginName} ${batchKill ? '批量管理开启' : '配置'}为退出后立即结束，销毁 view`
+        )
         this.killPlugin(pluginPath)
       }
     } catch (error) {

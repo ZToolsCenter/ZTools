@@ -25,6 +25,8 @@ import { registerIconProtocolForSession, registerIconScheme } from './core/iconP
 import { getLogsPath } from './core/appData/appDataPaths'
 import { loadInternalPlugins } from './core/internalPluginLoader'
 import pluginManager from './managers/pluginManager'
+// [ZT-Enhance] 本地增强：插件批量管理（实现见 src/main/enhance/pluginEnhance.ts）
+import { getBatchPluginManageConfig } from './enhance/pluginEnhance'
 import windowManager from './managers/windowManager'
 
 const isE2ETest = process.env.ZTOOLS_E2E === '1'
@@ -173,8 +175,24 @@ app.whenReady().then(async () => {
   // 自动启动已配置的"跟随主程序同时启动运行"的插件
   if (mainWindow && !isE2ETest) {
     try {
-      const autoStartPlugins = api.dbGet('auto-start-plugin')
+      let autoStartPlugins = api.dbGet('auto-start-plugin')
       const disabledPlugins = pluginsAPI.getDisabledPluginSet()
+      // [ZT-Enhance] 批量管理：autoStartAll 开启时启动加载全部已安装插件
+      try {
+        if (getBatchPluginManageConfig().autoStartAll) {
+          const all = api.dbGet('plugins')
+          if (Array.isArray(all)) {
+            autoStartPlugins = all.map((p: any) => p?.name).filter(Boolean)
+            console.log(
+              '[ZT-Enhance] 批量管理：跟随启动已开启，本次启动加载全部',
+              autoStartPlugins.length,
+              '个插件'
+            )
+          }
+        }
+      } catch (error) {
+        console.error('[ZT-Enhance] 读取批量管理配置失败:', error)
+      }
       if (autoStartPlugins && Array.isArray(autoStartPlugins) && autoStartPlugins.length > 0) {
         console.log('[Main] 开始处理自动启动插件:', { count: autoStartPlugins.length })
         const plugins = api.dbGet('plugins')

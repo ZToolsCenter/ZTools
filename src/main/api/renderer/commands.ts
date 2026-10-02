@@ -16,6 +16,8 @@ import databaseAPI from '../shared/database'
 import { WINDOWS_SETTINGS } from '../../core/systemSettings/windowsSettings.js'
 import pluginsAPI from './plugins'
 import { executeSystemCommand } from './systemCommands'
+// [ZT-Enhance] 本地增强：插件批量管理（实现见 src/main/enhance/pluginEnhance.ts）
+import { getBatchPluginManageConfig } from '../../enhance/pluginEnhance'
 import { findCommandIndex, filterOutCommand, hasCommand } from './commandMatchers'
 import { systemSettingsAPI } from './systemSettings'
 import { shouldKeepMainWindowHiddenForLaunch, type PluginLaunchSource } from '@shared/pluginLaunch'
@@ -529,10 +531,17 @@ export class AppsAPI {
     let shouldAutoDetach = false
     if (pluginConfig && effectiveName) {
       try {
+        // [ZT-Enhance] 批量管理：autoDetachAll 默认开启，全部插件点击即独立窗口打开
+        const batchDetach = getBatchPluginManageConfig().autoDetachAll
         const autoDetachPlugins: string[] = databaseAPI.dbGet('auto-detach-plugin') || []
-        if (Array.isArray(autoDetachPlugins) && autoDetachPlugins.includes(effectiveName)) {
+        if (
+          batchDetach ||
+          (Array.isArray(autoDetachPlugins) && autoDetachPlugins.includes(effectiveName))
+        ) {
           shouldAutoDetach = true
-          console.log(`插件 ${effectiveName} 配置为自动分离，直接在独立窗口中创建`)
+          console.log(
+            `插件 ${effectiveName} 自动分离（${batchDetach ? '全局批量' : '按插件配置'}），直接在独立窗口中创建`
+          )
         }
       } catch (error) {
         console.error('[Commands] 检查自动分离配置失败:', error)
