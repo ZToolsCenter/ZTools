@@ -576,6 +576,13 @@ useJumpFunction<PluginMarketSettingJumpFunction>((state) => {
 })
 
 onMounted(() => {
+  // [ZT-Enhance] 支持从通用设置「插件批量管理」弹窗深链：读取目标插件名，
+  // 待 fetchPlugins 完成后由 openPendingPluginDetail 自动打开对应市场详情。
+  const pendingMarketDetail = sessionStorage.getItem('ZT_MARKET_DETAIL')
+  if (pendingMarketDetail) {
+    sessionStorage.removeItem('ZT_MARKET_DETAIL')
+    pendingDetailPluginName.value = pendingMarketDetail
+  }
   fetchPlugins()
   bannerTimer = window.setInterval(rotateBanners, 5000)
   stopDownloadProgressListener =

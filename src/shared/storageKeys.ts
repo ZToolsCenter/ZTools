@@ -22,7 +22,9 @@ export const HOST_STORAGE_KEYS = {
   enabledMainPushPlugin: 'enabled-main-push-plugin',
   detachedWindowSizes: 'detached-window-sizes',
   devPluginRegistry: 'dev-plugin-registry',
-  mcpDisabledPlugins: 'settings-mcp-disabled-plugins'
+  mcpDisabledPlugins: 'settings-mcp-disabled-plugins',
+  // [ZT-Enhance] 插件批量管理全局开关（通用设置页 → 插件批量管理）
+  batchPluginManage: 'batch-plugin-manage'
 } as const
 
 export const LEGACY_CAMEL_CASE_STORAGE_KEYS = {

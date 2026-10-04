@@ -24,6 +24,8 @@ import {
   removePluginNameFromSettingList
 } from '../../../shared/pluginSettings'
 import { comparePluginVersions } from '../../../shared/pluginVersion'
+// [ZT-Enhance] 本地增强：自动固定 + 插件批量管理（实现见 src/main/enhance/pluginEnhance.ts）
+import { autoPinOnPluginsWrite } from '../../enhance/pluginEnhance'
 
 // 插件目录
 const DISABLED_PLUGINS_KEY = 'disabled-plugins'
@@ -612,7 +614,10 @@ export class PluginsAPI {
    * @returns 无返回值
    */
   private writeInstalledPlugins(plugins: any[]): void {
+    // [ZT-Enhance] 覆盖前先留档，供 AutoPin 区分"新插件"并自动固定
+    const previousPlugins = this.readInstalledPlugins()
     databaseAPI.dbPut('plugins', plugins)
+    autoPinOnPluginsWrite(previousPlugins, plugins)
   }
 
   /**
