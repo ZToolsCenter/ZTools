@@ -9,6 +9,7 @@ import {
   type UwpPackageChangeEvent
 } from './core/uwpPackageMonitor'
 import {
+  getLinuxApplicationPaths,
   getMacApplicationPaths,
   getWindowsFlatScanPaths,
   getWindowsRecursiveScanPaths
@@ -36,6 +37,11 @@ class AppWatcher {
   private pendingRefreshType: 'full' | 'uwp' | null = null
   private started = false
   private readonly DEBOUNCE_DELAY = 1000 // 1秒防抖
+  // chokidar 会在 ready 之后补报一批初始扫描期间发现的条目（Linux 上 .desktop
+  // 多为符号链接，followSymlinks:false 时派发更晚）。用静默期吞掉这批假事件，
+  // 避免每次启动都白跑一次全量重扫；启动扫描已覆盖这段时间的真实变化。
+  private readonly WATCHER_SETTLE_MS = 5000
+  private watcherReadyAt = 0
 
   /**
    * 初始化应用目录与 UWP 包变化监听器。
@@ -64,6 +70,11 @@ class AppWatcher {
 
     if (process.platform === 'darwin') {
       return getMacApplicationPaths()
+    }
+
+    if (process.platform === 'linux') {
+      // Linux 应用以 XDG .desktop 文件形式存在，直接监听这些目录即可感知安装/卸载。
+      return getLinuxApplicationPaths()
     }
 
     return []
@@ -128,6 +139,19 @@ class AppWatcher {
       }
 
       return true
+    }
+
+    if (process.platform === 'linux') {
+      // 只关心 .desktop 条目；放行目录以便 chokidar 下钻
+      try {
+        if (fs.statSync(filePath).isDirectory()) {
+          return false
+        }
+      } catch {
+        // unlink 事件时路径已不存在，按后缀兜底
+      }
+
+      return !basename.endsWith('.desktop')
     }
 
     return true
@@ -255,6 +279,30 @@ class AppWatcher {
       })
     }
 
+    if (process.platform === 'linux') {
+      // Linux: 监听 .desktop 的新增 / 删除 / 覆盖更新（升级会原地重写文件）
+      const inSettleWindow = (): boolean =>
+        this.watcherReadyAt > 0 && Date.now() - this.watcherReadyAt < this.WATCHER_SETTLE_MS
+
+      watcher.on('add', (filePath: string) => {
+        if (inSettleWindow() || !filePath.endsWith('.desktop')) return
+        console.log('[AppWatcher] 检测到新应用条目:', filePath)
+        this.notifyChange('add', filePath)
+      })
+
+      watcher.on('change', (filePath: string) => {
+        if (inSettleWindow() || !filePath.endsWith('.desktop')) return
+        console.log('[AppWatcher] 检测到应用条目更新:', filePath)
+        this.notifyChange('add', filePath)
+      })
+
+      watcher.on('unlink', (filePath: string) => {
+        if (inSettleWindow() || !filePath.endsWith('.desktop')) return
+        console.log('[AppWatcher] 检测到应用条目删除:', filePath)
+        this.notifyChange('remove', filePath)
+      })
+    }
+
     // 监听错误
     watcher.on('error', (error: unknown) => {
       console.error('[AppWatcher] 应用目录监听错误:', error)
@@ -262,6 +310,9 @@ class AppWatcher {
 
     // 监听准备完成
     watcher.on('ready', () => {
+      if (this.watcherReadyAt === 0) {
+        this.watcherReadyAt = Date.now()
+      }
       console.log('[AppWatcher] 应用目录监听器已就绪')
     })
   }
@@ -320,6 +371,8 @@ class AppWatcher {
     this.recursiveWatcher = null
     this.flatRootWatcher = null
     this.started = false
+    // 重启监听时重新进入静默期
+    this.watcherReadyAt = 0
 
     if (process.platform === 'win32') {
       try {

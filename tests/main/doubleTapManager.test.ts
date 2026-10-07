@@ -79,6 +79,13 @@ describe('doubleTapManager 双击修饰键检测', () => {
     vi.resetModules()
     vi.useFakeTimers()
     mockUIOhook.removeAllListeners()
+    // globalInputManager 现在惰性 require 原生模块（加载失败不应让主进程崩溃），
+    // 因此 vi.mock 拦不到它，改为在 import 之后显式注入替身。
+    const globalInputManager = await import('../../src/main/core/globalInputManager')
+    globalInputManager.setUiohookModuleForTesting({
+      uIOhook: mockUIOhook,
+      UiohookKey
+    } as never)
     doubleTapManager = (await import('../../src/main/core/doubleTapManager')).default
     callback = vi.fn()
     doubleTapManager.register('Ctrl', callback)

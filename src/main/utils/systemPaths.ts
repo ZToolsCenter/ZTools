@@ -49,16 +49,23 @@ export function getMacApplicationPaths(): string[] {
 /**
  * 获取 Linux XDG 应用目录路径（遵循 XDG Base Directory 规范）。
  *
- * @returns 用户级和系统级 .desktop 文件目录。
+ * 扫描器与目录监听器共用此结果，避免两处逻辑漂移。
+ *
+ * @returns 用户级和系统级 .desktop 文件目录，按 XDG 优先级排序。
  */
 export function getLinuxApplicationPaths(): string[] {
   const home = os.homedir()
+  // XDG_DATA_HOME 未设置时规范规定回退到 ~/.local/share
+  const xdgDataHome = process.env.XDG_DATA_HOME || path.join(home, '.local/share')
   const xdgDataDirs = process.env.XDG_DATA_DIRS || '/usr/local/share:/usr/share'
   const baseDirs = xdgDataDirs.split(':').filter(Boolean)
 
   const paths = [
-    path.join(home, '.local/share/applications'), // 用户安装的应用
-    ...baseDirs.map((dir) => path.join(dir, 'applications')) // 系统安装的应用
+    path.join(xdgDataHome, 'applications'), // 用户安装的应用
+    ...baseDirs.map((dir) => path.join(dir, 'applications')), // 系统应用（含 snap/linglong 导出）
+    // Flatpak 导出目录不一定在 XDG_DATA_DIRS 中，显式补充
+    '/var/lib/flatpak/exports/share/applications',
+    path.join(xdgDataHome, 'flatpak/exports/share/applications')
   ]
 
   return [...new Set(paths)] // 去重

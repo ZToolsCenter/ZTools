@@ -20,8 +20,8 @@ export async function scanApplications(): Promise<ApplicationScanResult> {
     // Windows
     return winScan()
   } else if (platform === 'linux') {
-    // Linux
-    return { apps: await linuxScan(), complete: true, errors: [] }
+    // Linux：扫描器自己报告完整性，避免解析失败的空列表覆盖已有缓存
+    return linuxScan()
   } else {
     console.warn(`[Scanner] 不支持的平台: ${platform}`)
     return { apps: [], complete: false, errors: [`Unsupported platform: ${platform}`] }
