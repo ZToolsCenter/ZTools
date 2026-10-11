@@ -100,7 +100,12 @@ export async function openDialog(
   data?: OpenDialogReturnValue
   error?: string
 }> {
-  const result = await dialog.showOpenDialog(parentWindow, options)
+  // 原生模态对话框会抢占焦点触发主窗口 blur；若不抑制，blur 自动隐藏会连带隐藏并销毁
+  // 发起调用的插件视图（如设置插件），导致对话框结果无法回到渲染层，表现为“选完不生效”。
+  const { default: windowManager } = await import('../managers/windowManager')
+  const result = await windowManager.withBlurHideSuppressed(() =>
+    dialog.showOpenDialog(parentWindow, options)
+  )
   if (!parentWindow.isDestroyed()) {
     parentWindow.show()
   }
