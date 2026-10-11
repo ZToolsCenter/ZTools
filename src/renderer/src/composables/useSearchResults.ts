@@ -70,7 +70,9 @@ export function useSearchResults(props: {
     searchTextCommands,
     searchFileCommands,
     matchesWindowCommand,
-    sortRecommendations
+    sortRecommendations,
+    getSearchTermHeat,
+    searchTermStatKey
   } = commandDataStore
 
   // 使用统计缓存（key: "path:featureCode", value: useCount）
@@ -267,8 +269,16 @@ export function useSearchResults(props: {
     // 无搜索词（如仅粘贴文本）时，返回去重后的原始顺序结果
     if (!query) return deduped
 
-    // 排序：完全匹配 > 前缀匹配 > 系统应用 > 其他
+    // 热度映射：当前搜索词（含以其为前缀的历史词条）的累计命中次数
+    const heatMap = getSearchTermHeat(props.searchQuery)
+
+    // 排序：当前词热度 > 完全匹配 > 前缀匹配 > 系统应用 > 使用频率
     return deduped.sort((a, b) => {
+      // 0. 当前搜索词热度优先，命中越多越靠前
+      const heatA = heatMap.get(searchTermStatKey(a)) || 0
+      const heatB = heatMap.get(searchTermStatKey(b)) || 0
+      if (heatA !== heatB) return heatB - heatA
+
       const nameA = a.name.toLowerCase()
       const nameB = b.name.toLowerCase()
 
@@ -284,11 +294,11 @@ export function useSearchResults(props: {
       if (isPrefixA && !isPrefixB) return -1
       if (!isPrefixA && isPrefixB) return 1
 
-      // 3. 系统应用权重略高
-      const isAppA = a.type === 'direct' && a.subType === 'app'
-      const isAppB = b.type === 'direct' && b.subType === 'app'
-      if (isAppA && !isAppB) return -1
-      if (!isAppA && isAppB) return 1
+      // 3. Windows 系统应用（app）/ 自带组件（system-setting）默认沉底
+      //    有当前搜索词热度时已在第 0 步被顶上来
+      const isWinAppA = a.type === 'direct' && (a.subType === 'app' || a.subType === 'system-setting')
+      const isWinAppB = b.type === 'direct' && (b.subType === 'app' || b.subType === 'system-setting')
+      if (isWinAppA !== isWinAppB) return isWinAppA ? 1 : -1
 
       // 4. 使用频率排序
       const keyA = `${a.path}:${a.featureCode || ''}`

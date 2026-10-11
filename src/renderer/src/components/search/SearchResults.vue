@@ -122,7 +122,7 @@ const {
   moveRecommendationToFront,
   getPinnedCommands,
   updatePinnedOrder,
-  saveSearchPreference,
+  recordSearchTermHit,
   loadSuperPanelPinnedData,
   isPinnedToSuperPanel
 } = commandDataStore
@@ -641,9 +641,9 @@ async function handleSelectApp(app: any): Promise<void> {
       return
     }
 
-    // 记录搜索偏好（仅普通文本搜索时，排除匹配指令类型）
-    if (props.searchQuery.trim() && (!app.cmdType || app.cmdType === 'text')) {
-      saveSearchPreference(props.searchQuery, app)
+    // 记录搜索词热度（有搜索词即记录，覆盖应用/插件/匹配类指令）
+    if (props.searchQuery.trim()) {
+      recordSearchTermHit(props.searchQuery, app)
     }
 
     // 构造 payload 和 type
