@@ -8,6 +8,17 @@ import {
 
 if (process.platform === 'win32') app.setAppUserModelId('top.z-tools')
 
+// Windows: Chromium 的 EnableTransparentHwndEnlargement 会为透明窗口放大 HWND
+// 以绘制阴影/圆角，导致 HWND 与网页渲染区高度不一致，在窗口底部露出一条灰色底色。
+// 关闭该特性后二者严格一致，灰条消失，阴影与圆角仍由 DWM 正常绘制。
+if (process.platform === 'win32') {
+  const disabled = app.commandLine.getSwitchValue('disable-features')
+  app.commandLine.appendSwitch(
+    'disable-features',
+    disabled ? `${disabled},EnableTransparentHwndEnlargement` : 'EnableTransparentHwndEnlargement'
+  )
+}
+
 const gotTheLock = app.requestSingleInstanceLock()
 const runtimeCompatibility = checkRuntimeCompatibility({
   platform: process.platform,
