@@ -186,6 +186,7 @@ const localAppSearch = ref(true)
 const recentRows = ref(2)
 const pinnedRows = ref(2)
 const searchMode = ref<'aggregate' | 'list'>('aggregate')
+const searchBoxScale = ref(100)
 const clipboardRetentionDays = ref(180)
 
 const availableAutoBackToSearchOptions = computed(() =>
@@ -689,6 +690,35 @@ async function handleRecentRowsChange(): Promise<void> {
     console.log('最近使用行数已更新:', recentRows.value)
   } catch (error) {
     console.error('保存最近使用行数配置失败:', error)
+  }
+}
+
+// 将缩放百分比夹取到 20-80 范围
+function clampSearchBoxScale(value: number): number {
+  return Math.min(80, Math.max(20, Math.round(value)))
+}
+
+// 处理搜索框大小变化：规范数值范围后保存并即时应用
+async function handleSearchBoxScaleChange(): Promise<void> {
+  try {
+    const value = clampSearchBoxScale(Number(searchBoxScale.value) || 40)
+    searchBoxScale.value = value
+    await saveSettings()
+    // 通知主进程应用窗口宽度与设置页缩放
+    await window.ztools.internal.updateSearchBoxScale(value)
+    console.log('搜索框大小已更新:', value)
+  } catch (error) {
+    console.error('保存搜索框大小配置失败:', error)
+  }
+}
+
+// 按步长增减搜索框大小（按屏幕宽度百分比调整）
+async function stepSearchBoxScale(delta: number): Promise<void> {
+  const current = clampSearchBoxScale(Number(searchBoxScale.value) || 40)
+  const next = clampSearchBoxScale(current + delta)
+  searchBoxScale.value = next
+  if (next !== current) {
+    await handleSearchBoxScaleChange()
   }
 }
 
@@ -1371,6 +1401,17 @@ async function loadSettings(): Promise<void> {
       theme.value = data.theme ?? 'system'
       primaryColor.value = data.primaryColor ?? 'green'
       searchMode.value = data.searchMode ?? 'aggregate'
+      const screenWidth = window.screen?.width || 1920
+      const storedScale = Number(data.searchBoxScale)
+      if (Number.isFinite(storedScale) && storedScale > 0) {
+        // 旧数据以 800px 为基准，迁移为占屏幕宽度的百分比
+        searchBoxScale.value =
+          data.searchBoxScaleUnit === 'screen'
+            ? clampSearchBoxScale(storedScale)
+            : clampSearchBoxScale(((800 * storedScale) / 100 / screenWidth) * 100)
+      } else {
+        searchBoxScale.value = clampSearchBoxScale((800 / screenWidth) * 100)
+      }
       autoCheckUpdate.value = data.autoCheckUpdate ?? true
       tabKeyFunction.value =
         data.tabKeyFunction ?? (data.tabTargetCommand ? 'target-command' : 'navigate')
@@ -1467,6 +1508,8 @@ async function saveSettings(): Promise<void> {
       recentRows: recentRows.value,
       pinnedRows: pinnedRows.value,
       searchMode: searchMode.value,
+      searchBoxScale: searchBoxScale.value,
+      searchBoxScaleUnit: 'screen',
       tabKeyFunction: tabKeyFunction.value,
       tabTargetCommand: tabTargetCommand.value,
       spaceOpenCommand: spaceOpenCommand.value,
@@ -1948,6 +1991,34 @@ onUnmounted(() => {
             :options="searchModeOptions"
             @change="handleSearchModeChange"
           />
+        </div>
+      </div>
+
+      <div class="setting-item">
+        <div class="setting-label">
+          <span>搜索框大小</span>
+          <span class="setting-desc">占屏幕宽度的百分比，设置界面同步缩放</span>
+        </div>
+        <div class="setting-control">
+          <div class="scale-stepper">
+            <button class="scale-stepper-btn" title="减小" @click="stepSearchBoxScale(-5)">
+              &minus;
+            </button>
+            <div class="scale-stepper-field">
+              <input
+                v-model.number="searchBoxScale"
+                class="scale-stepper-input"
+                type="number"
+                :min="20"
+                :max="80"
+                step="5"
+                @blur="handleSearchBoxScaleChange"
+                @keyup.enter="handleSearchBoxScaleChange"
+              />
+              <span class="scale-stepper-unit">%</span>
+            </div>
+            <button class="scale-stepper-btn" title="增大" @click="stepSearchBoxScale(5)">+</button>
+          </div>
         </div>
       </div>
 
@@ -2683,6 +2754,68 @@ onUnmounted(() => {
 .opacity-control {
   min-width: 250px;
   gap: 12px;
+}
+
+/* 搜索框大小步进器 */
+.scale-stepper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.scale-stepper-btn {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  line-height: 1;
+  color: var(--text-secondary);
+  background: var(--control-bg);
+  border: 1px solid var(--control-border);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+  user-select: none;
+}
+
+.scale-stepper-btn:hover {
+  color: var(--primary-color);
+  border-color: var(--primary-color);
+  background: var(--primary-light-bg);
+}
+
+.scale-stepper-field {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 32px;
+  padding: 0 10px;
+  background: var(--control-bg);
+  border: 1px solid var(--control-border);
+  border-radius: 6px;
+}
+
+.scale-stepper-input {
+  width: 46px;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 14px;
+  text-align: right;
+}
+
+.scale-stepper-input::-webkit-outer-spin-button,
+.scale-stepper-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.scale-stepper-unit {
+  font-size: 14px;
+  color: var(--text-secondary);
 }
 
 .wallpaper-setting-item {

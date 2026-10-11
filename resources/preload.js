@@ -1268,6 +1268,9 @@ window.ztools = {
     // 通知主渲染进程更新最近使用行数
     updateRecentRows: async (rows) =>
       await electron.ipcRenderer.invoke('internal:update-recent-rows', rows),
+    // 更新搜索框大小并按比例缩放设置界面
+    updateSearchBoxScale: async (scale) =>
+      await electron.ipcRenderer.invoke('internal:update-search-box-scale', scale),
     // 通知主渲染进程更新固定栏行数
     updatePinnedRows: async (rows) =>
       await electron.ipcRenderer.invoke('internal:update-pinned-rows', rows),

@@ -26,6 +26,7 @@ import { getLogsPath } from './core/appData/appDataPaths'
 import { loadInternalPlugins } from './core/internalPluginLoader'
 import pluginManager from './managers/pluginManager'
 import windowManager from './managers/windowManager'
+import { setSearchBoxScaleValue } from './common/constants'
 
 const isE2ETest = process.env.ZTOOLS_E2E === '1'
 
@@ -82,6 +83,13 @@ try {
   if (settingsDoc?.data?.disableGpuAcceleration === true) {
     app.disableHardwareAcceleration()
     console.log('[Main] 已禁用 GPU 硬件加速（用户设置）')
+  }
+  // 提前恢复搜索框缩放值，确保首帧创建窗口即使用正确宽度
+  if (settingsDoc?.data?.searchBoxScale !== undefined) {
+    setSearchBoxScaleValue(
+      settingsDoc.data.searchBoxScale,
+      settingsDoc.data.searchBoxScaleUnit === 'screen'
+    )
   }
 } catch {
   // 读取失败时忽略，保持默认行为（GPU 加速开启）
