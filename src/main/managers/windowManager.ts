@@ -22,7 +22,15 @@ import globalInputManager from '../core/globalInputManager.js'
 import { WindowManager as NativeWindowManager } from '../core/native/index.js'
 import clipboardManager from './clipboardManager'
 
-import { WINDOW_DEFAULT_HEIGHT, getSearchBoxScale, getWindowWidth, resolveSearchBoxScale, setResolvedSearchBoxScale, setSearchBoxBaseWidth, setSearchBoxScaleValue } from '../common/constants'
+import {
+  WINDOW_DEFAULT_HEIGHT,
+  getSearchBoxScale,
+  getWindowWidth,
+  resolveSearchBoxScale,
+  setResolvedSearchBoxScale,
+  setSearchBoxBaseWidth,
+  setSearchBoxScaleValue
+} from '../common/constants'
 import detachedWindowManager from '../core/detachedWindowManager'
 import superPanelManager from '../core/superPanelManager'
 import { applyWindowMaterial, getDefaultWindowMaterial } from '../utils/windowUtils'

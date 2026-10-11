@@ -296,8 +296,10 @@ export function useSearchResults(props: {
 
       // 3. Windows 系统应用（app）/ 自带组件（system-setting）默认沉底
       //    有当前搜索词热度时已在第 0 步被顶上来
-      const isWinAppA = a.type === 'direct' && (a.subType === 'app' || a.subType === 'system-setting')
-      const isWinAppB = b.type === 'direct' && (b.subType === 'app' || b.subType === 'system-setting')
+      const isWinAppA =
+        a.type === 'direct' && (a.subType === 'app' || a.subType === 'system-setting')
+      const isWinAppB =
+        b.type === 'direct' && (b.subType === 'app' || b.subType === 'system-setting')
       if (isWinAppA !== isWinAppB) return isWinAppA ? 1 : -1
 
       // 4. 使用频率排序

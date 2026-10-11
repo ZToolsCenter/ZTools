@@ -628,9 +628,7 @@ export const useCommandDataStore = defineStore('commandData', () => {
           const legacy = value as { path: string; featureCode?: string; name: string }
           bucket[searchTermStatKey(legacy)] = { ...legacy, count: 1 }
         } else {
-          for (const [statKey, stat] of Object.entries(
-            value as Record<string, SearchTermStat>
-          )) {
+          for (const [statKey, stat] of Object.entries(value as Record<string, SearchTermStat>)) {
             if (stat && typeof stat.path === 'string') {
               bucket[statKey] = { ...stat, count: stat.count || 1 }
             }
@@ -1487,8 +1485,10 @@ export const useCommandDataStore = defineStore('commandData', () => {
         const heatA = heatMap.get(searchTermStatKey(a)) || 0
         const heatB = heatMap.get(searchTermStatKey(b)) || 0
         if (heatA !== heatB) return heatB - heatA
-        const isWinAppA = a.type === 'direct' && (a.subType === 'app' || a.subType === 'system-setting')
-        const isWinAppB = b.type === 'direct' && (b.subType === 'app' || b.subType === 'system-setting')
+        const isWinAppA =
+          a.type === 'direct' && (a.subType === 'app' || a.subType === 'system-setting')
+        const isWinAppB =
+          b.type === 'direct' && (b.subType === 'app' || b.subType === 'system-setting')
         if (isWinAppA !== isWinAppB) return isWinAppA ? 1 : -1
         return 0
       })
