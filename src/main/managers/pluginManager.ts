@@ -690,6 +690,8 @@ export class PluginManager {
         pluginPath,
         featureCode
       })
+      // 首次装配会先收缩窗口再展开，期间抑制失焦自动隐藏，避免窗口被瞬时 blur 关闭
+      windowManager.beginPluginAssemblyBlurHideSuppression()
       // 插件加载时，先将窗口高度设置为 1px，避免节流
       const mainContentHeight = windowManager.getMainWindowHeaderHeight()
       api.resizeWindow(mainContentHeight + 1)
@@ -753,6 +755,7 @@ export class PluginManager {
             pluginPath,
             featureCode
           })
+          windowManager.endPluginAssemblyBlurHideSuppression()
           return
         }
         if (assembly) {
@@ -776,6 +779,8 @@ export class PluginManager {
           pluginPath,
           featureCode
         })
+        // 界面已展示并完成重绘，延迟释放失焦抑制，覆盖展示瞬间可能补发的瞬时 blur
+        windowManager.endPluginAssemblyBlurHideSuppression()
       })
 
       console.log('[Plugin] Plugin WebContentsView 已创建并缓存')
@@ -787,6 +792,8 @@ export class PluginManager {
       })
     } catch (error) {
       console.error('[Plugin] 加载插件配置失败:', error)
+      // 装配失败时立即释放失焦抑制，避免窗口无法按失焦隐藏
+      windowManager.endPluginAssemblyBlurHideSuppression()
       this.assemblyCoordinator.trace('create-new-view-error', {
         assemblyId: assembly?.id,
         pluginPath,

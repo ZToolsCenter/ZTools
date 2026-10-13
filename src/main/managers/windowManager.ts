@@ -111,6 +111,9 @@ class WindowManager {
   private modalDialogBlurHideSuppressed: boolean = false
   private modalDialogBlurHideReleaseTimer: ReturnType<typeof setTimeout> | null = null
   private modalDialogBlurHideSuppressionDepth: number = 0
+  // 插件首次装配期间的失焦抑制；装配完成或兜底超时后释放。
+  private pluginAssemblyBlurHideSuppressionActive = false
+  private pluginAssemblyBlurHideSafetyTimer: ReturnType<typeof setTimeout> | null = null
   private lastBlurHideTime: number = 0 // blur 导致隐藏窗口的时间戳（用于解决托盘点击竞态）
   private blurHideTimer: ReturnType<typeof setTimeout> | null = null // Linux blur 延迟隐藏定时器
   // macOS 全屏场景的空间锚点；全屏呼出期间复用，普通桌面呼出时释放。
@@ -1322,6 +1325,47 @@ class WindowManager {
       this.endModalDialogBlurHideSuppression(releaseDelayMs)
       throw error
     }
+  }
+
+  /**
+   * 插件首次装配（缓存未命中）期间临时抑制失焦自动隐藏。
+   *
+   * 首次打开插件需要先把窗口收缩到顶栏高度再展开，Windows 在尺寸突变后可能补发一次
+   * 瞬时 blur；若不抑制会立刻隐藏窗口，表现为“插件界面一闪而过，需要再次打开”。
+   * 装配完成时调用 {@link endPluginAssemblyBlurHideSuppression} 释放，并用兜底定时器
+   * 防止装配异常导致抑制状态滞留。
+   *
+   * @param safetyTimeoutMs 兜底释放时长（毫秒），超过该时长无论装配是否结束都释放抑制。
+   * @returns 无返回值。
+   */
+  public beginPluginAssemblyBlurHideSuppression(safetyTimeoutMs: number = 8000): void {
+    // 已有抑制在生效时不重复叠加，避免释放时把先前的抑制提前解除。
+    if (this.pluginAssemblyBlurHideSuppressionActive) return
+
+    this.pluginAssemblyBlurHideSuppressionActive = true
+    this.beginModalDialogBlurHideSuppression()
+    this.pluginAssemblyBlurHideSafetyTimer = setTimeout(() => {
+      this.pluginAssemblyBlurHideSafetyTimer = null
+      this.pluginAssemblyBlurHideSuppressionActive = false
+      this.endModalDialogBlurHideSuppression(0)
+    }, safetyTimeoutMs)
+  }
+
+  /**
+   * 释放插件装配期间的失焦抑制。
+   *
+   * @param releaseDelayMs 释放前的额外延迟（毫秒），覆盖装配末尾窗口尺寸变化引发的瞬时 blur。
+   * @returns 无返回值。
+   */
+  public endPluginAssemblyBlurHideSuppression(releaseDelayMs: number = 500): void {
+    if (!this.pluginAssemblyBlurHideSuppressionActive) return
+
+    this.pluginAssemblyBlurHideSuppressionActive = false
+    if (this.pluginAssemblyBlurHideSafetyTimer) {
+      clearTimeout(this.pluginAssemblyBlurHideSafetyTimer)
+      this.pluginAssemblyBlurHideSafetyTimer = null
+    }
+    this.endModalDialogBlurHideSuppression(releaseDelayMs)
   }
 
   /**
