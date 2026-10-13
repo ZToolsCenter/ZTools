@@ -1,5 +1,5 @@
 import { ipcMain, screen } from 'electron'
-import { WINDOW_WIDTH } from '../../common/constants.js'
+import { getWindowWidth } from '../../common/constants.js'
 import windowManager from '../../managers/windowManager.js'
 
 // 窗口材质类型
@@ -35,13 +35,13 @@ export class WindowAPI {
       if (lock) {
         // 锁定：记录当前尺寸（宽度使用固定常量，避免多显示器 DPI 缩放导致尺寸漂移）
         const [, height] = this.mainWindow.getSize()
-        this.lockedSize = { width: WINDOW_WIDTH, height }
+        this.lockedSize = { width: getWindowWidth(), height }
       } else {
         // 解锁：验证并恢复尺寸（用 setBounds 保留位置，避免 Windows 下 x 轴偏移）
         if (this.lockedSize) {
           const [currentX, currentY] = this.mainWindow.getPosition()
           const [, height] = this.mainWindow.getSize()
-          if (WINDOW_WIDTH !== this.lockedSize.width || height !== this.lockedSize.height) {
+          if (getWindowWidth() !== this.lockedSize.width || height !== this.lockedSize.height) {
             this.mainWindow.setBounds({
               x: currentX,
               y: currentY,
@@ -95,7 +95,7 @@ export class WindowAPI {
   public resizeWindow(height: number): void {
     if (this.mainWindow) {
       // 使用固定宽度常量，避免多显示器 DPI 缩放导致 getSize() 返回被缩放的值
-      const width = WINDOW_WIDTH
+      const width = getWindowWidth()
       // 限制高度范围：最小为当前顶部栏高度，最大不超过当前屏幕可用高度。
       const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
       const maxHeight = display.workAreaSize.height

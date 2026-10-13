@@ -303,10 +303,29 @@ export const useCommandDataStore = defineStore('commandData', () => {
         .map((p: any) => p.path)
     )
   }
-  // 搜索偏好记录（搜索词 -> 上次选中的指令标识）
-  const searchPreference = ref<
-    Record<string, { path: string; featureCode?: string; name: string }>
-  >({})
+  // 搜索词热度统计（搜索词 -> 该词下各选项的累计选中次数），用于按当前搜索词热度排序
+  type SearchTermStat = { path: string; featureCode?: string; name: string; count: number }
+  const searchTermStats = ref<Record<string, Record<string, SearchTermStat>>>({})
+
+  // 生成搜索词热度统计中的指令唯一键
+  function searchTermStatKey(cmd: { path: string; featureCode?: string; name: string }): string {
+    return `${cmd.path}:${cmd.featureCode || ''}:${cmd.name}`
+  }
+
+  // 聚合当前搜索词热度（含所有以该词为前缀的历史词条），返回 指令键 -> 累计命中次数
+  function getSearchTermHeat(query: string): Map<string, number> {
+    const key = query.trim().toLowerCase()
+    const heat = new Map<string, number>()
+    if (!key) return heat
+    for (const [term, bucket] of Object.entries(searchTermStats.value)) {
+      if (!term.startsWith(key)) continue
+      for (const stat of Object.values(bucket)) {
+        const statKey = searchTermStatKey(stat)
+        heat.set(statKey, (heat.get(statKey) || 0) + (stat.count || 0))
+      }
+    }
+    return heat
+  }
 
   // 匹配推荐置顶序列（只影响推荐区，不影响主搜索框固定列表）
   const recommendationPins = ref<RecommendationPin[]>([])
@@ -595,14 +614,31 @@ export const useCommandDataStore = defineStore('commandData', () => {
     }
   }
 
-  async function loadSearchPreference(): Promise<void> {
+  async function loadSearchTermStats(): Promise<void> {
     try {
       const data = await window.ztools.dbGet('search-preference')
-      if (data && typeof data === 'object') {
-        searchPreference.value = data
+      if (!data || typeof data !== 'object') return
+
+      const normalized: Record<string, Record<string, SearchTermStat>> = {}
+      for (const [term, value] of Object.entries(data as Record<string, any>)) {
+        if (!value || typeof value !== 'object') continue
+        const bucket: Record<string, SearchTermStat> = {}
+        // 兼容旧版「只记录上次选中项」的格式：{ path, featureCode, name }
+        if (typeof value.path === 'string') {
+          const legacy = value as { path: string; featureCode?: string; name: string }
+          bucket[searchTermStatKey(legacy)] = { ...legacy, count: 1 }
+        } else {
+          for (const [statKey, stat] of Object.entries(value as Record<string, SearchTermStat>)) {
+            if (stat && typeof stat.path === 'string') {
+              bucket[statKey] = { ...stat, count: stat.count || 1 }
+            }
+          }
+        }
+        if (Object.keys(bucket).length > 0) normalized[term] = bucket
       }
+      searchTermStats.value = normalized
     } catch (error) {
-      console.error('加载搜索偏好记录失败:', error)
+      console.error('加载搜索词热度统计失败:', error)
     }
   }
 
@@ -759,26 +795,34 @@ export const useCommandDataStore = defineStore('commandData', () => {
     }
   }
 
-  // 保存搜索偏好（搜索词 -> 选中的指令）
-  async function saveSearchPreference(
+  // 记录一次搜索词命中（搜索词 -> 该词下选中的指令累计次数）
+  async function recordSearchTermHit(
     query: string,
     command: { path: string; featureCode?: string; name: string }
   ): Promise<void> {
     const key = query.trim().toLowerCase()
     if (!key) return
 
-    searchPreference.value[key] = {
-      path: command.path,
-      featureCode: command.featureCode,
-      name: command.name
+    const bucket = searchTermStats.value[key] || (searchTermStats.value[key] = {})
+    const statKey = searchTermStatKey(command)
+    const existing = bucket[statKey]
+    if (existing) {
+      existing.count += 1
+    } else {
+      bucket[statKey] = {
+        path: command.path,
+        featureCode: command.featureCode,
+        name: command.name,
+        count: 1
+      }
     }
     try {
       await window.ztools.dbPut(
         'search-preference',
-        JSON.parse(JSON.stringify(searchPreference.value))
+        JSON.parse(JSON.stringify(searchTermStats.value))
       )
     } catch (error) {
-      console.error('保存搜索偏好失败:', error)
+      console.error('保存搜索词热度统计失败:', error)
     }
   }
 
@@ -799,7 +843,7 @@ export const useCommandDataStore = defineStore('commandData', () => {
       await Promise.all([
         loadHistoryData(),
         loadPinnedData(),
-        loadSearchPreference(),
+        loadSearchTermStats(),
         loadRecommendationPins(),
         loadSuperPanelPinnedData()
       ])
@@ -1435,19 +1479,19 @@ export const useCommandDataStore = defineStore('commandData', () => {
         })
         .map((item) => item.result)
 
-      // 搜索偏好置顶：将上次选中的指令移到第一位
-      const prefKey = query.trim().toLowerCase()
-      const pref = searchPreference.value[prefKey]
-      if (pref) {
-        const prefIndex = bestMatches.findIndex(
-          (cmd) =>
-            cmd.path === pref.path && cmd.featureCode === pref.featureCode && cmd.name === pref.name
-        )
-        if (prefIndex > 0) {
-          const [preferred] = bestMatches.splice(prefIndex, 1)
-          bestMatches.unshift(preferred)
-        }
-      }
+      // 排序：当前搜索词热度 > Windows 系统应用/自带组件沉底 > 原匹配度（Array.sort 稳定）
+      const heatMap = getSearchTermHeat(query)
+      bestMatches = [...bestMatches].sort((a, b) => {
+        const heatA = heatMap.get(searchTermStatKey(a)) || 0
+        const heatB = heatMap.get(searchTermStatKey(b)) || 0
+        if (heatA !== heatB) return heatB - heatA
+        const isWinAppA =
+          a.type === 'direct' && (a.subType === 'app' || a.subType === 'system-setting')
+        const isWinAppB =
+          b.type === 'direct' && (b.subType === 'app' || b.subType === 'system-setting')
+        if (isWinAppA !== isWinAppB) return isWinAppA ? 1 : -1
+        return 0
+      })
     }
 
     // 2. 匹配指令匹配（从 regexCommands 中查找，包括 regex 和 over 类型）
@@ -1894,7 +1938,9 @@ export const useCommandDataStore = defineStore('commandData', () => {
     // 插件可用性刷新
     reloadPluginAvailabilityData,
 
-    // 搜索偏好
-    saveSearchPreference
+    // 搜索词热度
+    recordSearchTermHit,
+    getSearchTermHeat,
+    searchTermStatKey
   }
 })

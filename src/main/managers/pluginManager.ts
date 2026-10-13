@@ -6,7 +6,7 @@ import hideWindowHtml from '../../../resources/hideWindow.html?asset'
 
 import mainPreload from '../../../resources/preload.js?asset'
 import api from '../api'
-import { WINDOW_DEFAULT_HEIGHT, WINDOW_WIDTH } from '../common/constants'
+import { WINDOW_DEFAULT_HEIGHT, getSearchBoxScaleFactor, getWindowWidth } from '../common/constants'
 import { STANDARD_MAIN_WINDOW_HEADER_HEIGHT } from '../../shared/mainWindowLayout'
 import detachedWindowManager, {
   DETACHED_TITLEBAR_HEIGHT,
@@ -621,6 +621,11 @@ export class PluginManager {
     console.log('[Plugin] 插件视图获取焦点')
     view.webContents.focus()
 
+    // 复用设置页缓存视图时重新应用缩放，避免沿用旧比例
+    if (cached.name === 'setting') {
+      view.webContents.setZoomFactor(getSearchBoxScaleFactor())
+    }
+
     // 恢复之前的高度或使用默认高度
     const isConfigHeadless = !pluginInfoFromDB?.main
     if (isConfigHeadless) {
@@ -685,6 +690,8 @@ export class PluginManager {
         pluginPath,
         featureCode
       })
+      // 首次装配会先收缩窗口再展开，期间抑制失焦自动隐藏，避免窗口被瞬时 blur 关闭
+      windowManager.beginPluginAssemblyBlurHideSuppression()
       // 插件加载时，先将窗口高度设置为 1px，避免节流
       const mainContentHeight = windowManager.getMainWindowHeaderHeight()
       api.resizeWindow(mainContentHeight + 1)
@@ -706,7 +713,7 @@ export class PluginManager {
       this.mainWindow.contentView.addChildView(this.pluginView)
 
       // 设置初始布局（使用固定宽度常量，避免多显示器 DPI 缩放导致尺寸漂移）
-      const windowWidth = WINDOW_WIDTH
+      const windowWidth = getWindowWidth()
       // 设置初始高度为 1px，避免节流
       this.pluginView.setBounds({ x: 0, y: mainContentHeight, width: windowWidth, height: 1 })
 
@@ -748,10 +755,16 @@ export class PluginManager {
             pluginPath,
             featureCode
           })
+          windowManager.endPluginAssemblyBlurHideSuppression()
           return
         }
         if (assembly) {
           this.assemblyCoordinator.markSessionStatus(assembly, 'domReady')
+        }
+
+        // 设置页按搜索框缩放比例等比缩放，保证 UI 与文字同步放大
+        if (effectiveName === 'setting') {
+          view.webContents.setZoomFactor(getSearchBoxScaleFactor())
         }
 
         // 页面完成 DOM 初始化后注入宿主统一样式和当前主题色。
@@ -766,6 +779,8 @@ export class PluginManager {
           pluginPath,
           featureCode
         })
+        // 界面已展示并完成重绘，延迟释放失焦抑制，覆盖展示瞬间可能补发的瞬时 blur
+        windowManager.endPluginAssemblyBlurHideSuppression()
       })
 
       console.log('[Plugin] Plugin WebContentsView 已创建并缓存')
@@ -777,6 +792,8 @@ export class PluginManager {
       })
     } catch (error) {
       console.error('[Plugin] 加载插件配置失败:', error)
+      // 装配失败时立即释放失焦抑制，避免窗口无法按失焦隐藏
+      windowManager.endPluginAssemblyBlurHideSuppression()
       this.assemblyCoordinator.trace('create-new-view-error', {
         assemblyId: assembly?.id,
         pluginPath,
@@ -966,6 +983,22 @@ export class PluginManager {
   // 获取当前加载的插件视图
   public getCurrentPluginView(): WebContentsView | null {
     return this.pluginView
+  }
+
+  /**
+   * 将当前插件视图宽度同步为缩放后的宽度，设置页同步缩放。
+   * @param width 目标宽度（像素）
+   * @returns 无返回值
+   */
+  public applySearchBoxScaleToCurrentView(width: number): void {
+    const view = this.pluginView
+    if (!view) return
+    const bounds = view.getBounds()
+    view.setBounds({ ...bounds, width })
+    const cached = this.pluginViews.find((v) => v.view === view)
+    if (cached?.name === 'setting') {
+      view.webContents.setZoomFactor(getSearchBoxScaleFactor())
+    }
   }
 
   /**
@@ -1519,7 +1552,7 @@ export class PluginManager {
     const totalHeight = height + mainContentHeight
 
     // 使用固定宽度常量，避免多显示器 DPI 缩放导致 getSize() 返回被缩放的值
-    const width = WINDOW_WIDTH
+    const width = getWindowWidth()
 
     // 通过 api.resizeWindow 调整主窗口大小
     api.resizeWindow(totalHeight)

@@ -1136,6 +1136,15 @@ export class InternalPluginAPI {
       return { success: true }
     })
 
+    // 更新搜索框大小并即时应用窗口宽度与设置页缩放
+    ipcMain.handle('internal:update-search-box-scale', async (event, scale: number) => {
+      if (!requireInternalPlugin(this.pluginManager, event)) {
+        throw new PermissionDeniedError('internal:update-search-box-scale')
+      }
+      windowManager.applySearchBoxScale(scale)
+      return { success: true }
+    })
+
     // 通知主渲染进程更新固定栏行数
     ipcMain.handle('internal:update-pinned-rows', async (event, rows: number) => {
       if (!requireInternalPlugin(this.pluginManager, event)) {

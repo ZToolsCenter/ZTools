@@ -411,6 +411,7 @@ declare global {
         updateMatchRecommendation: (showMatchRecommendation: boolean) => Promise<void>
         updateLocalAppSearch: (enabled: boolean) => Promise<void>
         updateRecentRows: (rows: number) => Promise<void>
+        updateSearchBoxScale: (scale: number) => Promise<void>
         updatePinnedRows: (rows: number) => Promise<void>
         updateClipboardConfig: (config: { retentionDays: number }) => Promise<void>
         updateSearchMode: (searchMode: 'aggregate' | 'list') => Promise<void>
