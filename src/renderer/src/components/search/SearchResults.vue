@@ -360,21 +360,11 @@ function scrollToSelectedItem(): void {
   }
 
   nextTick(() => {
-    let selectedElement: HTMLElement | null = null
-
-    // 列表模式：查找 .list-item.selected
-    if (searchMode.value === 'list') {
-      const listItems = container.querySelectorAll('.list-item.selected')
-      if (listItems && listItems.length > 0) {
-        selectedElement = listItems[0] as HTMLElement
-      }
-    } else {
-      // 聚合模式：查找 .app-item.selected
-      const appItems = container.querySelectorAll('.app-item.selected')
-      if (appItems && appItems.length > 0) {
-        selectedElement = appItems[0] as HTMLElement
-      }
-    }
+    // 选中项可能是网格卡片（.app-item）、mainPush 推送行或垂直列表行（.list-item），
+    // 聚合模式下三种都会出现，统一匹配,否则选中移入未覆盖的区块时不会跟随滚动。
+    const selectedElement = container.querySelector(
+      '.app-item.selected, .list-item.selected'
+    ) as HTMLElement | null
 
     if (!selectedElement) {
       return
