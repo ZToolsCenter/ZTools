@@ -137,8 +137,8 @@
       </button>
     </div>
 
-    <!-- Windows 窗口控制按钮 -->
-    <div v-if="platform === 'win32'" class="window-controls">
+    <!-- Windows / Linux 窗口控制按钮：frameless 窗口依赖 HTML 自绘控件 -->
+    <div v-if="platform === 'win32' || platform === 'linux'" class="window-controls">
       <button class="window-btn minimize-btn" @click="minimize">
         <svg width="10" height="10" viewBox="0 0 10 10">
           <path d="M 0 5 L 10 5" stroke="currentColor" stroke-width="1" />
@@ -178,7 +178,7 @@ import AdaptiveIcon from '../common/AdaptiveIcon.vue'
 import { CommonKeyboardModifier, readModifiers } from '@renderer/utils/convertKeyboardEvent'
 import type { AiRequestStatus, AiRequestStatusChange } from '@shared/aiRequestStatus'
 
-const platform = ref<'darwin' | 'win32'>('darwin')
+const platform = ref<'darwin' | 'win32' | 'linux'>('darwin')
 const pluginName = ref('Plugin')
 const pluginId = ref('') // 插件的实际 name（用于数据库操作，与未分离状态保持一致）
 const pluginPath = ref('')
