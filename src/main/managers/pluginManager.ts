@@ -6,7 +6,7 @@ import hideWindowHtml from '../../../resources/hideWindow.html?asset'
 
 import mainPreload from '../../../resources/preload.js?asset'
 import api from '../api'
-import { WINDOW_DEFAULT_HEIGHT, getSearchBoxScaleFactor, getWindowWidth } from '../common/constants'
+import { WINDOW_DEFAULT_HEIGHT, WINDOW_WIDTH, getWindowWidth } from '../common/constants'
 import { STANDARD_MAIN_WINDOW_HEADER_HEIGHT } from '../../shared/mainWindowLayout'
 import detachedWindowManager, {
   DETACHED_TITLEBAR_HEIGHT,
@@ -622,9 +622,7 @@ export class PluginManager {
     view.webContents.focus()
 
     // 复用设置页缓存视图时重新应用缩放，避免沿用旧比例
-    if (cached.name === 'setting') {
-      view.webContents.setZoomFactor(getSearchBoxScaleFactor())
-    }
+    this.applySettingPageZoom(view)
 
     // 恢复之前的高度或使用默认高度
     const isConfigHeadless = !pluginInfoFromDB?.main
@@ -712,8 +710,8 @@ export class PluginManager {
 
       this.mainWindow.contentView.addChildView(this.pluginView)
 
-      // 设置初始布局（使用固定宽度常量，避免多显示器 DPI 缩放导致尺寸漂移）
-      const windowWidth = getWindowWidth()
+      // 设置初始布局（以窗口实际宽度为准，避免多显示器 DPI 缩放导致尺寸漂移）
+      const windowWidth = this.getActualWindowWidth()
       // 设置初始高度为 1px，避免节流
       this.pluginView.setBounds({ x: 0, y: mainContentHeight, width: windowWidth, height: 1 })
 
@@ -762,10 +760,8 @@ export class PluginManager {
           this.assemblyCoordinator.markSessionStatus(assembly, 'domReady')
         }
 
-        // 设置页按搜索框缩放比例等比缩放，保证 UI 与文字同步放大
-        if (effectiveName === 'setting') {
-          view.webContents.setZoomFactor(getSearchBoxScaleFactor())
-        }
+        // 设置页按主窗口实际宽度等比缩放，保证 UI 与文字同步放大
+        this.applySettingPageZoom(view)
 
         // 页面完成 DOM 初始化后注入宿主统一样式和当前主题色。
         void view.webContents.insertCSS(GLOBAL_SCROLLBAR_CSS)
@@ -986,19 +982,57 @@ export class PluginManager {
   }
 
   /**
-   * 将当前插件视图宽度同步为缩放后的宽度，设置页同步缩放。
-   * @param width 目标宽度（像素）
+   * 读取主窗口的实际内容宽度。
+   * 搜索框宽度是按屏幕占比算出的期望值，实际窗口可能被系统工作区裁剪（靠近屏幕边缘时）
+   * 或受显示器 DPI 影响而与之不一致，因此视图布局一律以窗口实际宽度为准。
+   * @returns 主窗口实际内容宽度，单位为像素；读取失败时回退到期望值
+   */
+  private getActualWindowWidth(): number {
+    const width = this.mainWindow?.getContentBounds().width
+    return width && width > 0 ? width : getWindowWidth()
+  }
+
+  /**
+   * 按给定宽度同步设置页缩放。
+   * 设置页以 800px 为设计宽度，缩放系数取「宽度 / 800」后正好铺满视图；
+   * 系数与视图 bounds 使用同一次宽度读数，避免两者不一致导致设置页宽窄反相。
+   * @param view 插件视图
+   * @param width 视图宽度（缺省时读取主窗口实际宽度）
    * @returns 无返回值
    */
-  public applySearchBoxScaleToCurrentView(width: number): void {
-    const view = this.pluginView
-    if (!view) return
-    const bounds = view.getBounds()
-    view.setBounds({ ...bounds, width })
+  private applySettingPageZoom(view: WebContentsView, width?: number): void {
     const cached = this.pluginViews.find((v) => v.view === view)
-    if (cached?.name === 'setting') {
-      view.webContents.setZoomFactor(getSearchBoxScaleFactor())
+    if (cached?.name !== 'setting') return
+
+    const factor = (width ?? this.getActualWindowWidth()) / WINDOW_WIDTH
+    if (view.webContents.getZoomFactor() !== factor) {
+      view.webContents.setZoomFactor(factor)
     }
+  }
+
+  /**
+   * 让当前插件视图宽度（以及设置页缩放）自动跟随主窗口实际宽度。
+   * @returns 无返回值
+   */
+  public syncCurrentPluginViewWidth(): void {
+    const view = this.pluginView
+    if (!this.mainWindow || !view) return
+
+    const width = this.getActualWindowWidth()
+    if (width !== getWindowWidth()) {
+      console.log(
+        '[Plugin] 窗口实际宽度与期望宽度不一致，已按实际宽度同步视图:',
+        width,
+        '期望:',
+        getWindowWidth()
+      )
+    }
+    const bounds = view.getBounds()
+    if (bounds.width !== width) {
+      view.setBounds({ ...bounds, width })
+    }
+
+    this.applySettingPageZoom(view, width)
   }
 
   /**
@@ -1551,11 +1585,11 @@ export class PluginManager {
     // 计算总窗口高度
     const totalHeight = height + mainContentHeight
 
-    // 使用固定宽度常量，避免多显示器 DPI 缩放导致 getSize() 返回被缩放的值
-    const width = getWindowWidth()
-
     // 通过 api.resizeWindow 调整主窗口大小
     api.resizeWindow(totalHeight)
+
+    // 以调整后的窗口实际宽度同步视图，避免期望宽度与系统裁剪后的实际宽度不一致
+    const width = this.getActualWindowWidth()
 
     // 调整插件视图大小
     this.pluginView.setBounds({

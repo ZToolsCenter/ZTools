@@ -174,21 +174,54 @@ class WindowManager {
   }
 
   /**
-   * 应用搜索框缩放：同步窗口宽度，并按比例缩放设置页。
-   * @param scale 缩放百分比（80-160）
+   * 应用搜索框缩放：按「占屏幕宽度百分比」更新主窗口宽度，并同步设置页缩放。
+   *
+   * 窗口宽度只在此处随设置变化；其它流程（打开插件、调整高度）一律保持当前宽度，
+   * 避免主窗口与设置界面宽度不一致。
+   * @param scale 缩放百分比（占窗口所在显示器宽度的 20-80%）
    * @returns 无返回值
    */
   public applySearchBoxScale(scale: number): void {
-    const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
+    // 以窗口实际所在显示器为基准，保证「N%」始终等于窗口所在屏幕的 N%
+    const display = this.getMainWindowDisplay()
     setSearchBoxBaseWidth(display.size.width)
     setSearchBoxScaleValue(scale, true)
     setResolvedSearchBoxScale(scale)
     if (!this.mainWindow) return
     const width = getWindowWidth()
-    const [, currentHeight] = this.mainWindow.getSize()
-    api.resizeWindow(currentHeight)
-    pluginManager.applySearchBoxScaleToCurrentView(width)
+    api.setWindowWidth(width)
+    // 以窗口实际宽度同步插件视图与设置页缩放
+    pluginManager.syncCurrentPluginViewWidth()
     console.log('[Window] 已应用搜索框缩放:', getSearchBoxScale(), '宽度:', width)
+  }
+
+  /**
+   * 依目标显示器宽度重新解析搜索框宽度基准，使窗口宽度等于该屏的 N%。
+   *
+   * 仅在宽度确实变化时写入，避免无谓的尺寸抖动与插件视图重建。
+   *
+   * @param displayId 目标显示器 ID（仅用于日志）。
+   * @param displayWidth 目标显示器宽度（DIP）。
+   * @returns 无返回值。
+   */
+  private applySearchBoxScaleForDisplay(displayId: number, displayWidth: number): void {
+    setSearchBoxBaseWidth(displayWidth)
+    setResolvedSearchBoxScale(resolveSearchBoxScale(displayWidth))
+    if (!this.mainWindow || this.mainWindow.isDestroyed()) return
+
+    const width = getWindowWidth()
+    if (this.mainWindow.getBounds().width === width) return
+
+    api.setWindowWidth(width)
+    pluginManager.syncCurrentPluginViewWidth()
+    console.log(
+      '[Window] 已按窗口所在屏校准宽度:',
+      getSearchBoxScale(),
+      '宽度:',
+      width,
+      '显示器:',
+      displayId
+    )
   }
 
   private isLeftMouseButton(button: unknown): boolean {
@@ -380,6 +413,22 @@ class WindowManager {
   }
 
   /**
+   * 获取主窗口实际所在的显示器；窗口尚未创建时回退到鼠标所在显示器。
+   *
+   * 窗口宽度的百分比语义应始终相对「窗口所在屏幕」，否则在
+   * windowPositionStrategy 为 lastActive 等多屏策略下，宽度基准屏与
+   * 窗口实际所在屏不一致，会导致占比看起来偏大/偏小。
+   *
+   * @returns 主窗口所在显示器（无窗口时为鼠标所在显示器）。
+   */
+  private getMainWindowDisplay(): Electron.Display {
+    if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+      return screen.getDisplayMatching(this.mainWindow.getBounds())
+    }
+    return screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
+  }
+
+  /**
    * 创建主窗口
    *
    * @returns 创建完成的主窗口实例。
@@ -388,15 +437,28 @@ class WindowManager {
     // 智能检测：在鼠标所在的显示器上打开窗口
     const { width, height, x: displayX, y: displayY } = this.getDisplayAtCursor()
 
-    // 以鼠标所在显示器的屏幕宽度为缩放基准，并解析当前缩放百分比
-    const scaleDisplay = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
-    setSearchBoxBaseWidth(scaleDisplay.size.width)
-    setResolvedSearchBoxScale(resolveSearchBoxScale(scaleDisplay.size.width))
-
     // 创建窗口前读取布局偏好，避免首次显示后再跳变高度。
     const settings = databaseAPI.dbGet('settings-general')
     this.setCompactMainWindowHeader(settings?.compactMainWindowHeader === true)
     const initialHeight = this.getMainWindowHeaderHeight()
+
+    // 以鼠标所在显示器的屏幕宽度为缩放基准，并解析当前缩放百分比。
+    // 先按持久化的缩放值恢复（单位已是「占屏幕宽度」时直接使用，否则按 800px 旧值迁移），
+    // 确保首帧创建窗口即使用与设置一致的宽度，避免启动初期宽度偏大。
+    const scaleDisplay = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
+    setSearchBoxBaseWidth(scaleDisplay.size.width)
+    if (settings?.searchBoxScale !== undefined) {
+      setSearchBoxScaleValue(settings.searchBoxScale, settings.searchBoxScaleUnit === 'screen')
+    }
+    setResolvedSearchBoxScale(resolveSearchBoxScale(scaleDisplay.size.width))
+    console.log(
+      '[Window] 创建主窗口: 缩放',
+      getSearchBoxScale(),
+      '宽度',
+      getWindowWidth(),
+      '基准显示器宽度',
+      scaleDisplay.size.width
+    )
 
     // 根据平台设置不同的窗口配置
     const windowConfig: Electron.BrowserWindowConstructorOptions = {
@@ -592,9 +654,17 @@ class WindowManager {
       this.startMouseStateTracking()
     }
 
+    // 窗口宽度变化（缩放设置、DPI 切换、跨屏移动、系统裁剪等）后，让插件视图与设置页自动跟随实际宽度
+    this.mainWindow.on('resize', () => {
+      pluginManager.syncCurrentPluginViewWidth()
+    })
+
     this.mainWindow.on('show', () => {
       // Space 迁移中的透明显示只用于登记窗口归属，避免提前聚焦搜索框或插件。
       if (this.isPreparingMacSpace) return
+
+      // 隐藏期间窗口尺寸可能被系统改动（分辨率/DPI/工作区变化），呼出后让插件视图跟随实际宽度
+      pluginManager.syncCurrentPluginViewWidth()
 
       // 开始恢复焦点流程，防止 focus 事件监听器修改 lastFocusTarget
       this.isRestoringFocus = true
@@ -1168,6 +1238,8 @@ class WindowManager {
         const { width, height, x: displayX, y: displayY, id: displayId } = this.getDisplayAtCursor()
         const savedPosition = this.windowPositionsByDisplay[displayId]
         if (savedPosition) {
+          // 记忆位置属于该显示器，先按该屏宽度校准再定位
+          this.applySearchBoxScaleForDisplay(displayId, width)
           this.applyMainWindowPosition(savedPosition.x, savedPosition.y)
           return
         }
@@ -1175,6 +1247,10 @@ class WindowManager {
         break
       }
     }
+
+    // 以窗口最终落地显示器为宽度基准，再据此居中，
+    // 避免宽度按 A 屏计算、窗口却落在 B 屏，导致占比与设置不符（如 30% 看起来更宽）。
+    this.applySearchBoxScaleForDisplay(target.id, target.width)
 
     const x = target.x + Math.floor((target.width - getWindowWidth()) / 2)
     const y = target.y + Math.floor((target.height - WINDOW_DEFAULT_HEIGHT) / 2)
@@ -1743,9 +1819,6 @@ class WindowManager {
         console.error('[Window] 启动设置插件失败:', result.error)
         return
       }
-
-      // 应用搜索框缩放：按当前设置同步窗口宽度与设置页缩放
-      this.applySearchBoxScale(getSearchBoxScale())
 
       // 智能定位：将窗口移动到鼠标所在的显示器（同步，从内存读取）
       this.moveWindowToCursor()

@@ -307,6 +307,13 @@ class APIManager {
   }
 
   /**
+   * 仅调整窗口宽度（供「搜索框大小」设置使用）
+   */
+  public setWindowWidth(width: number): void {
+    windowAPI.setWindowWidth(width)
+  }
+
+  /**
    * 归一化快捷键目标字符串，兼容历史上带空格的“插件 / 指令”格式。
    */
   private parseShortcutTarget(target: string): string[] {

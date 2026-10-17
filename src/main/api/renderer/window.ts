@@ -1,5 +1,4 @@
 import { ipcMain, screen } from 'electron'
-import { getWindowWidth } from '../../common/constants.js'
 import windowManager from '../../managers/windowManager.js'
 
 // 窗口材质类型
@@ -33,15 +32,15 @@ export class WindowAPI {
       if (!this.mainWindow) return
 
       if (lock) {
-        // 锁定：记录当前尺寸（宽度使用固定常量，避免多显示器 DPI 缩放导致尺寸漂移）
-        const [, height] = this.mainWindow.getSize()
-        this.lockedSize = { width: getWindowWidth(), height }
+        // 锁定：记录当前实际尺寸，避免多显示器 DPI 缩放导致尺寸漂移
+        const { width, height } = this.mainWindow.getContentBounds()
+        this.lockedSize = { width, height }
       } else {
         // 解锁：验证并恢复尺寸（用 setBounds 保留位置，避免 Windows 下 x 轴偏移）
         if (this.lockedSize) {
           const [currentX, currentY] = this.mainWindow.getPosition()
-          const [, height] = this.mainWindow.getSize()
-          if (getWindowWidth() !== this.lockedSize.width || height !== this.lockedSize.height) {
+          const { width, height } = this.mainWindow.getContentBounds()
+          if (width !== this.lockedSize.width || height !== this.lockedSize.height) {
             this.mainWindow.setBounds({
               x: currentX,
               y: currentY,
@@ -88,30 +87,51 @@ export class WindowAPI {
   }
 
   /**
-   * 调整主窗口高度，并按当前顶部栏密度和屏幕工作区约束结果。
+   * 调整主窗口高度：只改高度、保持当前宽度，并按当前顶部栏密度和屏幕工作区约束结果。
+   *
+   * 宽度只由「搜索框大小」设置控制（见 windowManager.applySearchBoxScale），
+   * 打开插件、调整高度等流程一律保持当前宽度，避免宽度跳变导致主窗口与设置界面宽度不一致。
    * @param height 目标窗口高度，单位为像素。
    * @returns 无返回值。
    */
   public resizeWindow(height: number): void {
-    if (this.mainWindow) {
-      // 使用固定宽度常量，避免多显示器 DPI 缩放导致 getSize() 返回被缩放的值
-      const width = getWindowWidth()
-      // 限制高度范围：最小为当前顶部栏高度，最大不超过当前屏幕可用高度。
-      const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
-      const maxHeight = display.workAreaSize.height
-      const minHeight = windowManager.getMainWindowHeaderHeight()
-      const newHeight = Math.max(minHeight, Math.min(height, maxHeight))
+    if (!this.mainWindow) return
 
-      this.mainWindow.setBounds({
-        width,
-        height: newHeight
-      })
+    // 保持窗口当前实际宽度，避免多显示器 DPI 缩放与多屏基准切换导致宽度漂移
+    const { width } = this.mainWindow.getContentBounds()
+    // 限制高度范围：最小为当前顶部栏高度，最大不超过当前屏幕可用高度。
+    const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
+    const maxHeight = display.workAreaSize.height
+    const minHeight = windowManager.getMainWindowHeaderHeight()
+    const newHeight = Math.max(minHeight, Math.min(height, maxHeight))
 
-      // 如果当前处于锁定状态，更新锁定的尺寸
-      if (this.lockedSize) {
-        this.lockedSize = { width, height: newHeight }
-        console.log('[WindowAPI] 更新锁定尺寸:', this.lockedSize)
-      }
+    this.mainWindow.setBounds({
+      width,
+      height: newHeight
+    })
+
+    // 如果当前处于锁定状态，更新锁定的尺寸
+    if (this.lockedSize) {
+      this.lockedSize = { width, height: newHeight }
+      console.log('[WindowAPI] 更新锁定尺寸:', this.lockedSize)
+    }
+  }
+
+  /**
+   * 仅调整主窗口宽度（保持高度与位置不变），供「搜索框大小」设置使用。
+   * @param width 目标窗口宽度，单位为像素。
+   * @returns 无返回值。
+   */
+  public setWindowWidth(width: number): void {
+    if (!this.mainWindow) return
+
+    const targetWidth = Math.max(1, Math.round(width))
+    const { height } = this.mainWindow.getContentBounds()
+    this.mainWindow.setBounds({ width: targetWidth, height })
+
+    // 如果当前处于锁定状态，同步锁定的宽度
+    if (this.lockedSize) {
+      this.lockedSize = { width: targetWidth, height }
     }
   }
 
