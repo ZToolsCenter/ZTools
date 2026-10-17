@@ -11,6 +11,7 @@
   ${ifNot} ${isUpdated}
     DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${APP_ID}"
     DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run" "${APP_ID}"
+    Delete "$APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\ZTools-startup.vbs"
 
     # 清理由旧版 AppUserModelID 写入的开机启动项。
     DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "link.eiot.ztools"

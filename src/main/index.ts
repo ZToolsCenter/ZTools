@@ -1,5 +1,6 @@
 import { app, dialog, shell } from 'electron'
 import './core/appData/configureAppDataRoot'
+import { writeBootstrapLog } from './core/bootstrapLog'
 import {
   checkRuntimeCompatibility,
   EXPECTED_ELECTRON_VERSION,
@@ -20,12 +21,20 @@ if (process.platform === 'win32') {
   )
 }
 
+writeBootstrapLog(
+  `start pid=${process.pid} packaged=${String(app.isPackaged)} cwd=${process.cwd()} exec=${process.execPath} argv=${JSON.stringify(process.argv)}`
+)
+
 const gotTheLock = app.requestSingleInstanceLock()
+writeBootstrapLog(`single-instance lock=${String(gotTheLock)}`)
 const runtimeCompatibility = checkRuntimeCompatibility({
   platform: process.platform,
   isPackaged: app.isPackaged,
   runtimeElectronVersion: process.versions.electron
 })
+writeBootstrapLog(
+  `runtime blocked=${String(runtimeCompatibility.blocked)} reason=${runtimeCompatibility.reason || ''}`
+)
 
 async function showBlockingRuntimePrompt(): Promise<void> {
   try {
@@ -51,14 +60,19 @@ async function showBlockingRuntimePrompt(): Promise<void> {
 }
 
 if (!gotTheLock) {
+  writeBootstrapLog('exit: second-instance')
   app.exit(0)
 } else if (runtimeCompatibility.blocked) {
+  writeBootstrapLog(`exit: runtime-blocked ${runtimeCompatibility.reason || ''}`)
   console.error(
     `[Bootstrap] 阻止启动: ${runtimeCompatibility.reason}; target=${EXPECTED_ELECTRON_VERSION}`
   )
   void showBlockingRuntimePrompt()
 } else {
   void import('./appMain').catch((error) => {
+    writeBootstrapLog(
+      `exit: appMain-import-failed ${error instanceof Error ? error.stack || error.message : String(error)}`
+    )
     console.error('[Bootstrap] 加载主程序失败:', error)
     app.exit(1)
   })
