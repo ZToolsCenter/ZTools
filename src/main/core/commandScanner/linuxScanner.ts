@@ -113,12 +113,24 @@ function getIconSearchPaths(): string[] {
     '/usr/share/pixmaps',
     path.join(home, '.icons'),
     '/usr/local/share/icons',
-    '/usr/local/share/pixmaps'
+    '/usr/local/share/pixmaps',
+    // Flatpak 图标导出目录（与 .desktop 导出目录对应），目录不存在时 readdir 抛错被上层捕获
+    path.join(home, '.local/share/flatpak/exports/share/icons'),
+    '/var/lib/flatpak/exports/share/icons'
   ]
 }
 
 const ICON_EXTENSIONS = ['.png', '.svg', '.xpm']
-const ICON_PREFERRED_SIZES = ['256x256', '128x128', '64x64', '48x48', '32x32', 'scalable']
+// 512x512 靠前：Flatpak 常仅导出 512 尺寸的图标
+const ICON_PREFERRED_SIZES = [
+  '512x512',
+  '256x256',
+  '128x128',
+  '64x64',
+  '48x48',
+  '32x32',
+  'scalable'
+]
 
 /**
  * 在 XDG 图标主题中查找图标文件路径
@@ -144,7 +156,8 @@ async function findIconPath(iconName: string): Promise<string | null> {
     // 先检查各个主题目录下的常用尺寸
     try {
       const entries = await fs.readdir(searchPath, { withFileTypes: true })
-      const themes = entries.filter((e) => e.isDirectory()).map((e) => e.name)
+      // 兼容 symbol link 主题目录（部分发行版将 hicolor 链接到别处）
+      const themes = entries.filter((e) => e.isDirectory() || e.isSymbolicLink()).map((e) => e.name)
       for (const theme of ['hicolor', ...themes]) {
         for (const size of ICON_PREFERRED_SIZES) {
           for (const category of ['apps', 'applications']) {
@@ -232,12 +245,14 @@ function getLinuxDesktopPaths(): string[] {
 
 /**
  * 扫描单个目录下的所有 .desktop 文件
+ * 同时接受普通文件与符号链接：Flatpak 导出目录中的 .desktop 文件是符号链接，
+ * Dirent.isFile() 对 symlink 返回 false，仅用 isFile 会漏掉整个 Flatpak 应用集。
  */
 async function scanDesktopDir(dirPath: string): Promise<string[]> {
   try {
     const entries = await fs.readdir(dirPath, { withFileTypes: true })
     return entries
-      .filter((e) => e.isFile() && e.name.endsWith('.desktop'))
+      .filter((e) => (e.isFile() || e.isSymbolicLink()) && e.name.endsWith('.desktop'))
       .map((e) => path.join(dirPath, e.name))
   } catch {
     return []
