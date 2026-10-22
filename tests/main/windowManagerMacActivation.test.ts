@@ -39,6 +39,7 @@ const mocks = vi.hoisted(() => {
       },
       setVisibleOnAllWorkspaces: vi.fn(),
       setParentWindow: vi.fn(),
+      getParentWindow: vi.fn(() => null),
       getOpacity: vi.fn(() => 1),
       setOpacity: vi.fn(),
       setAlwaysOnTop: vi.fn(),
@@ -236,29 +237,26 @@ describe('windowManager macOS activation', () => {
     windowManager.createWindow()
     windowManager.showWindow()
 
-    expect(mocks.latestWindow.current.show).toHaveBeenCalled()
-    expect(mocks.latestWindow.current.setVisibleOnAllWorkspaces).toHaveBeenCalledWith(true, {
+    const mainWindow = windowManager.getMainWindow()!
+    expect((mainWindow as any).show).toHaveBeenCalled()
+    expect((mainWindow as any).setVisibleOnAllWorkspaces).toHaveBeenCalledWith(true, {
       visibleOnFullScreen: true,
       skipTransformProcessType: true
     })
-    expect(mocks.latestWindow.current.setVisibleOnAllWorkspaces).toHaveBeenCalledTimes(1)
-    expect(mocks.latestWindow.current.setAlwaysOnTop).toHaveBeenLastCalledWith(
-      true,
-      'modal-panel',
-      1
-    )
+    expect((mainWindow as any).setVisibleOnAllWorkspaces).toHaveBeenCalledTimes(1)
+    expect((mainWindow as any).setAlwaysOnTop).toHaveBeenLastCalledWith(true, 'modal-panel', 1)
     expect(mocks.appFocus).not.toHaveBeenCalled()
-    expect(mocks.latestWindow.current.focus).not.toHaveBeenCalled()
-
-    mocks.latestWindow.current.emit('blur')
-    expect(mocks.latestWindow.current.hide).not.toHaveBeenCalled()
+    expect((mainWindow as any).focus).not.toHaveBeenCalled()
+    ;(mainWindow as any).hide.mockClear()
+    ;(mainWindow as any).emit('blur')
+    expect((mainWindow as any).hide).not.toHaveBeenCalled()
 
     vi.advanceTimersByTime(201)
-    mocks.latestWindow.current.emit('blur')
-    expect(mocks.latestWindow.current.hide).toHaveBeenCalledTimes(1)
+    ;(mainWindow as any).emit('blur')
+    expect((mainWindow as any).hide).toHaveBeenCalledTimes(1)
   })
 
-  it('re-asserts Spaces behavior for the current fullscreen Space without activating the app', async () => {
+  it('migrates into a fullscreen Space without activating the app', async () => {
     const { default: windowManager } = await import('../../src/main/managers/windowManager')
     mocks.nativeGetActiveWindow.mockReturnValue({
       app: 'Keynote',
@@ -279,9 +277,9 @@ describe('windowManager macOS activation', () => {
       visibleOnFullScreen: true,
       skipTransformProcessType: true
     })
-    expect(mainWindow.setVisibleOnAllWorkspaces).toHaveBeenCalledTimes(2)
+    expect(mainWindow.setVisibleOnAllWorkspaces).toHaveBeenCalledTimes(1)
     expect(mainWindow.show).toHaveBeenCalled()
-    expect(mainWindow.focus).toHaveBeenCalled()
+    expect(mainWindow.focus).not.toHaveBeenCalled()
     // 只在透明迁移期间挂到锚点，正式显示前恢复为独立窗口。
     expect(mainWindow.setParentWindow).toHaveBeenCalledTimes(2)
     expect(mainWindow.setParentWindow.mock.calls[0][0]).not.toBe(mainWindow)
@@ -298,12 +296,12 @@ describe('windowManager macOS activation', () => {
       mainWindow.show.mock.invocationCallOrder[0]
     )
 
-    // 再次呼出：锚点已存在，应跟随主窗口同步到目标显示器（否则子窗口会被限制在旧显示器）
+    // 锚点只参与本次迁移；下次呼出仍按主窗口的目标显示器重新创建。
     const anchor = mainWindow.setParentWindow.mock.calls[0][0]
     anchor.setPosition.mockClear()
     mainWindow.setPosition.mockClear()
     windowManager.showWindow()
-    expect(anchor.setPosition).toHaveBeenCalledWith(-1728, 254, false)
+    expect(anchor.destroy).toHaveBeenCalledTimes(1)
     expect(mainWindow.setPosition).toHaveBeenCalled()
   })
 
@@ -312,33 +310,34 @@ describe('windowManager macOS activation', () => {
     windowManager.createWindow()
     const mainWindow = mocks.latestWindow.current
     windowManager.showWindow()
-    expect(mainWindow.setParentWindow).not.toHaveBeenCalled()
+    expect(mainWindow.setParentWindow).toHaveBeenLastCalledWith(null)
+    mainWindow.setParentWindow.mockClear()
 
     mocks.nativeGetActiveWindow.mockReturnValue({ pid: 4242, isFullscreen: true })
     windowManager.showWindow()
     expect(mainWindow.setParentWindow).toHaveBeenLastCalledWith(null)
     const firstAnchor = mainWindow.setParentWindow.mock.calls[0][0]
 
-    // 退出全屏后不再挂接锚点，普通桌面呼出继续通过独立窗口的 show()。
+    // 普通桌面同样登记 Space，正式显示时仍保持独立窗口。
     mocks.nativeGetActiveWindow.mockReturnValue({ pid: 4242, isFullscreen: false })
     mainWindow.setParentWindow.mockClear()
     mainWindow.showInactive.mockClear()
     mainWindow.show.mockClear()
     windowManager.showWindow()
-    expect(mainWindow.setParentWindow).not.toHaveBeenCalled()
-    expect(mainWindow.showInactive).not.toHaveBeenCalled()
+    expect(mainWindow.setParentWindow).toHaveBeenLastCalledWith(null)
+    expect(mainWindow.showInactive).toHaveBeenCalledTimes(1)
     expect(mainWindow.show).toHaveBeenCalledTimes(1)
     expect(firstAnchor.destroy).toHaveBeenCalledTimes(1)
 
-    // 普通桌面重复呼出不重复销毁；返回全屏时新建锚点并继续保持主窗口独立。
+    // 普通桌面和全屏都不会复用已销毁锚点。
     windowManager.showWindow()
     expect(firstAnchor.destroy).toHaveBeenCalledTimes(1)
     mocks.nativeGetActiveWindow.mockReturnValue({ pid: 4242, isFullscreen: true })
     windowManager.showWindow()
-    const nextAnchor = mainWindow.setParentWindow.mock.calls[0][0]
+    const nextAnchor = mainWindow.setParentWindow.mock.calls.at(-2)[0]
     expect(nextAnchor).not.toBe(firstAnchor)
     expect(mainWindow.setParentWindow).toHaveBeenLastCalledWith(null)
-    expect(nextAnchor.destroy).not.toHaveBeenCalled()
+    expect(nextAnchor.destroy).toHaveBeenCalledTimes(1)
   })
 
   it('restores opacity and parenting if fullscreen migration fails', async () => {
@@ -374,17 +373,14 @@ describe('windowManager macOS activation', () => {
     })
 
     windowManager.createWindow()
+    const mainWindow = mocks.latestWindow.current
     windowManager.showWindow()
 
     expect(mocks.appFocus).not.toHaveBeenCalled()
-    expect(mocks.latestWindow.current.focus).not.toHaveBeenCalled()
-    expect(mocks.latestWindow.current.setVisibleOnAllWorkspaces).toHaveBeenCalledTimes(1)
-    expect(mocks.latestWindow.current.setAlwaysOnTop).toHaveBeenLastCalledWith(
-      true,
-      'modal-panel',
-      1
-    )
-    expect(mocks.latestWindow.current.show).toHaveBeenCalled()
+    expect(mainWindow.focus).not.toHaveBeenCalled()
+    expect(mainWindow.setVisibleOnAllWorkspaces).toHaveBeenCalledTimes(1)
+    expect(mainWindow.setAlwaysOnTop).toHaveBeenLastCalledWith(true, 'modal-panel', 1)
+    expect(mainWindow.show).toHaveBeenCalled()
   })
 
   it('does not restore focus when a hidden main window receives a hide request', async () => {
@@ -401,6 +397,39 @@ describe('windowManager macOS activation', () => {
 
     expect(mocks.appHide).not.toHaveBeenCalled()
     expect(mocks.clipboardActivateApp).not.toHaveBeenCalled()
+  })
+
+  it('migrates to the current Space even when native fullscreen information is missing', async () => {
+    const { default: windowManager } = await import('../../src/main/managers/windowManager')
+    // AX 信息缺失时仍可能位于全屏 Space，不能将迁移绑定到 isFullscreen。
+    mocks.nativeGetActiveWindow.mockReturnValue({ app: 'Warp.app', pid: 4242 })
+    windowManager.createWindow()
+    const mainWindow = mocks.latestWindow.current
+
+    windowManager.showWindow()
+
+    expect(mainWindow.setParentWindow.mock.calls[0]?.[0]).toBeDefined()
+    expect(mainWindow.setParentWindow).toHaveBeenLastCalledWith(null)
+    expect(mainWindow.show).toHaveBeenCalledTimes(1)
+    expect(mocks.appFocus).not.toHaveBeenCalled()
+  })
+
+  it('uses a fresh anchor on each desktop summon and releases it after migration', async () => {
+    const { default: windowManager } = await import('../../src/main/managers/windowManager')
+    windowManager.createWindow()
+    const mainWindow = mocks.latestWindow.current
+
+    windowManager.showWindow()
+    const firstAnchor = mainWindow.setParentWindow.mock.calls[0]?.[0]
+    expect(firstAnchor).toBeDefined()
+    expect(firstAnchor.destroy).toHaveBeenCalledTimes(1)
+
+    // 已销毁的全屏 Space 不能通过复用旧锚点重新带回主窗口。
+    windowManager.showWindow()
+    const nextAnchor = mainWindow.setParentWindow.mock.calls[2]?.[0]
+    expect(nextAnchor).toBeDefined()
+    expect(nextAnchor).not.toBe(firstAnchor)
+    expect(nextAnchor.destroy).toHaveBeenCalledTimes(1)
   })
 
   it('captures the current active window and clears stale state when capture fails', async () => {
