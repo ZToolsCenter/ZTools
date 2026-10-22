@@ -5,6 +5,8 @@ import proxyManager from '../managers/proxyManager'
 import { GLOBAL_SCROLLBAR_CSS } from './globalStyles'
 import { buildPluginThemeCSS, getCurrentPluginThemeState } from './pluginTheme'
 import { resolvePluginWindowUrl } from '../utils/pluginUrl'
+import { ensurePluginSessionPreload } from './pluginSessionPreload'
+import { registerPluginWindowReadyCallback } from './pluginWindowReadyCallback'
 
 /**
  * 插件可用的 BrowserWindow / WebContents 方法白名单
@@ -205,8 +207,15 @@ class PluginWindowManager {
   private windowInfoMap: Map<number, PluginWindowInfo> = new Map()
 
   /**
-   * 创建插件独立窗口
-   * @returns win.id（数字）
+   * 创建共享插件会话的独立窗口，并登记所有权和加载生命周期。
+   * @param pluginPath 插件实体路径。
+   * @param pluginName 插件名称。
+   * @param sessionPartition 共享 Session 的分区名称。
+   * @param url 窗口的本地地址。
+   * @param options 插件提供的窗口配置。
+   * @param senderWebContents 创建窗口的父插件实例。
+   * @returns 已创建并登记的 BrowserWindow。
+   * @throws Electron 创建窗口或解析本地地址失败时抛出原始错误。
    */
   public createWindow(
     pluginPath: string,
@@ -224,10 +233,8 @@ class PluginWindowManager {
 
     // 使用插件名称创建 session，确保和插件主视图共享同一个 session
     const sess = session.fromPartition(sessionPartition)
-    sess.registerPreloadScript({
-      type: 'frame',
-      filePath: mainPreload
-    })
+    // 子窗口沿用主插件已注册的 preload，避免打开次数越多注入次数越多。
+    ensurePluginSessionPreload(sess, mainPreload)
 
     // 应用代理配置到插件 session
     proxyManager
@@ -265,7 +272,7 @@ class PluginWindowManager {
     const loadUrl = resolvePluginWindowUrl(pluginPath, url)
     win.loadURL(loadUrl)
 
-    // 子窗口 dom-ready 时触发父窗口 callback（与 utools 一致）
+    // 每个文档 DOM 就绪时更新样式，创建回调单独等待完整加载，避免初始重载崩溃。
     win.webContents.on('dom-ready', () => {
       if (senderWebContents.isDestroyed()) return
 
@@ -275,15 +282,24 @@ class PluginWindowManager {
       win.webContents.insertCSS(
         'body { font-family: system-ui, "PingFang SC", "Helvetica Neue", "Microsoft Yahei", sans-serif; }'
       )
+    })
 
-      // 在父窗口触发 callback（与 utools executeJavaScript 方式一致）
-      senderWebContents.executeJavaScript(
-        `if (window.ztools && window.ztools.__event__ && typeof window.ztools.__event__.createBrowserWindowCallback === 'function') {
+    registerPluginWindowReadyCallback(win.webContents, () => {
+      if (senderWebContents.isDestroyed()) return
+      // 保持父窗口回调协议，让插件原有的 reload/show 行为在初始化收尾后继续执行。
+      void senderWebContents
+        .executeJavaScript(
+          `if (window.ztools && window.ztools.__event__ && typeof window.ztools.__event__.createBrowserWindowCallback === 'function') {
           try { window.ztools.__event__.createBrowserWindowCallback() } catch(e) {}
           delete window.ztools.__event__.createBrowserWindowCallback
         }`
+        )
+        .catch((error) =>
+          console.warn(`[pluginWindow:callback] winId=${win.id} callback failed:`, error)
+        )
+      console.debug(
+        `[pluginWindow:callback] initialized → trigger parent callback, winId=${win.id}`
       )
-      console.debug(`[pluginWindow:callback] dom-ready → trigger parent callback, winId=${win.id}`)
     })
 
     win.webContents.on('render-process-gone', (_event, details) => {
