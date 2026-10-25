@@ -95,6 +95,22 @@ function formatDate(dateStr?: string): string {
     return dateStr
   }
 }
+
+/**
+ * 在系统浏览器打开 README 中的网页链接，禁止链接接管设置页。
+ * @param event Markdown 区域点击事件。
+ */
+function openReadmeLink(event: MouseEvent): void {
+  const anchor = (event.target as Element).closest('a')
+  if (!anchor) return
+
+  // README 直接渲染在设置插件文档中，任何默认导航都会替换整个设置页。
+  event.preventDefault()
+  const href = (anchor.getAttribute('href') || '').trim()
+  if (/^(https?:|mailto:)/i.test(href)) {
+    window.ztools.shellOpenExternal(href)
+  }
+}
 </script>
 
 <template>
@@ -122,7 +138,12 @@ function formatDate(dateStr?: string): string {
           <span>{{ readmeError }}</span>
         </div>
         <!-- eslint-disable-next-line vue/no-v-html -->
-        <div v-else-if="readmeContent" class="markdown-content" v-html="renderedMarkdown"></div>
+        <div
+          v-else-if="readmeContent"
+          class="markdown-content"
+          v-html="renderedMarkdown"
+          @click="openReadmeLink"
+        ></div>
         <div v-else class="empty-message">该插件暂无详情说明</div>
       </div>
 
