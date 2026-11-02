@@ -3,6 +3,8 @@ import type { WebContents } from 'electron'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPluginViewReadiness } from '../../src/main/core/pluginViewReadiness'
 
+const ERR_ABORTED = -3
+
 /**
  * 创建可发出加载事件并观察监听清理情况的 WebContents 替身。
  * @returns 具有销毁状态查询的事件发射器
@@ -88,6 +90,7 @@ describe('plugin view readiness', () => {
 
     contents.emit('did-fail-load', {}, -105, 'DNS failure', 'https://example.invalid', true)
     await expect(readiness.ready).resolves.toBe(false)
+    expect(readiness.isFailed).toBe(true)
     expect(contents.listenerCount('dom-ready')).toBe(1)
     expect(contents.listenerCount('did-fail-load')).toBe(1)
     expect(vi.getTimerCount()).toBe(0)
@@ -99,6 +102,7 @@ describe('plugin view readiness', () => {
     navigate(contents)
     contents.emit('dom-ready')
     await expect(readiness.ready).resolves.toBe(true)
+    expect(readiness.isFailed).toBe(false)
   })
 
   it('keeps the previous document usable when an intercepted navigation aborts', async () => {
@@ -113,7 +117,7 @@ describe('plugin view readiness', () => {
     contents.emit(
       'did-fail-load',
       {},
-      -3,
+      ERR_ABORTED,
       'ERR_ABORTED',
       'https://github.com/ZToolsCenter/ZTools',
       true
@@ -135,7 +139,7 @@ describe('plugin view readiness', () => {
     contents.emit(
       'did-fail-load',
       {},
-      -3,
+      ERR_ABORTED,
       'ERR_ABORTED',
       'https://github.com/ZToolsCenter/ZTools',
       true
@@ -159,7 +163,7 @@ describe('plugin view readiness', () => {
     contents.emit(
       'did-fail-load',
       {},
-      -3,
+      ERR_ABORTED,
       'ERR_ABORTED',
       'https://github.com/ZToolsCenter/ZTools',
       true
@@ -183,6 +187,26 @@ describe('plugin view readiness', () => {
     await expect(readiness.ready).resolves.toBe(true)
     expect(readiness.isReady).toBe(true)
     expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('replaces a timed-out promise when a cancelled navigation restores the document', async () => {
+    const contents = createContents()
+    const readiness = createPluginViewReadiness(contents, 100)
+    navigate(contents)
+    contents.emit('dom-ready')
+    await expect(readiness.ready).resolves.toBe(true)
+
+    navigate(contents)
+    const timedOutWait = readiness.ready
+    await vi.advanceTimersByTimeAsync(100)
+    await expect(timedOutWait).resolves.toBe(false)
+
+    // 取消导航后必须发布新的成功 Promise，不能只更新 isReady。
+    readiness.markNavigationCancelled()
+    const restoredWait = readiness.ready
+    expect(restoredWait).not.toBe(timedOutWait)
+    await expect(restoredWait).resolves.toBe(true)
+    expect(readiness.isReady).toBe(true)
   })
 
   it('returns false on timeout and reuses one set of listeners for a new load', async () => {
