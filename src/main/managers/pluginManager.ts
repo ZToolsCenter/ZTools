@@ -49,8 +49,14 @@ const PLUGIN_OUT_GRACE_MS = 200
 /**
  * 为插件视图注册外部链接拦截器
  * 同源 http/https 导航保留在插件内部，跨源链接使用系统默认浏览器打开，避免开发中插件热更新导致错误地在浏览器打开
+ * @param webContents 插件页面
+ * @param onNavigationCancelled 宿主取消跨源导航后的通知
+ * @returns 无返回值
  */
-export function registerExternalLinkInterceptor(webContents: WebContents): void {
+export function registerExternalLinkInterceptor(
+  webContents: WebContents,
+  onNavigationCancelled?: () => void
+): void {
   const isHttpUrl = (url: string): boolean =>
     url.startsWith('http://') || url.startsWith('https://')
 
@@ -73,6 +79,7 @@ export function registerExternalLinkInterceptor(webContents: WebContents): void 
         from: currentUrl,
         to: url
       })
+      onNavigationCancelled?.()
       shell.openExternal(url)
     }
   })
@@ -695,9 +702,14 @@ export class PluginManager {
    * （devtools、焦点、快捷键、进程崩溃等）
    * @param view 监听的插件实例
    * @param pluginPath 实例对应的插件路径
+   * @param loading 插件页面就绪状态
    * @returns 无返回值
    */
-  private registerMainWindowPluginEvents(view: WebContentsView, pluginPath: string): void {
+  private registerMainWindowPluginEvents(
+    view: WebContentsView,
+    pluginPath: string,
+    loading: PluginViewReadiness
+  ): void {
     view.webContents.on('devtools-opened', () => {
       const permission = this.getPluginDevToolsPermission(pluginPath)
       if (!permission.allowed && !view.webContents.isDestroyed()) {
@@ -776,7 +788,7 @@ export class PluginManager {
     })
 
     // 拦截外部链接跳转，使用系统默认浏览器打开
-    registerExternalLinkInterceptor(view.webContents)
+    registerExternalLinkInterceptor(view.webContents, () => loading.markNavigationCancelled())
   }
 
   // 发送消息到插件
@@ -1108,7 +1120,7 @@ export class PluginManager {
       const loading = createPluginViewReadiness(view.webContents)
 
       // 注册事件监听
-      this.registerMainWindowPluginEvents(view, pluginPath)
+      this.registerMainWindowPluginEvents(view, pluginPath, loading)
 
       // 缓存视图（但不添加到主窗口、不设为当前插件）
       const logoUrl = this.buildPluginLogoUrl(pluginPath, pluginConfig.logo)

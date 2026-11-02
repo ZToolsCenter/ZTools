@@ -101,6 +101,90 @@ describe('plugin view readiness', () => {
     await expect(readiness.ready).resolves.toBe(true)
   })
 
+  it('keeps the previous document usable when an intercepted navigation aborts', async () => {
+    const contents = createContents()
+    const readiness = createPluginViewReadiness(contents)
+    navigate(contents)
+    contents.emit('dom-ready')
+    await expect(readiness.ready).resolves.toBe(true)
+
+    // 外部链接被宿主拦截后，新导航会先开始，再由 Chromium 以 ERR_ABORTED 取消。
+    navigate(contents)
+    contents.emit(
+      'did-fail-load',
+      {},
+      -3,
+      'ERR_ABORTED',
+      'https://github.com/ZToolsCenter/ZTools',
+      true
+    )
+
+    await expect(readiness.ready).resolves.toBe(true)
+    expect(readiness.isReady).toBe(true)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('keeps a ready document usable when an aborted load reports without navigation start', async () => {
+    const contents = createContents()
+    const readiness = createPluginViewReadiness(contents)
+    navigate(contents)
+    contents.emit('dom-ready')
+    await expect(readiness.ready).resolves.toBe(true)
+
+    // Electron 可能只上报被取消的跨源加载，不再补发主框架导航开始事件。
+    contents.emit(
+      'did-fail-load',
+      {},
+      -3,
+      'ERR_ABORTED',
+      'https://github.com/ZToolsCenter/ZTools',
+      true
+    )
+
+    await expect(readiness.ready).resolves.toBe(true)
+    expect(readiness.isReady).toBe(true)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('preserves the ready document across multiple navigation starts before an abort', async () => {
+    const contents = createContents()
+    const readiness = createPluginViewReadiness(contents)
+    navigate(contents)
+    contents.emit('dom-ready')
+    await expect(readiness.ready).resolves.toBe(true)
+
+    // 一次链接点击可能触发多个主框架导航开始事件，旧文档备份不能被后续事件覆盖。
+    navigate(contents)
+    navigate(contents)
+    contents.emit(
+      'did-fail-load',
+      {},
+      -3,
+      'ERR_ABORTED',
+      'https://github.com/ZToolsCenter/ZTools',
+      true
+    )
+
+    await expect(readiness.ready).resolves.toBe(true)
+    expect(readiness.isReady).toBe(true)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('restores the ready document when the host cancels an intercepted navigation', async () => {
+    const contents = createContents()
+    const readiness = createPluginViewReadiness(contents)
+    navigate(contents)
+    contents.emit('dom-ready')
+    await expect(readiness.ready).resolves.toBe(true)
+
+    navigate(contents)
+    readiness.markNavigationCancelled()
+
+    await expect(readiness.ready).resolves.toBe(true)
+    expect(readiness.isReady).toBe(true)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
   it('returns false on timeout and reuses one set of listeners for a new load', async () => {
     const contents = createContents()
     const readiness = createPluginViewReadiness(contents, 100)
@@ -137,6 +221,24 @@ describe('plugin view readiness', () => {
     contents.emit('destroyed')
     expect(contents.eventNames()).toEqual([])
     expect(readiness.isReady).toBe(false)
+  })
+
+  it('rearms the wait when a caller reads readiness after a timeout', async () => {
+    const contents = createContents()
+    const readiness = createPluginViewReadiness(contents, 100)
+    navigate(contents)
+    const initial = readiness.ready
+    await vi.advanceTimersByTimeAsync(100)
+    await expect(initial).resolves.toBe(false)
+
+    // 前台重新打开插件时，新的读取应等待仍在加载的同一文档。
+    const lateReady = readiness.ready
+    expect(readiness.isReady).toBe(false)
+    contents.emit('dom-ready')
+
+    await expect(lateReady).resolves.toBe(true)
+    expect(readiness.isReady).toBe(true)
+    expect(vi.getTimerCount()).toBe(0)
   })
 
   it('returns false and removes every listener when a pending view is destroyed', async () => {
