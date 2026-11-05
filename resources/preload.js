@@ -677,9 +677,16 @@ window.ztools = {
   hideMainWindowTypeString: (text) => {
     return electron.ipcRenderer.sendSync('hide-main-window-type-string', text)
   },
-  // 创建独立窗口（白名单动态挂载模式，与 utools 一致）
+  /**
+   * 创建插件独立窗口并挂载受支持的方法，初始化完成后通知创建者。
+   * @param {string} url 窗口的本地页面地址。
+   * @param {object} options 窗口创建配置。
+   * @param {Function} callback 窗口初始化完成后执行的可选回调。
+   * @returns {object} 包含窗口 ID、窗口方法与 WebContents 方法的代理。
+   * @throws {Error} 主进程拒绝创建或窗口配置无效时抛出错误。
+   */
   createBrowserWindow: (url, options, callback) => {
-    // 注册 callback（子窗口 dom-ready 时由主进程在父窗口触发）
+    // 保存创建者回调；主进程等待独立窗口完整加载和初始化收尾后再执行。
     if (typeof callback === 'function') {
       window.ztools.__event__ = window.ztools.__event__ || {}
       window.ztools.__event__.createBrowserWindowCallback = callback
