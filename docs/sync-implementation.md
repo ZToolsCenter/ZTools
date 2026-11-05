@@ -378,13 +378,16 @@ syncEpoch: 当前服务端 sync_epoch
 
 ```ts
 ;[
-  'ZTOOLS/settings-general',
+  'ZTOOLS/user-settings',
   'ZTOOLS/ai-models',
   'ZTOOLS/web-search-engines',
   'ZTOOLS/avatar',
+  'ZTOOLS/synced-market-plugins',
   'PLUGIN/'
 ]
 ```
+
+`ZTOOLS/synced-market-plugins` 保存账号侧「市场已装插件」清单（仅 `name`/`version`，不含本机 path）。本机注册表 `ZTOOLS/plugins` 仍是设备数据、不进同步。客户端在 pull/live 后对账：清单中有而本机缺失的条目会静默调用市场安装；不对账卸载，也不强制升级已装同名插件。
 
 当前 `sync:get-unsynced-count`、`sync:get-conflict-count`、`sync:list-conflicts` 的统计实现只扫描：
 
@@ -392,7 +395,7 @@ syncEpoch: 当前服务端 sync_epoch
 ;['ZTOOLS/settings-general', 'PLUGIN/']
 ```
 
-因此 UI 上的待同步数量/冲突数量可能不包含 `ZTOOLS/ai-models`、`ZTOOLS/web-search-engines`、`ZTOOLS/avatar`。
+因此 UI 上的待同步数量/冲突数量可能不包含 `ZTOOLS/ai-models`、`ZTOOLS/web-search-engines`、`ZTOOLS/avatar`、`ZTOOLS/synced-market-plugins`。
 
 ### 3.3 本地写入和远端应用
 
