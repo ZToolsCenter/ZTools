@@ -111,12 +111,12 @@ function getSubtitle(app: Command): string {
   user-select: none;
 }
 
-.list-item:hover {
+.list-item:hover:not(.selected) {
   background: var(--hover-bg);
 }
 
 .list-item.selected {
-  background: var(--primary-light-bg);
+  background: color-mix(in srgb, var(--primary-color) 28%, var(--bg-color));
 }
 
 .item-icon {
