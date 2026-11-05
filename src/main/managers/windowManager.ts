@@ -766,7 +766,7 @@ class WindowManager {
     if (this.isDoubleTapShortcut(keyToRegister)) {
       const modifier = keyToRegister.split('+')[0]
       doubleTapManager.register(modifier, () => {
-        if (!dndManager.shouldIgnoreHotkeys()) this.toggleWindowFromDoubleTap()
+        if (!dndManager.shouldIgnoreHotkeys()) this.toggleWindowFromDoubleTap({ fromHotkey: true })
       })
       this.currentShortcut = keyToRegister
       this.isDoubleTapMode = true
@@ -776,7 +776,7 @@ class WindowManager {
 
     // 普通快捷键模式：通过 globalShortcut 注册
     const ret = globalShortcut.register(keyToRegister, () => {
-      if (!dndManager.shouldIgnoreHotkeys()) this.toggleWindow()
+      if (!dndManager.shouldIgnoreHotkeys()) this.toggleWindow({ fromHotkey: true })
     })
 
     if (!ret) {
@@ -785,11 +785,12 @@ class WindowManager {
       if (oldIsDoubleTapMode) {
         const oldModifier = oldShortcut.split('+')[0]
         doubleTapManager.register(oldModifier, () => {
-          if (!dndManager.shouldIgnoreHotkeys()) this.toggleWindowFromDoubleTap()
+          if (!dndManager.shouldIgnoreHotkeys())
+            this.toggleWindowFromDoubleTap({ fromHotkey: true })
         })
       } else {
         globalShortcut.register(oldShortcut, () => {
-          if (!dndManager.shouldIgnoreHotkeys()) this.toggleWindow()
+          if (!dndManager.shouldIgnoreHotkeys()) this.toggleWindow({ fromHotkey: true })
         })
       }
       return false
@@ -834,9 +835,12 @@ class WindowManager {
   }
 
   /**
-   * 切换窗口显示/隐藏
+   * 切换窗口显示/隐藏。
+   * @param options.fromHotkey 是否由全局呼出快捷键触发；为 true 时显示分支先退出上次停留的
+   *   插件页面（如设置）并定位到空白搜索框，而不是恢复该页面。
+   * @returns 无返回值。
    */
-  private toggleWindow(): void {
+  private toggleWindow(options: { fromHotkey?: boolean } = {}): void {
     if (!this.mainWindow) return
 
     const isFocused = this.mainWindow.isFocused()
@@ -861,6 +865,10 @@ class WindowManager {
       if (timeSinceBlurHide < 300) {
         return
       }
+      // 快捷键唤起总是定位到空白搜索框：先退出上次停留的插件页面再显示
+      if (options.fromHotkey) {
+        this.exitPluginForHotkeyShow()
+      }
       this.showWindow()
       if (platform.isWindows) {
         this.scheduleWindowsHotkeyRefocus()
@@ -868,7 +876,29 @@ class WindowManager {
     }
   }
 
-  private toggleWindowFromDoubleTap(): void {
+  /**
+   * 快捷键唤起前退出当前插件页面，让窗口显示时回到空白搜索框。
+   * 覆盖已挂载的插件视图与仍在加载中的插件；已处于搜索页时不做处理，
+   * 保留既有自动清空策略对搜索词的处理。
+   * @returns 无返回值。
+   */
+  private exitPluginForHotkeyShow(): void {
+    // 已在搜索页时无需重置，避免多余的 plugin-closed / back-to-search 事件
+    if (pluginManager.getCurrentPluginPath() === null) return
+
+    // 焦点目标切回主窗口，show 事件据此聚焦搜索框而非插件视图
+    this.updateFocusTarget('mainWindow')
+
+    // 退出插件视图并通知渲染进程返回搜索页（渲染层会清空搜索框并聚焦）
+    this.backToSearch()
+  }
+
+  /**
+   * 双击修饰键呼出快捷键的窗口切换入口。
+   * @param options.fromHotkey 是否由快捷键触发，透传给 toggleWindow。
+   * @returns 无返回值。
+   */
+  private toggleWindowFromDoubleTap(options: { fromHotkey?: boolean } = {}): void {
     if (!this.mainWindow) return
 
     const willShow = !(this.mainWindow.isFocused() && this.mainWindow.isVisible())
@@ -877,7 +907,7 @@ class WindowManager {
       this.suppressBlurHideTransiently(350)
     }
 
-    this.toggleWindow()
+    this.toggleWindow(options)
 
     if (willShow && platform.isWindows) {
       if (this.doubleTapFocusTimer) clearTimeout(this.doubleTapFocusTimer)
