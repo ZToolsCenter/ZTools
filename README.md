@@ -83,6 +83,10 @@ cd ZTools
 # Install dependencies
 pnpm install
 
+# Install dependencies of the built-in setting plugin (independent lockfile,
+# --ignore-workspace keeps pnpm from redirecting the install to the root project)
+pnpm install:setting
+
 # Development mode
 pnpm dev
 

@@ -253,7 +253,10 @@ export class AppsAPI {
               process.platform === 'win32' &&
               app.icon.startsWith('file:') &&
               app.icon.endsWith('.png')
-            )
+            ) &&
+            // Linux 扫描器生成 file:// 图标路径，属于有效格式；
+            // 否则缓存会被永久判定为旧格式，导致应用列表无限重扫、搜索始终为空
+            !(process.platform === 'linux' && app.icon.startsWith('file:'))
         )
         const hasStaleUwpIcons = process.platform === 'win32' && hasStaleUwpIconCache(cachedApps)
         let hasUwpPackageChanges = false
