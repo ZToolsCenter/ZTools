@@ -30,7 +30,12 @@ import { registerIconProtocolForSession } from '../core/iconProtocol'
 import lmdbInstance from '../core/lmdb/lmdbInstance'
 import databaseAPI from '../api/shared/database'
 import proxyManager from './proxyManager'
-import type { PluginEnterPayload, PluginMainWindowLaunchState } from '../../shared/pluginLaunch'
+import {
+  shouldForcePluginReEnterOnLaunch,
+  type PluginEnterPayload,
+  type PluginLaunchSource,
+  type PluginMainWindowLaunchState
+} from '../../shared/pluginLaunch'
 import { sendPluginLifecycle } from '../core/pluginLifecycle'
 import { createPluginViewReadiness, type PluginViewReadiness } from '../core/pluginViewReadiness'
 import devToolsShortcut, { getDevToolsMode } from '../utils/devToolsShortcut'
@@ -430,13 +435,17 @@ export class PluginManager {
    * @param pluginPath 插件路径
    * @param featureCode 功能代码
    * @param input 本次启动快照
+   * @param forceReEnter 是否忽略同文本单例复用规则
    * @returns 是否跳过重入
    */
   private shouldSkipReEnter(
     pluginPath: string,
     featureCode: string,
-    input?: PluginEnterPayload
+    input?: PluginEnterPayload,
+    forceReEnter = false
   ): boolean {
+    // 显式快捷键和超级面板启动是新的用户操作，必须让插件重新同步当前状态。
+    if (forceReEnter) return false
     const lastState = this.pluginLastEnterState.get(pluginPath)
     if (!lastState) return false
     const snapshot = input || api.getLaunchParam(pluginPath)
@@ -455,14 +464,17 @@ export class PluginManager {
    * @param pluginPath 目标插件路径
    * @param featureCode 本次功能代码
    * @param enterParam 本次进入参数
+   * @param launchSource 本次启动来源
    * @returns 本次启动行为及宿主应显示的搜索词
    */
   public getMainWindowLaunchState(
     pluginPath: string,
     featureCode: string,
-    enterParam?: PluginEnterPayload
+    enterParam?: PluginEnterPayload,
+    launchSource?: PluginLaunchSource
   ): PluginMainWindowLaunchState {
     const cached = this.pluginViews.find((plugin) => plugin.path === pluginPath)
+    const forceReEnter = shouldForcePluginReEnterOnLaunch(launchSource)
     // 隐藏后的再次启动需要进入回调；不能在 showWindow 后重新判断可见性。
     if (
       this.mainWindow?.isVisible() &&
@@ -470,7 +482,7 @@ export class PluginManager {
       cached?.view === this.pluginView &&
       cached?.loading.isReady &&
       !cached.view.webContents.isDestroyed() &&
-      this.shouldSkipReEnter(pluginPath, featureCode, enterParam)
+      this.shouldSkipReEnter(pluginPath, featureCode, enterParam, forceReEnter)
     ) {
       // 用插件缓存恢复搜索词，覆盖其它尚未提交的启动请求留下的顶部栏占位。
       return { mode: 'focus', subInputValue: cached.subInputValue ?? '' }
@@ -497,13 +509,15 @@ export class PluginManager {
    * @param featureCode 功能代码
    * @param source 启动入口
    * @param enterParam 本次进入快照
+   * @param forceReEnter 是否忽略同文本单例复用规则
    * @returns 是否已复用现有实例
    */
   public reuseDetachedSingletonIfExists(
     pluginPath: string,
     featureCode: string,
     source: 'main-window' | 'detached-window' | 'launch-precheck',
-    enterParam?: PluginEnterPayload
+    enterParam?: PluginEnterPayload,
+    forceReEnter = false
   ): boolean {
     const launchSnapshot = structuredClone(enterParam ?? api.getLaunchParam(pluginPath))
     if (this.isPluginMultiOpenAllowed(pluginPath)) {
@@ -522,7 +536,7 @@ export class PluginManager {
     })
     detachedWindowManager.focusByPlugin(pluginPath)
 
-    if (!this.shouldSkipReEnter(pluginPath, featureCode, launchSnapshot)) {
+    if (!this.shouldSkipReEnter(pluginPath, featureCode, launchSnapshot, forceReEnter)) {
       console.log('[Plugin] 分离窗口单例重入，触发 onPluginEnter:', {
         pluginPath,
         featureCode,
