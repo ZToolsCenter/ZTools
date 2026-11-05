@@ -694,6 +694,16 @@ test('插件申请高级 API 时立即弹出授权窗口并可部分批准', asy
       contentType: 'image/png'
     })
 
+    // 默认全选时应能直接批准，不应依赖后续 change 事件初始化按钮。
+    expect(
+      await popupContents.executeJavaScript(`
+        (() => {
+          const approve = document.querySelector('[data-testid="popup-approve"]')
+          return approve instanceof HTMLButtonElement && !approve.disabled
+        })()
+      `)
+    ).toBe(true)
+
     // 在弹窗中取消一项申请实现部分批准，然后批准。
     await popupContents.executeJavaScript(`
       (() => {

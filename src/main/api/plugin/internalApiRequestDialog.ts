@@ -412,6 +412,8 @@ class InternalApiRequestDialogManager {
             approveBtn.disabled = checked.length === 0
           }
           checkboxes().forEach((box) => box.addEventListener('change', refreshApproveState))
+          // 默认已勾选全部申请项，首次显示时也要同步按钮状态。
+          refreshApproveState()
 
           approveBtn.addEventListener('click', () => {
             const apis = checkboxes().filter((box) => box.checked).map((box) => box.value)
