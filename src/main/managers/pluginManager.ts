@@ -49,8 +49,14 @@ const PLUGIN_OUT_GRACE_MS = 200
 /**
  * 为插件视图注册外部链接拦截器
  * 同源 http/https 导航保留在插件内部，跨源链接使用系统默认浏览器打开，避免开发中插件热更新导致错误地在浏览器打开
+ * @param webContents 插件页面
+ * @param onNavigationCancelled 宿主取消跨源导航后的通知
+ * @returns 无返回值
  */
-export function registerExternalLinkInterceptor(webContents: WebContents): void {
+export function registerExternalLinkInterceptor(
+  webContents: WebContents,
+  onNavigationCancelled?: () => void
+): void {
   const isHttpUrl = (url: string): boolean =>
     url.startsWith('http://') || url.startsWith('https://')
 
@@ -73,6 +79,7 @@ export function registerExternalLinkInterceptor(webContents: WebContents): void 
         from: currentUrl,
         to: url
       })
+      onNavigationCancelled?.()
       shell.openExternal(url)
     }
   })
@@ -91,7 +98,7 @@ interface PluginViewInfo {
   path: string
   name: string
   view: WebContentsView
-  loading: PluginViewReadiness
+  readiness: PluginViewReadiness
   cmdName?: string
   height?: number
   subInputPlaceholder?: string
@@ -468,7 +475,7 @@ export class PluginManager {
       this.mainWindow?.isVisible() &&
       this.currentPluginPath === pluginPath &&
       cached?.view === this.pluginView &&
-      cached?.loading.isReady &&
+      cached?.readiness.isReady &&
       !cached.view.webContents.isDestroyed() &&
       this.shouldSkipReEnter(pluginPath, featureCode, enterParam)
     ) {
@@ -604,7 +611,7 @@ export class PluginManager {
       console.log('[Plugin] 准备启动:', { requestId: request.id, pluginPath, featureCode })
 
       // 已就绪的缓存直接恢复，避免先收起再展开；仍在加载的缓存也需要占位。
-      if (!this.pluginView && !cached?.loading.isReady) {
+      if (!this.pluginView && !cached?.readiness.isReady) {
         api.resizeWindow(windowManager.getMainWindowHeaderHeight() + 1)
       }
 
@@ -655,15 +662,25 @@ export class PluginManager {
   ): Promise<void> {
     const { view } = plugin
     let mode: string | undefined
+    let reloadAttempted = false
     while (this.activeLaunch === request) {
-      const documentReady = plugin.loading.ready
+      const documentReady = plugin.readiness.ready
       const ready = await documentReady
       if (this.activeLaunch !== request) return
       // 页面可能重定向或重载；继续等待新文档，不提交旧页面的准备结果。
-      if (documentReady !== plugin.loading.ready) continue
-      if (!ready || view.webContents.isDestroyed()) throw new Error('插件页面未能加载完成')
+      if (documentReady !== plugin.readiness.ready) continue
+      if (!ready) {
+        // 真实失败只重载一次；超时仍继续等待，不能重启仍在加载的大插件。
+        if (plugin.readiness.isFailed && !reloadAttempted && !view.webContents.isDestroyed()) {
+          reloadAttempted = true
+          view.webContents.reload()
+          continue
+        }
+        throw new Error('插件页面未能加载完成')
+      }
+      if (view.webContents.isDestroyed()) throw new Error('插件页面未能加载完成')
       mode = await this.getPluginMode(view.webContents, request.featureCode)
-      if (documentReady !== plugin.loading.ready) continue
+      if (documentReady !== plugin.readiness.ready) continue
       break
     }
 
@@ -695,9 +712,14 @@ export class PluginManager {
    * （devtools、焦点、快捷键、进程崩溃等）
    * @param view 监听的插件实例
    * @param pluginPath 实例对应的插件路径
+   * @param readiness 插件页面就绪状态
    * @returns 无返回值
    */
-  private registerMainWindowPluginEvents(view: WebContentsView, pluginPath: string): void {
+  private registerMainWindowPluginEvents(
+    view: WebContentsView,
+    pluginPath: string,
+    readiness: PluginViewReadiness
+  ): void {
     view.webContents.on('devtools-opened', () => {
       const permission = this.getPluginDevToolsPermission(pluginPath)
       if (!permission.allowed && !view.webContents.isDestroyed()) {
@@ -776,7 +798,7 @@ export class PluginManager {
     })
 
     // 拦截外部链接跳转，使用系统默认浏览器打开
-    registerExternalLinkInterceptor(view.webContents)
+    registerExternalLinkInterceptor(view.webContents, () => readiness.markNavigationCancelled())
   }
 
   // 发送消息到插件
@@ -1105,10 +1127,10 @@ export class PluginManager {
       // 创建期间的终止请求必须生效，不能在 await 后重新生成已被终止的实例。
       if (!canCreate() || !this.mainWindow || this.mainWindow.isDestroyed()) return
       const view = this.createPluginWebContentsView(sess, preloadPath)
-      const loading = createPluginViewReadiness(view.webContents)
+      const readiness = createPluginViewReadiness(view.webContents)
 
       // 注册事件监听
-      this.registerMainWindowPluginEvents(view, pluginPath)
+      this.registerMainWindowPluginEvents(view, pluginPath, readiness)
 
       // 缓存视图（但不添加到主窗口、不设为当前插件）
       const logoUrl = this.buildPluginLogoUrl(pluginPath, pluginConfig.logo)
@@ -1116,7 +1138,7 @@ export class PluginManager {
         path: pluginPath,
         name: effectiveName,
         view,
-        loading,
+        readiness,
         subInputPlaceholder: '搜索',
         subInputVisible: false,
         logo: logoUrl,
@@ -1756,10 +1778,10 @@ export class PluginManager {
 
     // 其它请求可能已创建视图但仍在加载，查询跟随重定向等待当前文档的回调就绪。
     while (true) {
-      const documentReady = plugin.loading.ready
+      const documentReady = plugin.readiness.ready
       const ready = await documentReady
       if (plugin.view.webContents.isDestroyed() || !this.pluginViews.includes(plugin)) return []
-      if (documentReady !== plugin.loading.ready) continue
+      if (documentReady !== plugin.readiness.ready) continue
       if (!ready) return []
       break
     }
