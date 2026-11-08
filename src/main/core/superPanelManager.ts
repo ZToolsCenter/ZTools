@@ -20,6 +20,7 @@ import { decodeFileUrlToPath } from '../utils/common'
 import { getCommandService, registerCommandHost } from './commands/runtime'
 import type { CommandContext, PanelSearchSnapshot } from '../../shared/commandService'
 import { normalizePanelState } from './commands/panelState'
+import { prepareMacPanelForShow } from '../utils/macPanelSpace'
 
 // 超级面板窗口尺寸
 const SUPER_PANEL_WIDTH = 250
@@ -57,6 +58,7 @@ class SuperPanelManager {
   private superPanelWindow: BrowserWindow | null = null
   private mainWindow: BrowserWindow | null = null
   private windowReady = false
+  private isPreparingMacSpace = false
   private pendingMessages: Array<{ channel: string; data: any }> = []
   private windowCommandRequestId = 0
   private panelRequestId = 0
@@ -377,6 +379,7 @@ class SuperPanelManager {
    * @param x 触发位置横坐标
    * @param y 触发位置纵坐标
    * @returns 已注册指令服务的面板窗口
+   * @throws Electron 创建窗口失败时抛出原始错误。
    */
   private createWindow(x: number, y: number): BrowserWindow {
     // 新窗口，标记未就绪
@@ -448,11 +451,13 @@ class SuperPanelManager {
 
     // 窗口加载完成后显示
     win.once('ready-to-show', () => {
-      win.show()
+      this.showPanelWindow(win)
     })
 
     // 失去焦点时关闭
     win.on('blur', () => {
+      // 透明迁移中的临时显示不会参与正常的失焦关闭。
+      if (this.isPreparingMacSpace) return
       this.hideWindow()
     })
 
@@ -497,19 +502,45 @@ class SuperPanelManager {
   }
 
   /**
-   * 显示超级面板窗口
+   * 在目标位置创建或复用超级面板，并进入当前 Space。
+   * @param x 触发位置横坐标。
+   * @param y 触发位置纵坐标。
+   * @returns 无返回值。
+   * @throws Electron 创建或显示面板失败时抛出原始错误。
    */
   private showWindow(x: number, y: number): void {
     if (this.superPanelWindow && !this.superPanelWindow.isDestroyed()) {
       // 复用已有窗口：更新位置并显示
       const { position } = this.adjustPosition(x, y)
       this.superPanelWindow.setPosition(position.x, position.y)
-      this.superPanelWindow.show()
-      this.superPanelWindow.focus()
+      this.showPanelWindow(this.superPanelWindow)
     } else {
       // 创建新窗口
       this.superPanelWindow = this.createWindow(x, y)
     }
+  }
+
+  /**
+   * 统一新建和缓存面板的 Space 迁移与显示，迁移期间不处理失焦隐藏。
+   * @param win 已完成加载且即将显示的超级面板。
+   * @returns 无返回值。
+   * @throws Electron 显示面板失败时抛出原始错误。
+   */
+  private showPanelWindow(win: BrowserWindow): void {
+    this.isPreparingMacSpace = true
+    try {
+      // 主窗口和超级面板使用同一策略，避免缓存面板停留在旧桌面。
+      prepareMacPanelForShow(win)
+    } catch (error) {
+      // 锚点失败后仍尝试打开面板，避免用户操作没有反应。
+      console.warn('[SuperPanel] macOS Space 迁移失败，尝试直接显示超级面板:', error)
+    } finally {
+      // 显示前恢复正常失焦行为，避免面板永久保持显示。
+      this.isPreparingMacSpace = false
+    }
+    if (win.isDestroyed()) return
+    win.show()
+    win.focus()
   }
 
   /**

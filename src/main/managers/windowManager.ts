@@ -16,7 +16,7 @@ import windowsIcon from '../../../resources/icons/windows-icon.png?asset'
 
 import api from '../api'
 import databaseAPI from '../api/shared/database'
-import dndManager, { isFullscreenWindow } from '../core/dndManager.js'
+import dndManager from '../core/dndManager.js'
 import doubleTapManager from '../core/doubleTapManager.js'
 import globalInputManager from '../core/globalInputManager.js'
 import { WindowManager as NativeWindowManager } from '../core/native/index.js'
@@ -27,6 +27,7 @@ import detachedWindowManager from '../core/detachedWindowManager'
 import superPanelManager from '../core/superPanelManager'
 import { applyWindowMaterial, getDefaultWindowMaterial } from '../utils/windowUtils'
 import pluginManager from './pluginManager'
+import { prepareMacPanelForShow } from '../utils/macPanelSpace'
 import {
   normalizeCompactMainWindowHeader,
   resolveMainWindowHeaderHeight
@@ -105,8 +106,6 @@ class WindowManager {
   private modalDialogBlurHideSuppressionDepth: number = 0
   private lastBlurHideTime: number = 0 // blur 导致隐藏窗口的时间戳（用于解决托盘点击竞态）
   private blurHideTimer: ReturnType<typeof setTimeout> | null = null // Linux blur 延迟隐藏定时器
-  // macOS 全屏场景的空间锚点；全屏呼出期间复用，普通桌面呼出时释放。
-  private macSpaceAnchor: BrowserWindow | null = null
   private isPreparingMacSpace = false // 透明迁移阶段不恢复输入焦点，正式显示时再恢复
   // Double-tap 唤醒窗口时，Windows 可能紧跟一个短暂 blur；这两个 timer 用于跳过误关闭并补一次焦点。
   private doubleTapFocusTimer: ReturnType<typeof setTimeout> | null = null
@@ -890,155 +889,39 @@ class WindowManager {
   }
 
   /**
-   * 强制激活窗口（解决alert等弹窗后无法唤起的问题）。
-   *
-   * macOS 统一保持非激活 panel 语义：panel 窗口 show() 即成为 key window 且不激活应用
-   * （Spotlight 式面板），因此不调用 app.focus({steal:true})，避免 accessory 应用被激活后
-   * 带着面板切换到桌面 Space。前台应用处于全屏时额外重申“canJoinAllSpaces +
-   * fullScreenAuxiliary”集合行为，让面板进入当前全屏 Space；重申时跳过进程类型变换
-   * （skipTransformProcessType），该变换是异步的，会在显示后异步隐藏/重排窗口。
-   *
-   * @returns 无返回值
+   * 显示并聚焦主窗口，macOS 在每次呼出前登记当前 Space 且不激活应用。
+   * @returns 无返回值。
+   * @throws Electron 设置窗口层级或显示窗口失败时抛出原始错误。
    */
   private forceActivateWindow(): void {
     if (!this.mainWindow) return
 
     if (platform.isMacOS) {
-      const fullscreen = this.isForegroundAppFullscreen()
-      // 抑制呼出瞬间系统补发的 blur，避免窗口刚显示就被误隐藏
+      // 全屏状态可能因 AX 权限或前台窗口缺失而未知，所有 Space 都走迁移流程。
       this.suppressBlurHideTransiently(200)
       this.mainWindow.setAlwaysOnTop(true, 'modal-panel', 1)
-
-      // 全屏场景：用“空间锚点”把面板带入当前全屏 Space，再以非激活 panel 语义显示
-      if (fullscreen) {
-        // 重申集合行为（跳过进程类型变换），保证 panel 具有 canJoinAllSpaces + fullScreenAuxiliary
-        this.mainWindow.setVisibleOnAllWorkspaces(true, {
-          visibleOnFullScreen: true,
-          skipTransformProcessType: true
-        })
-        this.prepareMacOSFullscreenSpace()
-        this.mainWindow.show()
-        this.mainWindow.focus()
-        return
+      this.isPreparingMacSpace = true
+      try {
+        prepareMacPanelForShow(this.mainWindow)
+      } catch (error) {
+        // 迁移失败也尝试正常显示，普通桌面的唤起不依赖锚点可用。
+        console.warn('[Window] macOS Space 迁移失败，尝试直接显示主窗口:', error)
+      } finally {
+        // 直接显示前恢复事件处理，让本次唤起也能恢复输入焦点。
+        this.isPreparingMacSpace = false
       }
-
-      // 普通桌面不再需要锚点，释放窗口资源；下一次全屏呼出时按需重建。
-      this.releaseMacOSSpaceAnchor()
-
-      // 非全屏场景保持非激活 panel，保留原应用的前台状态。
-      this.mainWindow.show()
+      if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+        this.mainWindow.show()
+      } else {
+        this.isRestoringFocus = false
+      }
       return
     }
 
-    // Windows / Linux：显示后重申层级并聚焦
+    // Windows / Linux：显示后重申层级并聚焦。
     this.mainWindow.show()
     this.mainWindow.setAlwaysOnTop(true)
     this.mainWindow.focus()
-  }
-
-  /**
-   * 确保 macOS 全屏场景使用的“空间锚点”窗口存在。
-   *
-   * 背景：panel 窗口自带 canJoinAllSpaces + fullScreenAuxiliary 集合行为，但当窗口在某个
-   * 全屏 Space 中被隐藏（orderOut）后，WindowServer 会把它的 Space 归属收敛到当时所在的
-   * Space；若该 Space 后续消失（例如用户退出全屏），窗口会被钉在失效 Space 上，再次呼出时
-   * 无法进入当前全屏 Space，表现为“只在桌面显示、全屏看不到”。Electron 的 ElectronNSPanel
-   * 对集合行为只增不减，重复调用 setVisibleOnAllWorkspaces 也无法恢复归属。
-   *
-   * 方案：创建一个 1x1 不可见 panel 窗口作为锚点。macOS 上子窗口跟随父窗口所在的 Space，
-   * 临时把主窗口挂上锚点即可登记到当前 Space。正式显示前必须解除父子关系，否则挂接子窗口
-   * 时会直接显示主窗口，跳过原本的系统唤出动画。锚点在全屏呼出时按需创建并复用，普通桌面
-   * 呼出时释放，避免离开全屏场景后持续保留窗口资源。
-   *
-   * @returns 空间锚点窗口；主窗口不存在时返回 null。
-   */
-  private ensureMacOSSpaceAnchor(): BrowserWindow | null {
-    if (!this.mainWindow) return null
-
-    const anchorAlive = !!this.macSpaceAnchor && !this.macSpaceAnchor.isDestroyed()
-    if (!anchorAlive) {
-      // 创建 1x1 透明、不可聚焦、无阴影的锚点窗口，仅用于携带 Space 归属
-      this.macSpaceAnchor = new BrowserWindow({
-        type: 'panel',
-        width: 1,
-        height: 1,
-        x: 0,
-        y: 0,
-        frame: false,
-        transparent: true,
-        opacity: 0,
-        show: false,
-        skipTaskbar: true,
-        focusable: false,
-        hasShadow: false,
-        resizable: false,
-        minimizable: false,
-        maximizable: false
-      })
-      // 锚点同样声明全 Space + 全屏辅助，保证其子窗口可以出现在任何全屏 Space
-      this.macSpaceAnchor.setVisibleOnAllWorkspaces(true, {
-        visibleOnFullScreen: true,
-        skipTransformProcessType: true
-      })
-      // 与主窗口保持一致的置顶层级，避免子窗口层级被压低
-      this.macSpaceAnchor.setAlwaysOnTop(true, 'modal-panel', 1)
-      // 锚点与主窗口放在同一显示器，避免子窗口被限制到其它屏幕
-      const [mainX, mainY] = this.mainWindow.getPosition()
-      this.syncAnchorToDisplayOf(mainX, mainY)
-      // 以非激活方式登记到当前 Space，且不抢占焦点
-      this.macSpaceAnchor.showInactive()
-    }
-
-    return this.macSpaceAnchor
-  }
-
-  /**
-   * 释放普通桌面呼出时已不需要的空间锚点，下次全屏呼出可重新创建。
-   * @returns 无返回值。
-   */
-  private releaseMacOSSpaceAnchor(): void {
-    const anchor = this.macSpaceAnchor
-    // 主窗口已在迁移结束时解除父子关系，销毁锚点不会连带关闭主窗口。
-    this.macSpaceAnchor = null
-    if (anchor && !anchor.isDestroyed()) anchor.destroy()
-  }
-
-  /**
-   * 透明地把隐藏的主窗口迁移到当前全屏 Space，再恢复为独立窗口以保留系统唤出动画。
-   * @returns 无返回值。
-   */
-  private prepareMacOSFullscreenSpace(): void {
-    const mainWindow = this.mainWindow
-    if (!mainWindow || mainWindow.isVisible()) return
-
-    const anchor = this.ensureMacOSSpaceAnchor()
-    if (!anchor) return
-
-    // 挂接子窗口会直接将其显示，因此先透明迁移并跳过这一阶段的焦点恢复。
-    const opacity = mainWindow.getOpacity()
-    this.isPreparingMacSpace = true
-    try {
-      mainWindow.setOpacity(0)
-      mainWindow.setParentWindow(anchor)
-      mainWindow.showInactive()
-    } finally {
-      // Space 归属登记后移除父窗口；恢复隐藏和透明度，让随后 show() 执行系统动画。
-      mainWindow.hide()
-      mainWindow.setParentWindow(null)
-      mainWindow.setOpacity(opacity)
-      this.isPreparingMacSpace = false
-    }
-  }
-
-  /**
-   * 判断当前前台应用是否处于全屏。
-   * @returns 前台应用为全屏窗口时返回 true；无法获取或非全屏时返回 false
-   */
-  private isForegroundAppFullscreen(): boolean {
-    const activeWindow = NativeWindowManager.getActiveWindow()
-    if (!activeWindow) return false
-
-    return isFullscreenWindow(activeWindow)
   }
 
   private refocusSearchAfterDoubleTap(): void {
@@ -1157,43 +1040,16 @@ class WindowManager {
   }
 
   /**
-   * 应用主窗口位置，并同步“空间锚点”到同一显示器。
-   *
-   * macOS 上子窗口会被限制在父窗口所在显示器，因此若锚点仍在旧显示器，主窗口会被拉回旧屏；
-   * 这里先把锚点移到目标显示器（隐藏状态下主窗口与锚点是脱开的，不会拖拽主窗口），再定位主窗口。
-   *
-   * @param x 目标位置横坐标
-   * @param y 目标位置纵坐标
-   * @returns 无返回值
+   * 将独立主窗口定位到目标显示器，Space 迁移锚点随后按此位置创建。
+   * @param x 目标位置横坐标。
+   * @param y 目标位置纵坐标。
+   * @returns 无返回值。
    */
   private applyMainWindowPosition(x: number, y: number): void {
     if (!this.mainWindow) return
 
-    this.syncAnchorToDisplayOf(x, y)
+    // 先确定目标显示器，避免迁移时被父窗口拉回其它屏幕。
     this.mainWindow.setPosition(x, y, false)
-  }
-
-  /**
-   * 把“空间锚点”同步到指定坐标所在显示器。
-   *
-   * 子窗口会被限制在父窗口所在显示器，因此锚点必须与主窗口处于同一显示器；仅在显示器发生变化
-   * 时才移动锚点，避免移动锚点时带着子窗口抖动。锚点移到目标显示器工作区左上角即可（1x1 不可见
-   * 窗口，位置本身无视觉影响）。
-   *
-   * @param x 参考坐标横坐标
-   * @param y 参考坐标纵坐标
-   * @returns 无返回值
-   */
-  private syncAnchorToDisplayOf(x: number, y: number): void {
-    const anchor = this.macSpaceAnchor
-    if (!anchor || anchor.isDestroyed()) return
-
-    const targetDisplay = screen.getDisplayNearestPoint({ x, y })
-    const [anchorX, anchorY] = anchor.getPosition()
-    const anchorDisplay = screen.getDisplayNearestPoint({ x: anchorX, y: anchorY })
-    if (targetDisplay.id === anchorDisplay.id) return
-
-    anchor.setPosition(targetDisplay.workArea.x, targetDisplay.workArea.y, false)
   }
 
   /**
