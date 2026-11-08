@@ -5,6 +5,8 @@
 import type { CommonKeyboardModifier } from '@renderer/utils/convertKeyboardEvent'
 import type { SearchWallpaperConfig } from '@shared/searchWallpaper'
 import type { AiRequestStatusChange } from '@shared/aiRequestStatus'
+import type { PanelSearchSnapshot } from '@shared/commandService'
+import type { PluginMainWindowLaunchState } from '@shared/pluginLaunch'
 import type { AfdianPaymentMethod, AfdianPaymentWindowState } from '@shared/afdianPaymentWindow'
 
 /**
@@ -82,6 +84,10 @@ declare global {
       }
     }
     ztools: {
+      commands: import('@shared/commandService').CommandServiceClient
+      mutateSuperPanelPinned: (
+        operation: import('@shared/commandService').PanelMutation
+      ) => Promise<import('@shared/commandService').PanelMutationResult>
       getApps: () => Promise<Array<{ name: string; path: string; icon?: string }>>
       getSystemSettings: () => Promise<any[]>
       isWindows: () => Promise<boolean>
@@ -220,7 +226,7 @@ declare global {
       onPinnedChanged: (callback: () => void) => void
       onSuperPanelPinnedChanged: (callback: () => void) => void
       onDisabledCommandsChanged: (callback: () => void) => void
-      onShowPluginPlaceholder: (callback: () => void) => void
+      onShowPluginPlaceholder: (callback: (state: PluginMainWindowLaunchState) => void) => void
       onShowSettings: (callback: () => void) => void
       onAppLaunched: (callback: () => void) => void
       onIpcLaunch: (
@@ -393,20 +399,21 @@ declare global {
       // 获取拖放文件的路径（Electron webUtils）
       getPathForFile: (file: File) => string
       // 超级面板相关
-      onSuperPanelSearch: (
-        callback: (data: { text: string; clipboardContent?: any }) => void
-      ) => void
-      sendSuperPanelSearchResult: (data: { results: any[]; clipboardContent?: any }) => void
       onSuperPanelData: (
         callback: (data: {
           type: string
           commands?: any[]
           results?: any[]
+          snapshot?: PanelSearchSnapshot
           clipboardContent?: any
           windowInfo?: SuperPanelWindowInfo | null
         }) => void
       ) => void
-      superPanelLaunch: (command: any) => Promise<{ success: boolean; error?: string }>
+      superPanelLaunch: (
+        command: any,
+        snapshot?: PanelSearchSnapshot
+      ) => Promise<{ success: boolean; error?: string }>
+      superPanelReleaseSearch: (snapshot: PanelSearchSnapshot) => void
       superPanelReady: () => void
       superPanelShowPinned: () => void
       superPanelShowMainWindow: () => void
@@ -419,9 +426,6 @@ declare global {
       ) => Promise<{ success: boolean; error?: string }>
       pinToSuperPanel: (command: any) => Promise<{ success: boolean; error?: string }>
       getSuperPanelPinned: () => Promise<any[]>
-      onSuperPanelLaunch: (
-        callback: (data: { command: any; clipboardContent?: any; windowInfo?: any }) => void
-      ) => void
       superPanelAddBlockedApp: () => Promise<{ success: boolean; app?: string; error?: string }>
       // 超级面板窗口匹配
       superPanelGetFileLocationWindows: () => Promise<Array<FileLocationWindowInfo | string>>
@@ -434,15 +438,15 @@ declare global {
       ) => Promise<boolean>
       superPanelSearchWindowCommands: (windowInfo: SuperPanelWindowInfo) => Promise<void>
       onSuperPanelWindowCommandsData: (
-        callback: (data: { requestId?: number; results: any[] }) => void
+        callback: (data: {
+          requestId?: number
+          results: any[]
+          snapshot?: PanelSearchSnapshot
+        }) => void
       ) => void
       onSuperPanelTranslation: (
         callback: (data: { text: string; sourceText?: string }) => void
       ) => void
-      onSuperPanelSearchWindowCommands: (
-        callback: (data: { requestId: number; windowInfo: SuperPanelWindowInfo }) => void
-      ) => void
-      sendSuperPanelWindowCommandsResult: (data: { requestId: number; results: any[] }) => void
       onFloatingBallFiles: (
         callback: (files: Array<{ path: string; name: string; isDirectory: boolean }>) => void
       ) => void

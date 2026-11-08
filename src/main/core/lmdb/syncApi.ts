@@ -446,6 +446,12 @@ export class SyncApi {
     return this.removeWithOptions(docOrId, { retireOtherLeaves: true })
   }
 
+  /**
+   * 删除文档，并按存储范围发布同步或本机变更通知。
+   * @param docOrId 文档身份或带版本的文档
+   * @param options 是否同时退役冲突分支
+   * @returns 删除结果，失败时包含错误信息
+   */
   private removeWithOptions(
     docOrId: DbDoc | string,
     options: { retireOtherLeaves: boolean }
@@ -477,6 +483,8 @@ export class SyncApi {
         if (!this.shouldSync(id)) {
           this.mainDb.removeSync(id)
           this.metaDb.removeSync(id)
+          // 本机文档不进入同步日志，但业务缓存仍需获知成功的删除。
+          setImmediate(() => this.emitter.emit('local-change', { docId: id }))
           return createSuccessResult(id)
         }
 
@@ -789,6 +797,11 @@ export class SyncApi {
     return results
   }
 
+  /**
+   * 在调用方事务内保存版本并发布对应存储范围的变更通知。
+   * @param doc 待写入文档，成功后更新其版本
+   * @returns 写入结果，校验失败时返回错误信息
+   */
   private putInTransaction(doc: DbDoc): DbResult {
     if (!isValidDocId(doc._id)) {
       return createErrorResult('exception', '_id is required', doc._id)
@@ -841,6 +854,8 @@ export class SyncApi {
       setImmediate(() => this.emitter.emit('change', { seq, docId: id }))
     } else {
       this.metaDb.putSync(id, newRev)
+      // 使用独立通知，避免设备配置被同步客户端误当作待上传变更。
+      setImmediate(() => this.emitter.emit('local-change', { docId: id }))
     }
 
     doc._rev = newRev

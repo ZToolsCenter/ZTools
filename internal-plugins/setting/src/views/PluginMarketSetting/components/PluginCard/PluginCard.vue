@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { AdaptiveIcon } from '@/components'
 import ProgressCircleButton from '@/components/common/ProgressCircleButton/ProgressCircleButton.vue'
+import PluginUpgradeButton from '@/components/common/PluginUpgradeButton.vue'
 import type { Plugin, PluginDownloadState } from '../types'
 
 defineProps<{
@@ -37,47 +38,15 @@ defineEmits<{
     </div>
     <div class="plugin-action">
       <template v-if="plugin.installed">
-        <button
+        <PluginUpgradeButton
           v-if="canUpgrade"
-          class="icon-btn upgrade-btn"
-          :title="`升级到 v${plugin.version}`"
-          :disabled="installingPlugin === plugin.name"
+          class="upgrade-btn"
+          :version="plugin.version"
+          :loading="installingPlugin === plugin.name"
+          :download-state="downloadState"
+          :disabled="!!installingPlugin && installingPlugin !== plugin.name"
           @click.stop="$emit('upgrade')"
-        >
-          <div v-if="installingPlugin === plugin.name" class="btn-loading">
-            <div class="spinner"></div>
-          </div>
-          <svg
-            v-else
-            width="14"
-            height="14"
-            viewBox="0 0 24 24"
-            fill="none"
-            xmlns="http://www.w3.org/2000/svg"
-          >
-            <path
-              d="M12 19V5"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            />
-            <path
-              d="M5 12L12 5L19 12"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            />
-            <path
-              d="M5 21H19"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            />
-          </svg>
-        </button>
+        />
         <button v-else class="icon-btn open-btn" title="打开" @click.stop="$emit('open')">
           <svg
             xmlns="http://www.w3.org/2000/svg"
@@ -201,13 +170,8 @@ defineEmits<{
   color: var(--primary-color);
 }
 
-.open-btn:hover:not(:disabled),
-.upgrade-btn:hover:not(:disabled) {
+.open-btn:hover:not(:disabled) {
   background: var(--primary-light-bg);
-}
-
-.upgrade-btn {
-  color: var(--primary-color);
 }
 
 .download-btn {
@@ -216,28 +180,5 @@ defineEmits<{
 
 .download-btn:hover:not(:disabled) {
   background: var(--primary-light-bg);
-}
-
-/* 按钮 loading 状态 */
-.btn-loading {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.spinner {
-  width: 14px;
-  height: 14px;
-  border: 2px solid transparent;
-  border-top-color: currentColor;
-  border-right-color: currentColor;
-  border-radius: 50%;
-  animation: spin 0.6s linear infinite;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 </style>

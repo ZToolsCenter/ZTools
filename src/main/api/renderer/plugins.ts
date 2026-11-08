@@ -691,9 +691,11 @@ export class PluginsAPI {
 
   /**
    * 使插件相关缓存失效并通知渲染进程刷新。
+   * 同时暴露给 internal IPC（internal:notify-plugins-changed），供授权插件
+   * 在直写注册表后让已安装列表与搜索索引即时刷新。
    * @returns 无返回值
    */
-  private notifyPluginsChanged(): void {
+  public notifyPluginsChanged(): void {
     this.commandsCacheInvalidator?.()
     this.mainWindow?.webContents.send('plugins-changed')
   }

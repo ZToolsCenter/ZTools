@@ -71,6 +71,9 @@ export type MatchCmdLike = RegexCmdLike | OverCmdLike | FilesCmdLike | WindowCmd
 
 /**
  * 解析命令匹配中使用的 pattern，兼容是否保留 flags 和普通字符串回退。
+ * @param pattern 配置的匹配表达式
+ * @param options flags 与普通字符串解析策略
+ * @returns 正则对象或无效配置的 null
  */
 export function parseMatchPattern(
   pattern?: string,
@@ -84,7 +87,7 @@ export function parseMatchPattern(
   }
 
   try {
-    const slashMatch = pattern.match(/^\/(.+)\/([gimuy]*)$/)
+    const slashMatch = pattern.match(/^\/(.*)\/([dgimsuvy]*)$/)
     if (slashMatch) {
       const flags = options.preserveFlags ? slashMatch[2] : ''
       return new RegExp(slashMatch[1], flags)
@@ -102,12 +105,17 @@ export function parseMatchPattern(
 
 /**
  * 判断 regex 类型命令是否匹配指定文本。
+ * @param text 输入文本
+ * @param cmd 原始规则
+ * @param options flags 策略与可复用的预编译规则
+ * @returns 是否匹配
  */
 export function matchesRegexText(
   text: string,
   cmd: RegexCmdLike,
   options: {
     preserveFlags?: boolean
+    compiledRegex?: RegExp | null
   } = {}
 ): boolean {
   if (!text) {
@@ -119,14 +127,23 @@ export function matchesRegexText(
     return false
   }
 
-  const regex = parseMatchPattern(cmd.match ?? cmd.regex, {
-    preserveFlags: options.preserveFlags
-  })
-  return regex ? regex.test(text) : false
+  const regex =
+    options.compiledRegex !== undefined
+      ? options.compiledRegex
+      : parseMatchPattern(cmd.match ?? cmd.regex, {
+          preserveFlags: options.preserveFlags
+        })
+  if (!regex) return false
+  regex.lastIndex = 0
+  return regex.test(text)
 }
 
 /**
  * 判断 over 类型命令是否匹配指定文本。
+ * @param text 输入文本
+ * @param cmd 原始规则
+ * @param options 排除策略与可复用的预编译规则
+ * @returns 是否匹配
  */
 export function matchesOverText(
   text: string,
@@ -135,6 +152,7 @@ export function matchesOverText(
     useExclude?: boolean
     preserveExcludeFlags?: boolean
     allowPlainExclude?: boolean
+    compiledExclude?: RegExp | null
   } = {}
 ): boolean {
   if (!text) {
@@ -148,10 +166,14 @@ export function matchesOverText(
   }
 
   if (options.useExclude && cmd.exclude) {
-    const excludeRegex = parseMatchPattern(cmd.exclude, {
-      preserveFlags: options.preserveExcludeFlags,
-      allowPlainString: options.allowPlainExclude
-    })
+    const excludeRegex =
+      options.compiledExclude !== undefined
+        ? options.compiledExclude
+        : parseMatchPattern(cmd.exclude, {
+            preserveFlags: options.preserveExcludeFlags,
+            allowPlainString: options.allowPlainExclude
+          })
+    if (excludeRegex) excludeRegex.lastIndex = 0
     if (excludeRegex?.test(text)) {
       return false
     }
@@ -162,6 +184,10 @@ export function matchesOverText(
 
 /**
  * 判断 files 类型命令是否匹配指定文件输入。
+ * @param files 输入文件快照
+ * @param cmd 原始文件规则
+ * @param options 解析策略与可复用的预编译规则
+ * @returns 是否所有文件都匹配
  */
 export function matchesFilesInput(
   files: PastedFileLike[],
@@ -169,6 +195,7 @@ export function matchesFilesInput(
   options: {
     preserveFlags?: boolean
     allowPlainString?: boolean
+    compiledRegex?: RegExp | null
   } = {}
 ): boolean {
   if (files.length === 0) {
@@ -199,10 +226,14 @@ export function matchesFilesInput(
     }
 
     if (cmd.match) {
-      const regex = parseMatchPattern(cmd.match, {
-        preserveFlags: options.preserveFlags
-      })
+      const regex =
+        options.compiledRegex !== undefined
+          ? options.compiledRegex
+          : parseMatchPattern(cmd.match, {
+              preserveFlags: options.preserveFlags
+            })
       if (regex) {
+        regex.lastIndex = 0
         return regex.test(file.name)
       }
 
@@ -219,6 +250,10 @@ export function matchesFilesInput(
 
 /**
  * 判断 window 类型命令是否匹配指定窗口信息。
+ * @param windowInfo 窗口快照
+ * @param cmd 原始窗口规则
+ * @param options 标题解析策略与预编译规则
+ * @returns 是否满足已有 app/title 的兼容匹配语义
  */
 export function matchesWindowInput(
   windowInfo: WindowInfoLike | null | undefined,
@@ -244,11 +279,13 @@ export function matchesWindowInput(
 
   if (cmd.match.title && windowInfo.title) {
     const titleRegex =
-      options.titleRegex ??
-      parseMatchPattern(cmd.match.title, {
-        preserveFlags: options.preserveTitleFlags,
-        allowPlainString: true
-      })
+      options.titleRegex !== undefined
+        ? options.titleRegex
+        : parseMatchPattern(cmd.match.title, {
+            preserveFlags: options.preserveTitleFlags,
+            allowPlainString: true
+          })
+    if (titleRegex) titleRegex.lastIndex = 0
     if (titleRegex?.test(windowInfo.title)) {
       return true
     }

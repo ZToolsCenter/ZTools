@@ -1,13 +1,13 @@
 import { ipcMain } from 'electron'
 import type { PluginManager } from '../../managers/pluginManager'
 import windowManager from '../../managers/windowManager'
+import { getPluginInstanceContext } from '../../core/commands/pluginLaunchContext'
 
 /**
  * 插件生命周期API - 插件专用
  */
 export class PluginLifecycleAPI {
   private pluginManager: PluginManager | null = null
-  private launchParam: any = null
   private mainWindow: Electron.BrowserWindow | null = null
 
   public init(mainWindow: Electron.BrowserWindow, pluginManager: PluginManager): void {
@@ -16,16 +16,13 @@ export class PluginLifecycleAPI {
     this.setupIPC()
   }
 
-  public setLaunchParam(param: any): void {
-    this.launchParam = param
-  }
-
+  /**
+   * 注册实例级生命周期上下文查询与插件退出接口。
+   * @returns 无返回值
+   */
   private setupIPC(): void {
     // 插件进入事件
-    ipcMain.handle('onPluginEnter', () => {
-      console.log('[PluginLifecycle] 收到插件进入事件:', this.launchParam)
-      return this.launchParam
-    })
+    ipcMain.handle('onPluginEnter', (event) => getPluginInstanceContext(event.sender))
 
     // 退出插件
     ipcMain.handle('out-plugin', (event, isKill: boolean = false) => {

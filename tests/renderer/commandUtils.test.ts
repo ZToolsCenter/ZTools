@@ -1,9 +1,4 @@
-import { describe, it, expect } from 'vitest'
-import {
-  getCommandId,
-  applySpecialConfig,
-  calculateMatchScore
-} from '../../src/renderer/src/stores/commandUtils'
+import { getCommandId, applySpecialConfig } from '../../src/renderer/src/stores/commandUtils'
 
 // ========== getCommandId ==========
 
@@ -154,54 +149,5 @@ describe('applySpecialConfig', () => {
     const original = { ...cmd }
     applySpecialConfig(cmd, specialCommands as any)
     expect(cmd).toEqual(original)
-  })
-})
-
-// ========== calculateMatchScore ==========
-
-describe('calculateMatchScore', () => {
-  const makeMatch = (indices: Array<[number, number]>): any[] => [
-    { indices, value: 'test', key: 'name' }
-  ]
-
-  it('完全匹配应返回 10000', () => {
-    const score = calculateMatchScore('chrome', 'chrome', makeMatch([[0, 5]]))
-    expect(score).toBe(10000)
-  })
-
-  it('完全匹配应不区分大小写', () => {
-    const score = calculateMatchScore('Chrome', 'chrome', makeMatch([[0, 5]]))
-    expect(score).toBe(10000)
-  })
-
-  it('前缀匹配应获得高分（>5000）', () => {
-    const score = calculateMatchScore('chrome browser', 'chrome', makeMatch([[0, 5]]))
-    expect(score).toBeGreaterThan(5000)
-  })
-
-  it('连续匹配应获得中等分数', () => {
-    const score = calculateMatchScore('google chrome', 'chrome', makeMatch([[7, 12]]))
-    expect(score).toBeGreaterThan(2000)
-  })
-
-  it('连续匹配靠前时分数应更高', () => {
-    const scoreEarly = calculateMatchScore(
-      'chrome browser extension',
-      'chrome',
-      makeMatch([[0, 5]])
-    )
-    const scoreLate = calculateMatchScore('google chrome browser', 'chrome', makeMatch([[7, 12]]))
-    expect(scoreEarly).toBeGreaterThan(scoreLate)
-  })
-
-  it('无匹配信息时应返回 0', () => {
-    expect(calculateMatchScore('chrome browser', 'firefox')).toBe(0)
-    expect(calculateMatchScore('chrome browser', 'firefox', [])).toBe(0)
-  })
-
-  it('匹配长度占比越高分数越高', () => {
-    const scoreShort = calculateMatchScore('a very long application name', 'a', makeMatch([[0, 0]]))
-    const scoreLong = calculateMatchScore('chrome', 'chrom', makeMatch([[0, 4]]))
-    expect(scoreLong).toBeGreaterThan(scoreShort)
   })
 })

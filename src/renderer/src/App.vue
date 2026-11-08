@@ -169,15 +169,26 @@ watch([searchQuery, pastedImageData, pastedFilesData, pastedTextData], () => {
   syncLaunchContext()
 })
 
-// 动态调整窗口高度
+let scheduledHeightUpdate: Promise<void> | undefined
+
+/**
+ * 在搜索展示提交后测量高度，跳过插件页面和查询等待期间的尺寸更新。
+ * @returns DOM 更新与高度调整完成的 Promise
+ */
 function updateWindowHeight(): Promise<void> {
-  return nextTick(() => {
+  // 同一轮分组、折叠和选择变更只测量一次最终 DOM。
+  if (scheduledHeightUpdate) return scheduledHeightUpdate
+  scheduledHeightUpdate = nextTick(() => {
+    scheduledHeightUpdate = undefined
+    // 插件高度由主进程和插件 API 控制，丢弃切换前已排队的搜索测量。
+    if (currentView.value !== ViewMode.Search || commandDataStore.searchPending) return
     const container = document.querySelector('.app-container')
     if (container) {
       const height = container.scrollHeight
       window.ztools.resizeWindow(height + 1)
     }
   })
+  return scheduledHeightUpdate
 }
 
 // 聚焦输入框（由 SearchResults 组件 emit）
@@ -228,12 +239,12 @@ function focusSearchAfterPluginExit(): void {
 }
 
 /**
- * 处理插件模式下的分步退出逻辑：清空输入 -> 清理粘贴态 -> 退出插件或隐藏窗口。
+ * 处理插件模式下的分步退出：先清空包含空白字符的输入，再清理粘贴态，最后退出或隐藏。
  * @returns 无返回值。
  */
 function handlePluginStepExit(): void {
-  if (searchQuery.value.trim()) {
-    // 主窗口插件模式：优先清空子输入框并通知插件
+  if (searchQuery.value.length > 0) {
+    // 空白字符同样属于待清空的输入，清空后通知插件刷新搜索状态。
     searchQuery.value = ''
     window.ztools.notifySubInputChange('')
     return
@@ -293,47 +304,18 @@ async function handleArrowKeydown(event: KeyboardEvent, direction: NavDirectionK
   }
 }
 
-// 启动 Tab 键目标指令
-function launchTabTarget(target: string, text: string): void {
-  const commands = [...commandDataStore.regexCommands, ...commandDataStore.commands]
-  let matchedCommand: (typeof commands)[number] | null = null
-
-  const parts = target.split('/')
-  if (parts.length === 2) {
-    // 格式: 插件名称/指令名称
-    const [pluginDesc, cmdName] = parts
-    matchedCommand =
-      commands.find(
-        (c) =>
-          c.type === 'plugin' &&
-          (c.pluginName === pluginDesc || c.pluginTitle === pluginDesc) &&
-          c.name === cmdName
-      ) || null
-  } else {
-    // 格式: 指令名称（在所有指令中搜索）
-    matchedCommand = commands.find((c) => c.name === target) || null
-  }
-
-  if (!matchedCommand) {
-    console.warn('[Tab Target] 未找到目标指令:', target)
-    new Notification('ZTools', {
-      body: `未找到 Tab 键目标指令「${target}」，请检查设置中的指令名称是否正确`
-    })
-    return
-  }
-
-  console.log('[Tab Target] 启动目标指令:', matchedCommand.name, '携带文本:', text)
-  window.ztools.launch({
-    path: matchedCommand.path,
-    type: matchedCommand.type as 'plugin' | 'direct',
-    featureCode: matchedCommand.featureCode,
-    name: matchedCommand.name,
-    cmdType: matchedCommand.cmdType || 'text',
-    param: {
-      payload: text,
-      type: matchedCommand.cmdType || 'text'
-    }
+/**
+ * 根据精确名称交由主进程解析 Tab 目标及匹配型 payload。
+ * @param target 配置的指令名称
+ * @param text 当前文本内容
+ * @returns 操作结束的 Promise
+ */
+async function launchTabTarget(target: string, text: string): Promise<void> {
+  const result = await window.ztools.commands.execute({
+    target,
+    context: { searchQuery: '', pastedText: text, pastedImage: null, pastedFiles: null }
   })
+  if (!result.success) new Notification('ZTools', { body: result.error || '无法启动 Tab 目标指令' })
 }
 
 // 分离当前插件到独立窗口
@@ -400,7 +382,7 @@ watch(currentView, (newView) => {
 })
 
 /**
- * 全局键盘事件监听处理函数，分发快捷键、Tab导航、分步退出及搜索结果导航。
+ * 分发快捷键、Tab 导航和分步退出；退格仅在按键前输入已为空时进入退出流程。
  * @param event 键盘事件对象。
  * @returns 操作完成后的 Promise。
  */
@@ -492,12 +474,13 @@ async function handleKeydown(event: KeyboardEvent): Promise<void> {
   const isSearchInputTarget =
     event.target instanceof HTMLInputElement && event.target.classList.contains('search-input')
 
+  // 非空输入（含纯空白）交给原生编辑，删除最后一个字符的这次按键不能同时退出。
   if (
     isPlainBackspace &&
     currentView.value === ViewMode.Plugin &&
     windowStore.subInputVisible &&
     isSearchInputTarget &&
-    !searchQuery.value.trim()
+    searchQuery.value.length === 0
   ) {
     // SearchBox 可能已拦截 Backspace（如清理粘贴态），避免重复处理
     if (event.defaultPrevented) {
@@ -526,8 +509,8 @@ async function handleKeydown(event: KeyboardEvent): Promise<void> {
     }
 
     // 搜索页面 - 分步清除
-    if (searchQuery.value.trim()) {
-      // 第一步：清除输入框
+    if (searchQuery.value.length > 0) {
+      // 第一步先清除所有输入字符，纯空白也不能跳过此步直接隐藏窗口。
       searchQuery.value = ''
     } else if (pastedImageData.value || pastedFilesData.value || pastedTextData.value) {
       // 第二步：清除粘贴内容
@@ -726,12 +709,16 @@ onMounted(async () => {
     })
   })
 
-  // 监听显示插件占位区域事件（插件启动前）
-  window.ztools.onShowPluginPlaceholder(() => {
+  /**
+   * 按主进程启动快照切换宿主模式，前台复用时恢复插件的搜索词。
+   * @param state 唤起窗口前确定的启动状态
+   * @returns 无返回值
+   */
+  window.ztools.onShowPluginPlaceholder((state) => {
     console.log('显示插件占位区域')
     currentView.value = ViewMode.Plugin
-    // 清空搜索框和所有粘贴内容
-    searchQuery.value = ''
+    // 搜索词与进入行为使用同一快照；此时不向尚未切换完成的插件发送搜索通知。
+    searchQuery.value = state.subInputValue
     pastedImageData.value = null
     pastedFilesData.value = null
     pastedTextData.value = null
@@ -980,156 +967,6 @@ onMounted(async () => {
 
   // 恢复已检测到的更新状态
   windowStore.checkUpdateStatus()
-
-  // 监听超级面板搜索请求（主进程转发，携带剪贴板内容）
-  window.ztools.onSuperPanelSearch((data: { text: string; clipboardContent?: any }) => {
-    console.log(
-      '[超级面板搜索] 收到搜索请求:',
-      data.text?.substring(0, 50),
-      'clipboardType:',
-      data.clipboardContent?.type
-    )
-    const searchText = data.text || ''
-    const cc = data.clipboardContent
-
-    const seen = new Set<string>()
-    const results: any[] = []
-    const addResults = (items: any[]): void => {
-      for (const item of items) {
-        const key = `${item.path}:${item.featureCode || ''}`
-        if (!seen.has(key)) {
-          seen.add(key)
-          results.push(item)
-        }
-      }
-    }
-
-    if (cc?.type === 'image') {
-      // 图片：搜索支持 img 类型的指令
-      addResults(commandDataStore.searchImageCommands())
-    } else if (cc?.type === 'file' && cc.files) {
-      // 文件：搜索支持 files 类型的指令
-      addResults(commandDataStore.searchFileCommands(cc.files))
-    } else if (cc?.type === 'text' && cc.text) {
-      // 文本：搜索 text 和 regex/over 类型的指令
-      const { bestMatches, regexMatches } = commandDataStore.search(cc.text)
-      addResults(bestMatches)
-      addResults(regexMatches)
-    } else if (searchText) {
-      // 普通文本搜索
-      const { bestMatches, regexMatches } = commandDataStore.search(searchText)
-      addResults(bestMatches)
-      addResults(regexMatches)
-    }
-
-    console.log('[超级面板搜索] 返回结果数:', results.length)
-    // 发送搜索结果回超级面板（携带剪贴板内容）
-    window.ztools.sendSuperPanelSearchResult({
-      results: JSON.parse(JSON.stringify(results)),
-      clipboardContent: cc
-    })
-  })
-
-  // 监听超级面板窗口匹配搜索请求
-  window.ztools.onSuperPanelSearchWindowCommands(
-    (data: {
-      requestId: number
-      windowInfo: {
-        app?: string
-        title?: string
-        className?: string
-        hwnd?: number
-        bundleId?: string
-        pid?: number
-      }
-    }) => {
-      console.log('[超级面板窗口匹配] 收到搜索请求:', data.windowInfo)
-      const results = commandDataStore.searchWindowCommands(data.windowInfo)
-      console.log('[超级面板窗口匹配] 返回结果数:', results.length)
-      window.ztools.sendSuperPanelWindowCommandsResult({
-        requestId: data.requestId,
-        results: JSON.parse(JSON.stringify(results))
-      })
-    }
-  )
-
-  // 监听超级面板启动事件（由主进程从超级面板转发）
-  window.ztools.onSuperPanelLaunch(
-    async (data: {
-      command: any
-      launchSource?: 'search' | 'global-shortcut' | 'super-panel'
-      clipboardContent?: any
-      windowInfo?: any
-    }) => {
-      console.log(
-        '[超级面板启动] 收到启动事件:',
-        data.command?.name,
-        'clipboardType:',
-        data.clipboardContent?.type
-      )
-      const cmd = data.command
-      const cc = data.clipboardContent
-
-      // 构造 payload（复用 SearchResults 中 handleSelectApp 的逻辑）
-      let payload: any = ''
-      let type = cmd.cmdType || 'text'
-
-      if (cmd.cmdType === 'window' && data.windowInfo) {
-        // 窗口匹配指令：payload 为窗口信息
-        payload = data.windowInfo
-      } else if (cc) {
-        if (cc.type === 'text' && cc.text) {
-          if (cmd.cmdType === 'over' || cmd.cmdType === 'regex') {
-            payload = cc.text
-          } else {
-            payload = cc.text
-          }
-        } else if (cc.type === 'image' && cc.image) {
-          payload = cc.image
-          type = 'img'
-        } else if (cc.type === 'file' && cc.files) {
-          payload = cc.files.map((file: any) => ({
-            isFile: !file.isDirectory,
-            isDirectory: file.isDirectory,
-            name: file.name,
-            path: file.path
-          }))
-          type = 'files'
-        }
-      }
-
-      try {
-        await window.ztools.launch({
-          path: cmd.path,
-          type: cmd.type || 'plugin',
-          featureCode: cmd.featureCode,
-          name: cmd.name,
-          cmdType: cmd.cmdType || type,
-          launchSource: data.launchSource || 'super-panel',
-          param: {
-            payload,
-            type,
-            inputState: {
-              searchQuery: cc?.type === 'text' ? cc.text || '' : '',
-              pastedImage: cc?.type === 'image' ? cc.image : null,
-              pastedFiles:
-                cc?.type === 'file'
-                  ? cc.files.map((file: any) => ({
-                      isFile: !file.isDirectory,
-                      isDirectory: file.isDirectory,
-                      name: file.name,
-                      path: file.path
-                    }))
-                  : null,
-              pastedText: cc?.type === 'text' ? cc.text : null
-            }
-          }
-        })
-      } catch (error) {
-        console.error('[超级面板启动] 启动失败:', error)
-      }
-    }
-  )
 
   // 全局键盘事件监听
   window.addEventListener('keydown', handleKeydown)

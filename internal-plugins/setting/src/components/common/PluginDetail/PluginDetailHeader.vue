@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import ProgressCircleButton from '@/components/common/ProgressCircleButton/ProgressCircleButton.vue'
+import PluginUpgradeButton from '@/components/common/PluginUpgradeButton.vue'
 import type { PluginDownloadState, PluginItem } from './types'
 
 const props = defineProps<{
@@ -156,47 +157,13 @@ function openRepository(): void {
           </svg>
         </button>
         <template v-if="plugin.installed">
-          <button
+          <PluginUpgradeButton
             v-if="canUpgrade"
-            class="upgrade-icon-btn"
-            :title="`升级到 v${plugin.version}`"
-            :disabled="isLoading"
+            :version="plugin.version"
+            :loading="isLoading"
+            :download-state="downloadState"
             @click="emit('upgrade')"
-          >
-            <div v-if="isLoading" class="btn-loading">
-              <div class="spinner"></div>
-            </div>
-            <svg
-              v-else
-              width="18"
-              height="18"
-              viewBox="0 0 24 24"
-              fill="none"
-              xmlns="http://www.w3.org/2000/svg"
-            >
-              <path
-                d="M12 19V5"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              />
-              <path
-                d="M5 12L12 5L19 12"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              />
-              <path
-                d="M5 21H19"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              />
-            </svg>
-          </button>
+          />
         </template>
         <ProgressCircleButton
           v-else
@@ -448,56 +415,8 @@ function openRepository(): void {
   outline: none;
 }
 
-.upgrade-icon-btn {
-  width: 36px;
-  height: 36px;
-  min-width: 36px;
-  border: none;
-  border-radius: 50%;
-  background: transparent;
-  color: var(--primary-color);
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  transition:
-    background 0.2s,
-    opacity 0.2s;
-}
-
-.upgrade-icon-btn:hover:not(:disabled) {
-  background: var(--primary-light-bg);
-}
-
-.upgrade-icon-btn:disabled {
-  cursor: not-allowed;
-  opacity: 0.65;
-}
-
 .detail-download-btn {
   flex-shrink: 0;
-}
-
-.btn-loading {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.spinner {
-  width: 16px;
-  height: 16px;
-  border: 2px solid transparent;
-  border-top-color: currentColor;
-  border-right-color: currentColor;
-  border-radius: 50%;
-  animation: spin 0.6s linear infinite;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 
 .detail-icon {

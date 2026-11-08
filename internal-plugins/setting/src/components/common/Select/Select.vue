@@ -879,7 +879,8 @@ onBeforeUnmount(() => {
   position: fixed;
   left: 0;
   top: 0;
-  z-index: 10000;
+  /* 实际生效的是 useOverlayPosition 写入的内联 z-index（默认 30001），此处保持同值仅作兜底 */
+  z-index: 30001;
   min-width: 150px;
   max-height: 300px;
   overflow-y: auto;

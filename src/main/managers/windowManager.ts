@@ -671,11 +671,15 @@ class WindowManager {
       const savedFocusTarget = this.lastFocusTarget
 
       // 恢复上次的焦点状态
-      // 如果明确记录了上次聚焦在主窗口，或者是首次显示（null），则强制聚焦主窗口
-      if (savedFocusTarget === 'mainWindow' || savedFocusTarget === null) {
+      // 加载中的插件尚无视图可聚焦，先让宿主接收关闭等键盘操作。
+      if (
+        savedFocusTarget === 'mainWindow' ||
+        savedFocusTarget === null ||
+        pluginManager.getCurrentPluginView() === null
+      ) {
         this.mainWindow?.webContents.focus()
         this.mainWindow?.webContents.send('focus-search', this.previousActiveWindow || null)
-      } else if (pluginManager.getCurrentPluginPath() !== null) {
+      } else {
         // 如果有插件在显示（且上次不是主窗口），聚焦插件
         pluginManager.focusPluginView()
         // 修复部分 Windows 系统窗口隐藏再显示后插件白屏：
@@ -1158,6 +1162,10 @@ class WindowManager {
     }, 80)
   }
 
+  /**
+   * 在 Windows 激活窗口后将键盘焦点交给实际已挂载的插件或宿主。
+   * @returns 无返回值
+   */
   private refocusActiveContentOnWindows(): void {
     if (!platform.isWindows) return
     if (!this.mainWindow?.isVisible()) return
@@ -1168,7 +1176,8 @@ class WindowManager {
     // Electron 的 isFocused 有时已经为 true，但 Windows 前台键盘目标仍未切到本应用；这里用原生激活补齐。
     NativeWindowManager.activateWindow(process.pid)
     this.mainWindow.focus()
-    if (pluginManager.getCurrentPluginPath() !== null && this.lastFocusTarget !== 'mainWindow') {
+    // 加载占位不代表已有可聚焦的视图，必须保留宿主作为键盘目标。
+    if (pluginManager.getCurrentPluginView() !== null && this.lastFocusTarget !== 'mainWindow') {
       pluginManager.focusPluginView()
       setImmediate(() => pluginManager.forceRepaintCurrentView())
       return

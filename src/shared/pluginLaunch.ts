@@ -3,6 +3,21 @@
  */
 export type PluginLaunchSource = 'search' | 'global-shortcut' | 'super-panel'
 
+/** 唤起主窗口前固定的启动行为，供宿主输入框和插件进入流程共同使用。 */
+export interface PluginMainWindowLaunchState {
+  mode: 'enter' | 'focus'
+  subInputValue: string
+}
+
+/** 插件进入回调收到的本次启动参数。 */
+export interface PluginEnterPayload {
+  code: string
+  type: string
+  payload: any
+  option?: any
+  from?: 'main' | 'panel' | 'hotkey' | 'redirect'
+}
+
 /**
  * 判断一次插件启动是否应保持主窗口隐藏。
  * @param source 插件启动来源。

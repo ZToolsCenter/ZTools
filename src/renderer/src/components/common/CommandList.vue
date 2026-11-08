@@ -198,8 +198,13 @@ watch(
   }
 )
 
+/**
+ * 将服务端高亮区间转换为显示名称的安全 HTML。
+ * @param app 服务端显示项
+ * @returns 高亮后的名称
+ */
 function getHighlightedName(app: Command): string {
-  return highlightMatch(app.name, app.matches, app.matchType, props.searchQuery)
+  return highlightMatch(app.name, props.searchQuery, app.highlightRanges)
 }
 
 // 获取 title 文本（悬浮提示）

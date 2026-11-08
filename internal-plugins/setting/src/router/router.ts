@@ -146,6 +146,17 @@ const homeRoutes: MenuRouterItemType[] = [
     }
   },
   {
+    path: '/permissions',
+    name: 'Permissions',
+    component: () => import('@/views/PermissionSetting/PermissionSetting.vue'),
+    meta: {
+      menu: {
+        label: '高级权限',
+        icon: 'i-z-ban'
+      }
+    }
+  },
+  {
     path: '/httpService',
     name: 'HttpService',
     component: () => import('@/views/HttpServiceSetting/HttpServiceSetting.vue'),

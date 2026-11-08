@@ -26,6 +26,25 @@ afterEach(() => {
 })
 
 describe('ZTools 3.0 storage routing', () => {
+  it('notifies local document writes and deletes without adding sync changes', async () => {
+    const manager = new StorageManager({ homeDir: makeTempRoot(), mapSize: 128 * 1024 * 1024 })
+    const device = manager.getDeviceDb()
+    const ids: string[] = []
+    device.on('local-change', (change) => ids.push(change.docId))
+    try {
+      const doc = { _id: 'ZTOOLS/plugins', data: [] }
+      expect(manager.getRouter().put(doc).ok).toBe(true)
+      expect(manager.getRouter().remove(doc._id).ok).toBe(true)
+      // 通知在事务提交后到达，数据库版本与同步日志均已确定。
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(ids).toEqual([doc._id, doc._id])
+      expect(device.getChangesSince(0)).toEqual([])
+      expect(device.get(doc._id)).toBeNull()
+    } finally {
+      manager.close()
+    }
+  })
+
   it('routes device data to device db and account data to current account db', () => {
     const homeDir = makeTempRoot()
     const manager = new StorageManager({ homeDir, mapSize: 128 * 1024 * 1024 })

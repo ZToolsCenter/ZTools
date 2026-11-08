@@ -781,6 +781,92 @@ export class PluginInstallerAPI {
   }
 
   /**
+   * 采纳已存在于插件目录中的实体（目录或版本化 ASAR），登记进已安装注册表。
+   * 供同步类插件在实体落盘后补齐注册表记录；同名插件已注册时等价 no-op。
+   * @param entityPath 插件实体绝对路径（必须位于插件根目录内）
+   * @returns {success, adopted, plugin?, error?}；adopted 为 false 表示同名已注册
+   */
+  public async adoptExistingEntity(entityPath: string): Promise<any> {
+    try {
+      // 仅接受插件根目录内的直接子实体，且不接受安装暂存目录。
+      if (typeof entityPath !== 'string' || !path.isAbsolute(entityPath)) {
+        return { success: false, error: '无效的插件实体路径' }
+      }
+      const resolved = path.resolve(entityPath)
+      const pluginsRoot = path.resolve(PLUGIN_DIR)
+      if (!resolved.startsWith(`${pluginsRoot}${path.sep}`)) {
+        return { success: false, error: '插件实体必须位于插件根目录内' }
+      }
+      const relative = path.relative(pluginsRoot, resolved)
+      if (
+        relative.split(path.sep).length !== 1 ||
+        relative.startsWith('.') ||
+        relative.endsWith('.unpacked')
+      ) {
+        return { success: false, error: '仅支持采纳插件根目录下的实体目录或 ASAR 文件' }
+      }
+
+      // 识别实体形态：目录或 ASAR 文件（Electron 的 fs 补丁可直接读取 asar 内文件）。
+      const stats = await fs.stat(resolved)
+      const isAsarFile = stats.isFile() && resolved.toLowerCase().endsWith('.asar')
+      const isDirectory = stats.isDirectory()
+      if (!isAsarFile && !isDirectory) {
+        return { success: false, error: '插件实体必须是目录或 ASAR 文件' }
+      }
+
+      // 读取实体内 plugin.json 作为权威配置。
+      let rawConfig: string
+      try {
+        rawConfig = await fs.readFile(path.join(resolved, 'plugin.json'), 'utf-8')
+      } catch {
+        return { success: false, error: '无效的插件实体：缺少 plugin.json' }
+      }
+      let pluginConfig: any
+      try {
+        pluginConfig = JSON.parse(rawConfig)
+      } catch {
+        return { success: false, error: '无效的插件实体：plugin.json 格式错误' }
+      }
+      if (typeof pluginConfig?.name !== 'string' || !pluginConfig.name.trim()) {
+        return { success: false, error: '无效的插件实体：缺少 name 字段' }
+      }
+
+      // 同名已注册时等价 no-op，直接返回既有记录。
+      const existingPlugins = this.deps.readInstalledPlugins()
+      const existingIndex = existingPlugins.findIndex(
+        (p: any) => p?.name === pluginConfig.name || p?.path === resolved
+      )
+      if (existingIndex >= 0) {
+        return { success: true, adopted: false, plugin: existingPlugins[existingIndex] }
+      }
+
+      // 走与常规安装一致的校验（标题 / 功能码冲突等）。
+      const validation = this.deps.validatePluginConfig(pluginConfig, existingPlugins)
+      if (!validation.valid) {
+        return { success: false, error: validation.error || '插件配置校验未通过' }
+      }
+
+      const pluginInfo = this.buildPluginInfo(
+        pluginConfig,
+        resolved,
+        isAsarFile ? 'asar' : 'directory'
+      )
+      this.deps.writeInstalledPlugins([...existingPlugins, pluginInfo])
+      try {
+        this.logInstalledFeatures(pluginConfig)
+        this.deps.notifyPluginsChanged()
+      } catch (error) {
+        console.error('[Plugins] 采纳实体后通知插件列表更新失败:', error)
+      }
+      console.log('[Plugins] 已采纳现有插件实体:', { name: pluginConfig.name, path: resolved })
+      return { success: true, adopted: true, plugin: pluginInfo }
+    } catch (error: unknown) {
+      console.error('[Plugins] 采纳插件实体失败:', error)
+      return { success: false, error: error instanceof Error ? error.message : '采纳失败' }
+    }
+  }
+
+  /**
    * 准备并发布 ZPX/ZIP 插件，然后把注册记录切换到新实体。
    * @param filePath 插件包绝对路径
    * @param isZpx 是否为 ZPX 格式

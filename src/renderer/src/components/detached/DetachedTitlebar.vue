@@ -744,15 +744,15 @@ function handleDblClick(): void {
 }
 
 /**
- * 键盘事件处理，拦截并转发回车、Tab 及方向键至插件。
+ * 处理 ESC 清空输入（包含纯空白），并拦截、转发回车、Tab 及方向键至插件。
  * @param event 键盘事件对象。
  * @returns 无返回值。
  */
 function handleKeydown(event: KeyboardEvent): void {
-  // ESC 键清空输入
+  // ESC 按原始长度判断待清空的内容，保证纯空白也同步通知插件。
   if (event.key === 'Escape') {
     event.preventDefault()
-    if (searchQuery.value.trim()) {
+    if (searchQuery.value.length > 0) {
       searchQuery.value = ''
       // 触发变动回调，通知插件
       handleSearchInput()

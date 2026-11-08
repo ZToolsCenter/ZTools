@@ -1,10 +1,17 @@
 <template>
-  <div v-if="apps.length > 0" class="vertical-list">
+  <div
+    v-if="apps.length > 0"
+    class="vertical-list"
+    :style="{
+      paddingTop: startIndex * 54 + 'px',
+      paddingBottom: (apps.length - endIndex) * 54 + 'px'
+    }"
+  >
     <div
-      v-for="(app, index) in apps"
+      v-for="(app, index) in visibleApps"
       :key="app.name + '|' + app.path + (app.featureCode || '')"
       class="list-item"
-      :class="{ selected: index === selectedIndex }"
+      :class="{ selected: index + startIndex === selectedIndex }"
       @click="$emit('select', app)"
       @contextmenu.prevent="$emit('contextmenu', app)"
     >
@@ -31,6 +38,7 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import type { Command } from '../../stores/commandDataStore'
 import { highlightMatch } from '../../utils/highlight'
 import { isDevelopmentPluginName } from '../../../../shared/pluginRuntimeNamespace'
@@ -39,20 +47,34 @@ interface Props {
   apps: Command[]
   selectedIndex?: number
   searchQuery?: string // 搜索查询（用于高亮）
+  scrollTop?: number
 }
 
 const props = withDefaults(defineProps<Props>(), {
   selectedIndex: -1,
-  searchQuery: ''
+  searchQuery: '',
+  scrollTop: 0
 })
+
+// 只挂载可见区域与预留行，完整结果仍供键盘导航使用。
+const startIndex = computed(() =>
+  Math.min(Math.max(0, props.apps.length - 24), Math.max(0, Math.floor(props.scrollTop / 54) - 6))
+)
+const endIndex = computed(() => Math.min(props.apps.length, startIndex.value + 24))
+const visibleApps = computed(() => props.apps.slice(startIndex.value, endIndex.value))
 
 defineEmits<{
   (e: 'select', app: Command): void
   (e: 'contextmenu', app: Command): void
 }>()
 
+/**
+ * 将服务端高亮区间转换为显示名称的安全 HTML。
+ * @param app 服务端显示项
+ * @returns 高亮后的名称
+ */
 function getHighlightedName(app: Command): string {
-  return highlightMatch(app.name, app.matches, app.matchType, props.searchQuery)
+  return highlightMatch(app.name, props.searchQuery, app.highlightRanges)
 }
 
 function getSubtitle(app: Command): string {
@@ -76,6 +98,9 @@ function getSubtitle(app: Command): string {
 }
 
 .list-item {
+  height: 52px;
+  box-sizing: border-box;
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: 12px;

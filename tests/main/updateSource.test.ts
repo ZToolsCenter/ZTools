@@ -30,10 +30,12 @@ describe('GitHub update source', () => {
         { id: -3, platformName: '官方源', isDirect: true, feedUrl: 'https://example.com/official/' }
       ])
     ).toBe(-3)
-    expect(getDefaultUpdateSourceID([
-      { id: 2, platformName: '夸克网盘', isDirect: false },
-      { id: 1, platformName: 'GitHub', isDirect: true }
-    ])).toBe(1)
+    expect(
+      getDefaultUpdateSourceID([
+        { id: 2, platformName: '夸克网盘', isDirect: false },
+        { id: 1, platformName: 'GitHub', isDirect: true }
+      ])
+    ).toBe(1)
   })
 
   it('falls back to the first source when GitHub is unavailable', () => {

@@ -6,16 +6,17 @@ import {
   FULL_INSTALL_RELEASE_URL
 } from './runtimeCompatibility'
 
-if (process.platform === 'win32') app.setAppUserModelId('top.z-tools')
-
-// Windows: Chromium 的 EnableTransparentHwndEnlargement 会为透明窗口放大 HWND
-// 以绘制阴影/圆角，导致 HWND 与网页渲染区高度不一致，在窗口底部露出一条灰色底色。
-// 关闭该特性后二者严格一致，灰条消失，阴影与圆角仍由 DWM 正常绘制。
 if (process.platform === 'win32') {
-  const disabled = app.commandLine.getSwitchValue('disable-features')
+  app.setAppUserModelId('top.z-tools')
+
+  // 在 app ready 前禁用透明 HWND 扩展，避免原生窗口与网页渲染区高度不一致造成底部灰条和搜索框裁切。
+  // 合并已有禁用项，保留外部传入的 Chromium 特性配置。
+  const disabledFeatures = app.commandLine.getSwitchValue('disable-features')
   app.commandLine.appendSwitch(
     'disable-features',
-    disabled ? `${disabled},EnableTransparentHwndEnlargement` : 'EnableTransparentHwndEnlargement'
+    disabledFeatures
+      ? `${disabledFeatures},EnableTransparentHwndEnlargement`
+      : 'EnableTransparentHwndEnlargement'
   )
 }
 

@@ -46,6 +46,7 @@ declare global {
             name: string
             path: string
             version: string
+            title?: string
             description?: string
             logo?: string
             features?: any[]
@@ -988,6 +989,66 @@ declare global {
 
         // 通知主渲染进程禁用指令列表已更改
         notifyDisabledCommandsChanged: () => Promise<{ success: boolean }>
+
+        // 通知主渲染进程插件列表已更改（失效指令缓存并刷新已安装列表与搜索索引）
+        notifyPluginsChanged: () => Promise<{ success: boolean }>
+
+        // 采纳插件目录中已存在的实体并登记到已安装注册表（同名已注册时为 no-op）
+        adoptPluginEntity: (entityPath: string) => Promise<{
+          success: boolean
+          adopted?: boolean
+          plugin?: any
+          error?: string
+        }>
+
+        // 高级 API 权限管理：读取待审申请、授权名单、完全授权名单与可用通道清单
+        getInternalApiGrants: () => Promise<{
+          permissions: Record<string, string[]>
+          requests: Record<string, { apis: string[]; reason?: string; requestedAt: number }>
+          channels: string[]
+          fullAccessPluginNames?: string[]
+          trustedPluginNames?: string[]
+          disabledPluginNames?: string[]
+        }>
+        // 高级 API 权限管理：设置插件授权通道列表（空数组等价移除全部授权）
+        setPluginInternalApiGrants: (
+          pluginName: string,
+          apis: string[]
+        ) => Promise<{
+          success: boolean
+          permissions?: Record<string, string[]>
+          error?: string
+        }>
+        // 高级 API 权限管理：整体启停插件授权（停用仅挂起配置，不清除既有授权）
+        setPluginInternalApiDisabled: (
+          pluginName: string,
+          disabled: boolean
+        ) => Promise<{
+          success: boolean
+          disabledPluginNames?: string[]
+          error?: string
+        }>
+        // 高级 API 权限管理：设置插件完全授权状态（降级时按通道明细由调用方随后写入）
+        setPluginInternalApiFullAccess: (
+          pluginName: string,
+          fullAccess: boolean
+        ) => Promise<{
+          success: boolean
+          fullAccessPluginNames?: string[]
+          error?: string
+        }>
+        // 高级 API 权限管理：审批（通道数组）或驳回（null）插件申请
+        resolveInternalApiRequest: (
+          pluginName: string,
+          grantedApis: string[] | null
+        ) => Promise<{
+          success: boolean
+          permissions?: Record<string, string[]>
+          requests?: Record<string, { apis: string[]; reason?: string; requestedAt: number }>
+          error?: string
+        }>
+        // 监听授权数据变化（申请提交 / 审批 / 名单变更时触发）
+        onInternalApiPermissionsChanged: (callback: () => void) => void
 
         // 固定/取消固定指令到搜索窗口
         pinApp: (app: any) => Promise<void>

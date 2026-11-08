@@ -60,7 +60,11 @@ interface UseOverlayPositionOptions {
 const DEFAULT_PANEL_GAP = 8
 const DEFAULT_VIEWPORT_PADDING = 8
 const DEFAULT_ARROW_SIZE = 10
-const DEFAULT_Z_INDEX = 10000
+// 内联 z-index 的默认值：需高于 BaseDialog 遮罩（30000），弹窗内下拉才不被遮挡；低于 Toast（40000）。
+// 内联样式优先级高于样式表，调整层级必须改这里而不是组件里的 .select-menu 规则。
+const DEFAULT_Z_INDEX = 30001
+// 面板收缩的最小可用高度（约可显示 3 个选项并滚动）；可用空间低于该值时放弃收缩，走翻转 / 夹取。
+const MIN_PANEL_FIT_HEIGHT = 120
 const ARROW_HALF = DEFAULT_ARROW_SIZE / 2
 
 /**
@@ -265,8 +269,10 @@ function applyPanelWidth(
 /**
  * 浮层定位 composable：根据触发节点与面板尺寸计算 fixed 定位坐标，支持视口自动翻转与对齐修正，
  * 并在滚动/resize 时通过 requestAnimationFrame 节流刷新。
+ * 首选边空间不足时优先把面板收缩到可用高度（不低于 MIN_PANEL_FIT_HEIGHT）就地展开，
+ * 收缩不足以容纳时才翻转，避免翻转后遮挡触发器上方的表单内容。
  * @param options 触发节点、面板引用、方位、宽度等配置
- * @returns resolvedPlacement（最终方位）、panelStyle（绑定到面板的内联样式）、containsTarget（判断点击是否落在触发或面板内）、updatePosition/scheduleUpdate（手动刷新）等
+ * @returns resolvedPlacement（最终方位）、panelStyle（绑定到面板的内联样式，含收缩后的 max-height）、containsTarget（判断点击是否落在触发或面板内）、updatePosition/scheduleUpdate（手动刷新）等
  */
 export function useOverlayPosition(options: UseOverlayPositionOptions) {
   const resolvedPlacement = ref<PopoverPlacement>(options.placement.value)
@@ -301,6 +307,8 @@ export function useOverlayPosition(options: UseOverlayPositionOptions) {
 
     const triggerRect = getAnchorElement()?.getBoundingClientRect() ?? null
     const appliedWidth = applyPanelWidth(panel, options.width?.value, triggerRect)
+    // 先清除上一次写入的内联 max-height，量出面板自然高度。
+    panel.style.removeProperty('max-height')
     const panelRect = panel.getBoundingClientRect()
     const viewportWidth = window.innerWidth
     const viewportHeight = window.innerHeight
@@ -312,6 +320,8 @@ export function useOverlayPosition(options: UseOverlayPositionOptions) {
     let nextPlacement = options.placement.value
     let left = viewportPadding
     let top = viewportPadding
+    // 参与定位计算的面板高度：空间不足收缩后与实际渲染高度一致。
+    let effectivePanelHeight = panelHeight
 
     if (typeof options.x?.value === 'number' && typeof options.y?.value === 'number') {
       left = clamp(
@@ -325,12 +335,30 @@ export function useOverlayPosition(options: UseOverlayPositionOptions) {
         Math.max(viewportPadding, viewportHeight - panelHeight - viewportPadding)
       )
     } else if (triggerRect) {
+      // 触发器两侧的可用空间（含间距与视口留白）。
+      const availableBelow = viewportHeight - triggerRect.bottom - gap - viewportPadding
+      const availableAbove = triggerRect.top - gap - viewportPadding
+
+      // 首选边放不下但可容纳最小高度时，先收缩面板高度再参与翻转决策，
+      // 让下拉在触发器下方以可滚动的小面板展开，避免翻转后遮挡上方的表单内容。
+      const initialSide = parsePlacement(options.placement.value).side
+      const preferredAvailable =
+        initialSide === 'bottom' ? availableBelow : initialSide === 'top' ? availableAbove : null
+      if (
+        preferredAvailable !== null &&
+        panelHeight > preferredAvailable &&
+        preferredAvailable >= MIN_PANEL_FIT_HEIGHT
+      ) {
+        effectivePanelHeight = preferredAvailable
+        panel.style.maxHeight = `${effectivePanelHeight}px`
+      }
+
       if (options.autoAdjustPlacement?.value !== false) {
         nextPlacement = resolveAutoAdjustedPlacement(
           options.placement.value,
           triggerRect,
           panelWidth,
-          panelHeight,
+          effectivePanelHeight,
           viewportWidth,
           viewportHeight,
           gap,
@@ -338,11 +366,24 @@ export function useOverlayPosition(options: UseOverlayPositionOptions) {
         )
       }
 
+      // 翻转后的边仍放不下时继续收缩；否则视口夹取会把面板压回触发器上形成遮挡。
+      const resolvedSide = parsePlacement(nextPlacement).side
+      const resolvedAvailable =
+        resolvedSide === 'bottom' ? availableBelow : resolvedSide === 'top' ? availableAbove : null
+      if (
+        resolvedAvailable !== null &&
+        effectivePanelHeight > resolvedAvailable &&
+        resolvedAvailable >= MIN_PANEL_FIT_HEIGHT
+      ) {
+        effectivePanelHeight = resolvedAvailable
+        panel.style.maxHeight = `${effectivePanelHeight}px`
+      }
+
       const position = getPlacementPosition(
         nextPlacement,
         triggerRect,
         panelWidth,
-        panelHeight,
+        effectivePanelHeight,
         gap
       )
       left = clamp(
@@ -353,7 +394,7 @@ export function useOverlayPosition(options: UseOverlayPositionOptions) {
       top = clamp(
         position.top,
         viewportPadding,
-        Math.max(viewportPadding, viewportHeight - panelHeight - viewportPadding)
+        Math.max(viewportPadding, viewportHeight - effectivePanelHeight - viewportPadding)
       )
     }
 
@@ -376,7 +417,8 @@ export function useOverlayPosition(options: UseOverlayPositionOptions) {
       top: `${top}px`,
       zIndex,
       visibility: 'visible',
-      width: appliedWidth
+      width: appliedWidth,
+      maxHeight: panel.style.maxHeight || undefined
     }
 
     options.onPositioned?.({

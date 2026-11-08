@@ -64,6 +64,82 @@ describe('plugin preload internal api bridge', () => {
     expect(ipcInvoke).toHaveBeenCalledWith('internal:update-dev-projects-order', ['beta', 'alpha'])
   })
 
+  it('forwards notifyPluginsChanged through the internal channel', async () => {
+    require(preloadPath)
+
+    const internalApi = (globalThis as any).window.ztools?.internal
+
+    expect(internalApi?.notifyPluginsChanged).toBeTypeOf('function')
+    await internalApi.notifyPluginsChanged()
+    expect(ipcInvoke).toHaveBeenCalledWith('internal:notify-plugins-changed')
+  })
+
+  it('forwards adoptPluginEntity with the entity path', async () => {
+    require(preloadPath)
+
+    const internalApi = (globalThis as any).window.ztools?.internal
+
+    expect(internalApi?.adoptPluginEntity).toBeTypeOf('function')
+    await internalApi.adoptPluginEntity('/plugins/webdav-sync-1.0.0-abcd.asar')
+    expect(ipcInvoke).toHaveBeenCalledWith(
+      'internal:adopt-plugin-entity',
+      '/plugins/webdav-sync-1.0.0-abcd.asar'
+    )
+  })
+
+  it('forwards internal api permission management channels', async () => {
+    require(preloadPath)
+
+    const internalApi = (globalThis as any).window.ztools?.internal
+
+    await internalApi.getInternalApiGrants()
+    await internalApi.setPluginInternalApiGrants('webdav-sync', ['internal:db-get'])
+    await internalApi.setPluginInternalApiDisabled('webdav-sync', true)
+    await internalApi.setPluginInternalApiFullAccess('webdav-sync', false)
+    await internalApi.resolveInternalApiRequest('webdav-sync', null)
+
+    expect(ipcInvoke).toHaveBeenCalledWith('internal:get-internal-api-grants')
+    expect(ipcInvoke).toHaveBeenCalledWith(
+      'internal:set-plugin-internal-api-grants',
+      'webdav-sync',
+      ['internal:db-get']
+    )
+    expect(ipcInvoke).toHaveBeenCalledWith(
+      'internal:set-plugin-internal-api-disabled',
+      'webdav-sync',
+      true
+    )
+    expect(ipcInvoke).toHaveBeenCalledWith(
+      'internal:set-plugin-internal-api-full-access',
+      'webdav-sync',
+      false
+    )
+    expect(ipcInvoke).toHaveBeenCalledWith(
+      'internal:resolve-internal-api-request',
+      'webdav-sync',
+      null
+    )
+  })
+
+  it('exposes plugin-facing internal api permission request helpers', async () => {
+    require(preloadPath)
+
+    const ztools = (globalThis as any).window.ztools
+
+    expect(ztools?.requestInternalApiPermissions).toBeTypeOf('function')
+    expect(ztools?.getInternalApiPermissions).toBeTypeOf('function')
+
+    await ztools.requestInternalApiPermissions(['internal:db-get'], '同步登记')
+    await ztools.getInternalApiPermissions()
+
+    expect(ipcInvoke).toHaveBeenCalledWith(
+      'plugin:request-internal-api-permissions',
+      ['internal:db-get'],
+      '同步登记'
+    )
+    expect(ipcInvoke).toHaveBeenCalledWith('plugin:get-internal-api-permissions')
+  })
+
   it('exposes upsertDevProjectByConfigPath for internal plugin runtimes', async () => {
     require(preloadPath)
 

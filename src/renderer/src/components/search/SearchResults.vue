@@ -1,5 +1,10 @@
 <template>
-  <div ref="scrollContainerRef" class="scrollable-content" @click="handleContainerClick">
+  <div
+    ref="scrollContainerRef"
+    class="scrollable-content"
+    @click="handleContainerClick"
+    @scroll="scrollPosition = ($event.target as HTMLElement).scrollTop"
+  >
     <!-- 聚合模式 -->
     <AggregateView
       v-if="searchMode === 'aggregate'"
@@ -8,10 +13,10 @@
       v-model:search-results-expanded="isSearchResultsExpanded"
       v-model:best-matches-expanded="isBestMatchesExpanded"
       v-model:recommendations-expanded="isRecommendationsExpanded"
-      :search-query="searchQuery"
-      :pasted-image="pastedImage"
-      :pasted-files="pastedFiles"
-      :pasted-text="pastedText"
+      :search-query="displayContext.searchQuery"
+      :pasted-image="displayContext.pastedImage"
+      :pasted-files="displayContext.pastedFiles"
+      :pasted-text="displayContext.pastedText"
       :best-search-results="bestSearchResults"
       :best-matches="bestMatches"
       :recommendations="recommendationItems"
@@ -42,7 +47,8 @@
       <VerticalList
         :apps="allListModeResults"
         :selected-index="listModeSelectedIndex"
-        :search-query="searchQuery"
+        :search-query="displayContext.searchQuery"
+        :scroll-top="scrollPosition"
         @select="handleSelectApp"
         @contextmenu="(app) => handleAppContextMenu(app, 'search')"
       />
@@ -52,7 +58,7 @@
 
 <script setup lang="ts">
 import { storeToRefs } from 'pinia'
-import { computed, nextTick, onMounted, onUnmounted, ref, toRaw, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { normalizeConfigList } from '@shared/pluginSettings'
 import {
   useMainPushResults,
@@ -70,29 +76,14 @@ import { useWindowStore } from '../../stores/windowStore'
 import VerticalList from '../common/VerticalList.vue'
 import AggregateView from './AggregateView.vue'
 import { buildAggregateNavigationGrid } from './navigationGrid'
-
-// MatchFile 接口（传递给插件的文件格式）
-interface MatchFile {
-  isFile: boolean
-  isDirectory: boolean
-  name: string
-  path: string
-}
-
-// FileItem 接口（从剪贴板管理器返回的格式）
-interface FileItem {
-  path: string
-  name: string
-  isDirectory: boolean
-}
+import type { NavigationGridRow } from './navigationGrid'
 
 interface Props {
   searchQuery: string
   pastedImage?: string | null
-  pastedFiles?: FileItem[] | null
+  pastedFiles?: Array<{ path: string; name: string; isDirectory: boolean }> | null
   pastedText?: string | null
 }
-
 type ContextMenuSource = 'history' | 'pinned' | 'search' | 'recommendation'
 
 const props = defineProps<Props>()
@@ -108,7 +99,7 @@ const emit = defineEmits<{
 
 // 使用 store
 const commandDataStore = useCommandDataStore()
-const { loading } = storeToRefs(commandDataStore)
+const { loading, displayContext } = storeToRefs(commandDataStore)
 const {
   getRecentCommands,
   removeFromHistory,
@@ -122,7 +113,6 @@ const {
   moveRecommendationToFront,
   getPinnedCommands,
   updatePinnedOrder,
-  recordSearchTermHit,
   loadSuperPanelPinnedData,
   isPinnedToSuperPanel
 } = commandDataStore
@@ -140,10 +130,11 @@ const recommendationItems = computed(() =>
 )
 
 // 使用 mainPush 结果 composable
-const { mainPushGroups, handleMainPushSelect } = useMainPushResults(props)
+const { mainPushGroups, handleMainPushSelect } = useMainPushResults()
 
 // 内部状态
 const scrollContainerRef = ref<HTMLElement>()
+const scrollPosition = ref(0)
 const showRecentInSearch = computed(() => windowStore.showRecentInSearch)
 
 // 展示设置插件详情页面对应小项的 payload
@@ -176,34 +167,21 @@ function parsePluginPayload(raw: string): PluginPayload | null {
 // 是否有搜索内容
 
 const hasSearchContent = computed(() => {
-  return !!(props.searchQuery.trim() || props.pastedImage || props.pastedText || props.pastedFiles)
+  const context = displayContext.value
+  return !!(
+    context.searchQuery.trim() ||
+    context.pastedImage ||
+    context.pastedText ||
+    context.pastedFiles
+  )
 })
 
-// 窗口匹配的操作列表（基于 feature 动态匹配）
-const windowMatchedActions = computed(() => {
-  const currentWindow = windowStore.currentWindow
-  if (!currentWindow) {
-    return []
-  }
-
-  // 使用 commandDataStore 的 searchWindowCommands 进行匹配
-  const matched = commandDataStore.searchWindowCommands({
-    app: currentWindow.app,
-    title: currentWindow.title,
-    className: currentWindow.className
-  })
-
-  // 如果有搜索内容，在匹配的窗口指令中进一步搜索
-  if (props.searchQuery.trim()) {
-    return commandDataStore.searchInCommands(matched, props.searchQuery)
-  }
-
-  return matched
-})
+// 窗口匹配分组由主进程根据本次输入和窗口快照生成。
+const windowMatchedActions = computed(() => commandDataStore.result.windowCommands)
 
 // 窗口匹配栏的标题（基于当前窗口的 app 名称）
 const windowMatchTitle = computed(() => {
-  const currentWindow = windowStore.currentWindow
+  const currentWindow = displayContext.value.windowInfo
   if (!currentWindow) {
     return ''
   }
@@ -214,8 +192,9 @@ const windowMatchTitle = computed(() => {
 
 // 显示的应用列表
 const displayApps = computed(() => {
-  if (props.pastedImage || props.pastedText || props.pastedFiles) return []
-  if (props.searchQuery.trim() === '') {
+  const context = displayContext.value
+  if (context.pastedImage || context.pastedText || context.pastedFiles) return []
+  if (context.searchQuery.trim() === '') {
     return getRecentCommands()
   }
   return []
@@ -234,7 +213,7 @@ const isBestMatchesExpanded = ref(false)
 const isRecommendationsExpanded = ref(false)
 
 // 构建导航网格
-const navigationGrid = computed(() => {
+const navigationGrid = computed<NavigationGridRow[]>(() => {
   // 列表模式：使用一维数组（每个项目占一行）
   if (searchMode.value === 'list') {
     if (!hasSearchContent.value) {
@@ -293,14 +272,48 @@ const listModeSelectedIndex = computed(() => {
   return index
 })
 
-// 监听搜索内容变化,重置选中状态和折叠状态
+/**
+ * 为导航展示项生成身份，动态选项附加所属结果组以避免跨插件同名。
+ * @param row 导航行
+ * @param item 导航项目
+ * @returns 用于保留选择的身份
+ */
+function navigationIdentity(row: NavigationGridRow, item: any): string {
+  return row.mainPushGroup
+    ? row.mainPushGroup.resultId + JSON.stringify(item)
+    : item?.resultId || JSON.stringify([item?.path, item?.featureCode, item?.name])
+}
+
+let selectionRequestId = commandDataStore.result.requestId
 watch(
-  [
-    () => props.searchQuery,
-    () => props.pastedImage,
-    () => props.pastedText,
-    () => props.pastedFiles
-  ],
+  navigationGrid,
+  (next, previous) => {
+    const newQuery = selectionRequestId !== commandDataStore.result.requestId
+    selectionRequestId = commandDataStore.result.requestId
+    const oldRow = previous[selectedRow.value]
+    const oldItem = oldRow?.items[selectedCol.value]
+    if (!newQuery && oldItem) {
+      const identity = navigationIdentity(oldRow, oldItem)
+      for (let row = 0; row < next.length; row++) {
+        const col = next[row].items.findIndex(
+          (item) => navigationIdentity(next[row], item) === identity
+        )
+        if (col >= 0) {
+          selectedRow.value = row
+          selectedCol.value = col
+          break
+        }
+      }
+    }
+    // 异步静态结果与逐组动态结果都要重新测量窗口高度。
+    emit('height-changed')
+  },
+  { flush: 'post' }
+)
+
+// 新结果提交时才重置，查询等待期间保留原有布局。
+watch(
+  () => commandDataStore.result.requestId,
   () => {
     resetSelection()
     // 重置所有折叠状态
@@ -327,10 +340,22 @@ watch(
   }
 )
 
-// 滚动到选中的项
+/**
+ * 滚动到键盘选中项，虚拟列表使用行高定位未挂载的项目。
+ * @returns 无返回值
+ */
 function scrollToSelectedItem(): void {
   const container = scrollContainerRef.value
   if (!container) {
+    return
+  }
+  if (searchMode.value === 'list') {
+    // 虚拟列表中目标可能尚未挂载，使用固定行高定位后再由页面渲染它。
+    const top = listModeSelectedIndex.value * 54
+    if (top < container.scrollTop) container.scrollTop = top
+    else if (top + 54 > container.scrollTop + container.clientHeight)
+      container.scrollTop = top + 54 - container.clientHeight
+    scrollPosition.value = container.scrollTop
     return
   }
 
@@ -630,83 +655,16 @@ async function handleAppContextMenu(app: any, source: ContextMenuSource = 'searc
 }
 
 // 选择应用
+/**
+ * 将选择身份交给统一执行服务，页面只处理显示与状态恢复。
+ * @param app 当前选择的指令
+ * @returns 操作结束的 Promise
+ */
 async function handleSelectApp(app: any): Promise<void> {
   try {
-    // 如果是"上次匹配"指令，执行恢复逻辑
-    if (app.path === 'special:last-match') {
-      const state = await window.ztools.restoreLastMatch()
-      if (state) {
-        emit('restore-match', state)
-      }
-      return
-    }
-
-    // 记录搜索词热度（有搜索词即记录，覆盖应用/插件/匹配类指令）
-    if (props.searchQuery.trim()) {
-      recordSearchTermHit(props.searchQuery, app)
-    }
-
-    // 构造 payload 和 type
-    let payload: any = props.searchQuery
-    let type = app.cmdType || 'text'
-
-    if (app.cmdType === 'img' && props.pastedImage) {
-      payload = props.pastedImage
-    } else if (app.cmdType === 'over' && props.pastedText) {
-      payload = props.pastedText
-    } else if (app.cmdType === 'regex' && props.pastedText) {
-      payload = props.pastedText
-    } else if (app.cmdType === 'files' && props.pastedFiles) {
-      payload = props.pastedFiles.map((file) => ({
-        isFile: !file.isDirectory,
-        isDirectory: file.isDirectory,
-        name: file.name,
-        path: file.path
-      })) as MatchFile[]
-    } else if (app.cmdType === 'window') {
-      if (!commandDataStore.matchesWindowCommand(app, windowStore.currentWindow)) {
-        console.warn('window 指令与当前窗口不匹配，已阻止启动:', app.name)
-        return
-      }
-      payload = JSON.parse(JSON.stringify(windowStore.currentWindow))
-    }
-
-    // 启动应用或插件
-    await window.ztools.launch({
-      path: app.path,
-      type: app.type || 'app',
-      featureCode: app.featureCode,
-      name: app.name,
-      cmdType: app.cmdType || 'text',
-      confirmDialog: app.confirmDialog
-        ? {
-            type: app.confirmDialog.type,
-            buttons: [...app.confirmDialog.buttons],
-            defaultId: app.confirmDialog.defaultId,
-            cancelId: app.confirmDialog.cancelId,
-            title: app.confirmDialog.title,
-            message: app.confirmDialog.message,
-            detail: app.confirmDialog.detail
-          }
-        : undefined,
-      param: {
-        payload,
-        type,
-        inputState: {
-          searchQuery: props.searchQuery,
-          pastedImage: props.pastedImage,
-          pastedFiles: props.pastedFiles
-            ? props.pastedFiles.map((file) => ({
-                isFile: !file.isDirectory,
-                isDirectory: file.isDirectory,
-                name: file.name,
-                path: file.path
-              }))
-            : null,
-          pastedText: props.pastedText
-        }
-      }
-    })
+    const response = await commandDataStore.execute(app)
+    if (response.restoreContext) emit('restore-match', response.restoreContext)
+    if (!response.success) console.error('启动失败:', response.error)
   } catch (error) {
     console.error('启动失败:', error)
   }
@@ -729,55 +687,30 @@ async function handleRecommendationSelect(item: any): Promise<void> {
   }
 }
 
-// 处理 mainPush 搜索结果选择
+/**
+ * 提交动态结果选择，主进程决定是否进入插件。
+ * @param group 动态分组
+ * @param item 插件返回的选项
+ * @returns 操作结束的 Promise
+ */
 async function handleMainPushSelectAction(group: MainPushGroup, item: MainPushItem): Promise<void> {
-  try {
-    const shouldEnter = await handleMainPushSelect(group, item, props.searchQuery)
-    if (shouldEnter) {
-      // 构建原始 item（剔除内部展示字段）
-      const rawItem = JSON.parse(JSON.stringify(toRaw(item)))
-      delete rawItem._resolvedIcon
-      // 进入插件
-      await window.ztools.launch({
-        path: group.pluginPath,
-        type: 'plugin',
-        featureCode: group.featureCode,
-        name: group.featureExplain || group.pluginName,
-        cmdType: group.matchedCmdType,
-        param: {
-          payload: props.searchQuery,
-          type: group.matchedCmdType,
-          from: 'main',
-          option: rawItem
-        }
-      })
-    }
-  } catch (error) {
-    console.error('mainPush 选择处理失败:', error)
-  }
+  await handleMainPushSelect(group, item)
 }
 
-// 点击 mainPush 标题行，直接进入插件应用
+/**
+ * 直接进入产生当前动态结果的插件。
+ * @param group 动态分组
+ * @returns 操作结束的 Promise
+ */
 async function handleEnterMainPushApp(group: MainPushGroup): Promise<void> {
-  try {
-    await window.ztools.launch({
-      path: group.pluginPath,
-      type: 'plugin',
-      featureCode: group.featureCode,
-      name: group.featureExplain || group.pluginName,
-      cmdType: group.matchedCmdType,
-      param: {
-        payload: props.searchQuery,
-        type: group.matchedCmdType,
-        from: 'main'
-      }
-    })
-  } catch (error) {
-    console.error('mainPush 进入应用失败:', error)
-  }
+  await handleMainPushSelect(group, undefined, true)
 }
 
-// 键盘导航
+/**
+ * 执行当前选择并处理其他导航按键。
+ * @param event 键盘事件
+ * @returns 按键处理结束的 Promise
+ */
 async function handleKeydown(event: KeyboardEvent): Promise<void> {
   const grid = navigationGrid.value
   if (!grid || grid.length === 0) return
@@ -946,7 +879,7 @@ async function handleContextMenuCommand(command: string): Promise<void> {
     const pluginPayload = parsePluginPayload(command.replace('view-plugin-detail:', ''))
     try {
       // 从 commandDataStore 中查找设置插件（已安装插件功能）的路径
-      const settingCmd = commandDataStore.commands.find(
+      const settingCmd = (await window.ztools.commands.getCatalog()).find(
         (c) =>
           c.type === 'plugin' &&
           c.pluginName === 'setting' &&
@@ -1027,7 +960,7 @@ async function handleContextMenuCommand(command: string): Promise<void> {
       const targetCommand = pluginTitle ? `${pluginTitle}/${name}` : name
 
       // 找到设置插件的快捷键指令
-      const settingCmd = commandDataStore.commands.find(
+      const settingCmd = (await window.ztools.commands.getCatalog()).find(
         (c) =>
           c.type === 'plugin' &&
           c.pluginName === 'setting' &&

@@ -107,15 +107,22 @@
           </template>
           <!-- 普通指令图标 -->
           <template v-else>
-            <img
-              v-if="cmd.icon && !iconErrors.has(getItemKey(cmd))"
-              :src="cmd.icon"
-              class="grid-icon"
-              draggable="false"
-              @error="iconErrors.add(getItemKey(cmd))"
-            />
-            <div v-else class="grid-icon-placeholder">
-              {{ cmd.name.charAt(0).toUpperCase() }}
+            <div class="command-icon-wrap grid-icon-wrap">
+              <img
+                v-if="cmd.icon && !iconErrors.has(getItemKey(cmd))"
+                :src="cmd.icon"
+                class="grid-icon"
+                draggable="false"
+                @error="iconErrors.add(getItemKey(cmd))"
+              />
+              <div v-else class="grid-icon-placeholder">
+                {{ cmd.name.charAt(0).toUpperCase() }}
+              </div>
+              <span
+                v-if="cmd.pluginName && isDevelopmentPluginName(cmd.pluginName)"
+                class="app-dev-badge"
+                >DEV</span
+              >
             </div>
             <span class="grid-name">{{ cmd.name }}</span>
           </template>
@@ -208,15 +215,22 @@
           @click="launch(result)"
           @mouseenter="selectedIndex = index"
         >
-          <img
-            v-if="result.icon && !iconErrors.has(getItemKey(result))"
-            :src="result.icon"
-            class="list-icon"
-            draggable="false"
-            @error="iconErrors.add(getItemKey(result))"
-          />
-          <div v-else class="list-icon-placeholder">
-            {{ result.name.charAt(0).toUpperCase() }}
+          <div class="command-icon-wrap list-icon-wrap">
+            <img
+              v-if="result.icon && !iconErrors.has(getItemKey(result))"
+              :src="result.icon"
+              class="list-icon"
+              draggable="false"
+              @error="iconErrors.add(getItemKey(result))"
+            />
+            <div v-else class="list-icon-placeholder">
+              {{ result.name.charAt(0).toUpperCase() }}
+            </div>
+            <span
+              v-if="result.pluginName && isDevelopmentPluginName(result.pluginName)"
+              class="app-dev-badge"
+              >DEV</span
+            >
           </div>
           <div class="list-info">
             <span class="list-name">{{ result.name }}</span>
@@ -289,15 +303,22 @@
               @click="launchFromFolder(cmd)"
               @contextmenu.prevent="handleFolderItemContextMenu(cmd, idx)"
             >
-              <img
-                v-if="cmd.icon && !iconErrors.has(getItemKey(cmd))"
-                :src="cmd.icon"
-                class="grid-icon"
-                draggable="false"
-                @error="iconErrors.add(getItemKey(cmd))"
-              />
-              <div v-else class="grid-icon-placeholder">
-                {{ cmd.name.charAt(0).toUpperCase() }}
+              <div class="command-icon-wrap grid-icon-wrap">
+                <img
+                  v-if="cmd.icon && !iconErrors.has(getItemKey(cmd))"
+                  :src="cmd.icon"
+                  class="grid-icon"
+                  draggable="false"
+                  @error="iconErrors.add(getItemKey(cmd))"
+                />
+                <div v-else class="grid-icon-placeholder">
+                  {{ cmd.name.charAt(0).toUpperCase() }}
+                </div>
+                <span
+                  v-if="cmd.pluginName && isDevelopmentPluginName(cmd.pluginName)"
+                  class="app-dev-badge"
+                  >DEV</span
+                >
               </div>
               <span class="grid-name">{{ cmd.name }}</span>
             </div>
@@ -379,15 +400,22 @@
                 @click="launchWindowMatch(item)"
                 @mouseenter="windowMatchSelectedIndex = fileLocationJumpTargets.length + index"
               >
-                <img
-                  v-if="item.icon && !iconErrors.has(getItemKey(item))"
-                  :src="item.icon"
-                  class="list-icon"
-                  draggable="false"
-                  @error="iconErrors.add(getItemKey(item))"
-                />
-                <div v-else class="list-icon-placeholder">
-                  {{ item.name.charAt(0).toUpperCase() }}
+                <div class="command-icon-wrap list-icon-wrap">
+                  <img
+                    v-if="item.icon && !iconErrors.has(getItemKey(item))"
+                    :src="item.icon"
+                    class="list-icon"
+                    draggable="false"
+                    @error="iconErrors.add(getItemKey(item))"
+                  />
+                  <div v-else class="list-icon-placeholder">
+                    {{ item.name.charAt(0).toUpperCase() }}
+                  </div>
+                  <span
+                    v-if="item.pluginName && isDevelopmentPluginName(item.pluginName)"
+                    class="app-dev-badge"
+                    >DEV</span
+                  >
                 </div>
                 <div class="list-info">
                   <span class="list-name">{{ item.name }}</span>
@@ -415,6 +443,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { useSuperPanelDrag } from '../composables/useSuperPanelDrag'
+import { isDevelopmentPluginName } from '../../../shared/pluginRuntimeNamespace'
+import type { PanelSearchSnapshot } from '@shared/commandService'
 import defaultAvatar from '../assets/image/default.png'
 
 interface CommandItem {
@@ -441,19 +471,6 @@ type GridItem = CommandItem | FolderItem
 
 function isFolder(item: GridItem): item is FolderItem {
   return 'isFolder' in item && (item as FolderItem).isFolder === true
-}
-
-function generateFolderId(): string {
-  return Date.now().toString(36) + Math.random().toString(36).slice(2, 7)
-}
-
-/** 兼容旧数据：给没有 id 的文件夹补上 */
-function ensureFolderIds(items: GridItem[]): void {
-  for (const item of items) {
-    if (isFolder(item) && !item.id) {
-      item.id = generateFolderId()
-    }
-  }
 }
 
 interface ClipboardContent {
@@ -500,6 +517,8 @@ type FileLocationAddressBarTarget = Pick<
 const mode = ref<'pinned' | 'search' | 'loading'>('loading')
 const pinnedCommands = ref<GridItem[]>([])
 const searchResults = ref<CommandItem[]>([])
+const contentSnapshot = ref<PanelSearchSnapshot>()
+const windowSnapshot = ref<PanelSearchSnapshot>()
 const selectedIndex = ref(0)
 const iconErrors = ref<Set<string>>(new Set())
 // 保存当前的剪贴板内容（由搜索结果携带）
@@ -654,23 +673,33 @@ const clipboardDescription = computed(() => {
   return ''
 })
 
-// 保存固定列表
-async function savePinnedCommands(): Promise<void> {
-  try {
-    const plainCommands = JSON.parse(JSON.stringify(pinnedCommands.value))
-    await window.ztools.updateSuperPanelPinnedOrder(plainCommands)
-  } catch (error) {
-    console.error('保存固定列表顺序失败:', error)
+/**
+ * 提交身份操作并以主进程结果更新显示，失败时使用返回快照回滚。
+ * @param operation 项目操作
+ * @returns 操作结束的 Promise
+ */
+async function submitPanelMutation(
+  operation: import('@shared/commandService').PanelMutation
+): Promise<void> {
+  const response = await window.ztools.mutateSuperPanelPinned(operation)
+  pinnedCommands.value = response.items
+  if (currentFolder.value) {
+    const folder = pinnedCommands.value.find(
+      (item) => isFolder(item) && item.id === currentFolder.value!.id
+    )
+    if (folder && isFolder(folder)) currentFolder.value = folder
+    else closeFolderPopup()
   }
+  if (!response.success) console.error('面板操作失败:', response.error)
 }
 
 /**
- * 将拖拽预览一次性提交为文件夹排序、顶层排序或合并。
- * @param source 被拖拽项目
+ * 将拖动几何位置转换为身份与插入锚点，业务规则由主进程执行。
+ * @param source 拖动源项
  * @param fromFolder 是否从文件夹开始
- * @param outside 是否已跨越文件夹边界
- * @param gap 去掉源项后的插入槽位
- * @param targetKey 已完成停留的合并目标身份
+ * @param outside 是否跨越文件夹边界
+ * @param gap 去掉源项后的槽位
+ * @param targetKey 合并目标身份
  * @returns 无返回值
  */
 function commitDrag(
@@ -681,122 +710,85 @@ function commitDrag(
   targetKey: string | null
 ): void {
   const key = getItemKey(source)
-  // 文件夹内只排序，禁止创建嵌套文件夹。
-  if (fromFolder && !outside) {
-    if (!currentFolder.value || isFolder(source)) return
-    const flow = currentFolder.value.items.filter((item) => getItemKey(item) !== key)
-    flow.splice(Math.min(gap, flow.length), 0, source)
-    currentFolder.value.items = flow
-    void savePinnedCommands()
-    return
-  }
-
-  const flow = pinnedCommands.value.filter((item) => getItemKey(item) !== key)
-  if (fromFolder) {
-    if (!currentFolder.value || isFolder(source)) return
-    // 松手前源项一直保留在文件夹；此处才迁移并解散仅剩一项的文件夹。
-    const folder = currentFolder.value
-    folder.items = folder.items.filter((item) => getItemKey(item) !== key)
-    const index = flow.findIndex((item) => getItemKey(item) === getItemKey(folder))
-    if (folder.items.length <= 1 && index >= 0) {
-      flow.splice(index, 1, ...folder.items)
-      // 原文件夹退化为普通项目后，继续以同一位置接收合并。
-      if (targetKey === getItemKey(folder))
-        targetKey = folder.items[0] ? getItemKey(folder.items[0]) : null
-      if (folder.items.length === 0 && index < gap) gap--
-    }
-    closeFolderPopup()
-  }
-
-  const targetIndex = flow.findIndex((item) => getItemKey(item) === targetKey)
-  if (targetIndex >= 0 && !isFolder(source)) {
-    const target = flow[targetIndex]
-    if (isFolder(target)) {
-      if (!target.items.some((item) => getItemKey(item) === key)) target.items.push(source)
-    } else {
-      flow[targetIndex] = {
-        isFolder: true,
-        id: generateFolderId(),
-        name: '文件夹',
-        items: [target, source]
-      }
-    }
-  } else {
-    flow.splice(Math.max(0, Math.min(gap, flow.length)), 0, source)
-  }
-  pinnedCommands.value = flow
+  const container = fromFolder && !outside ? currentFolder.value : null
+  const flow = (container ? container.items : pinnedCommands.value).filter(
+    (item) => getItemKey(item) !== key
+  )
+  const beforeKey = flow[gap] ? getItemKey(flow[gap]) : undefined
+  void submitPanelMutation({
+    action: 'move',
+    sourceKey: key,
+    targetKey: container ? null : targetKey,
+    beforeKey,
+    containerKey: container ? getItemKey(container) : undefined
+  })
   selectedIndex.value = Math.max(0, Math.min(gap, flow.length - 1))
-  void savePinnedCommands()
 }
 
-// 添加到已有文件夹
+/**
+ * 合并普通指令到已有文件夹。
+ * @param folderIndex 文件夹显示位置
+ * @param draggedIndex 指令显示位置
+ * @returns 无返回值
+ */
 function addToFolder(folderIndex: number, draggedIndex: number): void {
   const folder = pinnedCommands.value[folderIndex]
-  if (!isFolder(folder)) return
-
-  const dragged = pinnedCommands.value[draggedIndex]
-  if (isFolder(dragged)) return
-
-  folder.items.push(dragged as CommandItem)
-  pinnedCommands.value.splice(draggedIndex, 1)
-  savePinnedCommands()
+  const source = pinnedCommands.value[draggedIndex]
+  if (folder && source)
+    void submitPanelMutation({
+      action: 'move',
+      sourceKey: getItemKey(source),
+      targetKey: getItemKey(folder)
+    })
 }
 
-// 移出文件夹
+/**
+ * 移出文件夹，服务端决定是否解散源文件夹。
+ * @param folderIndex 文件夹显示位置
+ * @param itemIndex 内部指令位置
+ * @returns 无返回值
+ */
 function moveOutOfFolder(folderIndex: number, itemIndex: number): void {
   const folder = pinnedCommands.value[folderIndex]
-  if (!isFolder(folder)) return
-
-  const item = folder.items.splice(itemIndex, 1)[0]
-  pinnedCommands.value.splice(folderIndex + 1, 0, item)
-
-  // 文件夹只剩 1 个指令时自动解散
-  if (folder.items.length <= 1) {
-    const lastItem = folder.items[0]
-    pinnedCommands.value.splice(folderIndex, 1, ...(lastItem ? [lastItem] : []))
-    closeFolderPopup()
-  } else if (showFolderPopup.value && currentFolder.value) {
-    // 更新弹窗中的文件夹引用
-    currentFolder.value = folder
-  }
-
-  savePinnedCommands()
+  if (!isFolder(folder) || !folder.items[itemIndex]) return
+  const before = pinnedCommands.value[folderIndex + 1]
+  void submitPanelMutation({
+    action: 'move',
+    sourceKey: getItemKey(folder.items[itemIndex]),
+    beforeKey: before ? getItemKey(before) : undefined
+  })
 }
 
-// 从文件夹中取消固定
+/**
+ * 取消文件夹内指令的固定。
+ * @param folderIndex 文件夹显示位置
+ * @param itemIndex 内部指令位置
+ * @returns 无返回值
+ */
 function unpinFromFolder(folderIndex: number, itemIndex: number): void {
   const folder = pinnedCommands.value[folderIndex]
-  if (!isFolder(folder)) return
-
-  folder.items.splice(itemIndex, 1)
-
-  if (folder.items.length <= 1) {
-    const lastItem = folder.items[0]
-    pinnedCommands.value.splice(folderIndex, 1, ...(lastItem ? [lastItem] : []))
-    closeFolderPopup()
-  } else if (showFolderPopup.value && currentFolder.value) {
-    currentFolder.value = folder
-  }
-
-  savePinnedCommands()
+  if (isFolder(folder) && folder.items[itemIndex])
+    void submitPanelMutation({ action: 'remove', key: getItemKey(folder.items[itemIndex]) })
 }
 
-// 解散文件夹（将内容展开到原位置）
+/**
+ * 解散指定文件夹。
+ * @param folderIndex 文件夹显示位置
+ * @returns 无返回值
+ */
 function ungroupFolder(folderIndex: number): void {
   const folder = pinnedCommands.value[folderIndex]
-  if (!isFolder(folder)) return
-
-  pinnedCommands.value.splice(folderIndex, 1, ...folder.items)
-  savePinnedCommands()
+  if (folder) void submitPanelMutation({ action: 'ungroup', key: getItemKey(folder) })
 }
 
-// 删除文件夹（连同内容一起删除）
+/**
+ * 删除指定文件夹及其固定内容。
+ * @param folderIndex 文件夹显示位置
+ * @returns 无返回值
+ */
 function deleteFolder(folderIndex: number): void {
   const folder = pinnedCommands.value[folderIndex]
-  if (!isFolder(folder)) return
-
-  pinnedCommands.value.splice(folderIndex, 1)
-  savePinnedCommands()
+  if (folder) void submitPanelMutation({ action: 'remove', key: getItemKey(folder) })
 }
 
 // 右键菜单
@@ -871,13 +863,17 @@ function startRenameFolder(): void {
   }, 200)
 }
 
+/**
+ * 将改名动作交给主进程校验和持久化。
+ * @returns 无返回值
+ */
 function confirmRenameFolder(): void {
   if (!currentFolder.value || !isRenamingFolder.value) return
-  const newName = folderNameInput.value.trim()
-  if (newName && newName !== currentFolder.value.name) {
-    currentFolder.value.name = newName
-    savePinnedCommands()
-  }
+  void submitPanelMutation({
+    action: 'rename',
+    key: getItemKey(currentFolder.value),
+    name: folderNameInput.value
+  })
   isRenamingFolder.value = false
 }
 
@@ -1189,10 +1185,14 @@ async function jumpToFileLocationTarget(target: FileLocationJumpTarget): Promise
   }
 }
 
-// 从窗口匹配面板启动指令
+/**
+ * 按当前窗口分组的展示快照执行所选指令。
+ * @param cmd 所选窗口指令
+ * @returns 启动请求处理完成的 Promise
+ */
 async function launchWindowMatch(cmd: CommandItem): Promise<void> {
   closeWindowMatch()
-  await launch(cmd)
+  await launch(cmd, windowSnapshot.value)
 }
 
 // 获取窗口匹配面板可操作项总数
@@ -1227,19 +1227,24 @@ function getCurrentList(): (GridItem | CommandItem)[] {
   return mode.value === 'pinned' ? pinnedCommands.value : searchResults.value
 }
 
-// 启动指令（携带剪贴板内容和窗口信息）
-async function launch(cmd: CommandItem): Promise<void> {
+/**
+ * 提交面板选择及其展示身份，输入内容由主进程快照提供。
+ * @param cmd 所选指令
+ * @param snapshot 所选指令所属的查询快照，固定项不需要查询身份
+ * @returns 启动请求处理完成的 Promise
+ */
+async function launch(
+  cmd: CommandItem,
+  snapshot = mode.value === 'search' ? contentSnapshot.value : undefined
+): Promise<void> {
   try {
     console.log('启动指令:', cmd, '剪贴板内容:', currentClipboardContent.value?.type)
-    // 将命令和剪贴板内容一起发送给主进程，由主进程转发给主渲染进程处理
-    const launchData = JSON.parse(
-      JSON.stringify({
-        ...cmd,
-        clipboardContent: currentClipboardContent.value,
-        windowInfo: currentWindowInfo.value
-      })
+    // 快照独立传递，避免指令固定、分组等持久化操作写入临时查询身份。
+    const response = await window.ztools.superPanelLaunch(
+      JSON.parse(JSON.stringify(cmd)),
+      snapshot ? { ...snapshot } : undefined
     )
-    await window.ztools.superPanelLaunch(launchData)
+    if (!response.success) console.error('超级面板启动失败:', response.error)
   } catch (error) {
     console.error('超级面板启动失败:', error)
   }
@@ -1386,6 +1391,20 @@ function scrollToTop(): void {
 
 let cleanupContextMenuListener: (() => void) | null = null
 
+/**
+ * 替换已展示的查询身份，通知主进程回收不再可选的快照。
+ * @param scope 面板结果区域
+ * @param next 新展示快照，清空结果时不传
+ * @returns 无返回值
+ */
+function replaceSearchSnapshot(scope: 'content' | 'window', next?: PanelSearchSnapshot): void {
+  const state = scope === 'content' ? contentSnapshot : windowSnapshot
+  const previous = state.value
+  state.value = next
+  if (previous && previous.requestId !== next?.requestId)
+    window.ztools.superPanelReleaseSearch({ ...previous })
+}
+
 onMounted(() => {
   // 监听超级面板数据（从主进程发送）
   window.ztools.onSuperPanelData((data) => {
@@ -1405,6 +1424,7 @@ onMounted(() => {
     fileLocationJumpRequestId++
     windowMatchBlink.value = false
     windowMatchResults.value = []
+    replaceSearchSnapshot('window')
     fileLocationJumpTargets.value = []
     fileLocationJumpLoading.value = false
 
@@ -1416,14 +1436,15 @@ onMounted(() => {
     if (data.type === 'pinned') {
       mode.value = 'pinned'
       pinnedCommands.value = data.commands || []
-      ensureFolderIds(pinnedCommands.value)
       selectedIndex.value = 0
       currentClipboardContent.value = null
       syncTranslationForClipboardContent(null)
+      replaceSearchSnapshot('content')
       scrollToTop()
     } else if (data.type === 'search') {
       mode.value = 'search'
       searchResults.value = data.results || []
+      replaceSearchSnapshot('content', data.snapshot)
       selectedIndex.value = 0
       // 保存搜索结果携带的剪贴板内容
       currentClipboardContent.value = data.clipboardContent || null
@@ -1433,8 +1454,9 @@ onMounted(() => {
   })
 
   // 监听窗口匹配搜索结果
-  window.ztools.onSuperPanelWindowCommandsData((data: { results: any[] }) => {
+  window.ztools.onSuperPanelWindowCommandsData((data) => {
     windowMatchResults.value = data.results || []
+    replaceSearchSnapshot('window', data.snapshot)
     windowMatchSelectedIndex.value = 0
     // 有匹配结果且面板未打开时，触发图标闪动
     if (data.results?.length > 0 && !showWindowMatch.value) {
@@ -1589,17 +1611,16 @@ onMounted(() => {
       if (itemIdx >= 0 && itemIdx < pinnedCommands.value.length) {
         const item = pinnedCommands.value[itemIdx] as CommandItem
         if (!isFolder(item)) {
-          const folder: FolderItem = {
-            isFolder: true,
-            id: generateFolderId(),
-            name: '新文件夹',
-            items: [item]
+          await submitPanelMutation({ action: 'new-folder', key: getItemKey(item) })
+          const folder = pinnedCommands.value.find(
+            (candidate) =>
+              isFolder(candidate) &&
+              candidate.items.some((child) => getItemKey(child) === getItemKey(item))
+          )
+          if (folder && isFolder(folder)) {
+            openFolderPopup(folder, pinnedCommands.value.indexOf(folder))
+            nextTick(() => startRenameFolder())
           }
-          pinnedCommands.value.splice(itemIdx, 1, folder)
-          savePinnedCommands()
-          // 自动触发展开改名
-          openFolderPopup(folder, itemIdx)
-          nextTick(() => startRenameFolder())
         }
       }
     }
@@ -1631,6 +1652,8 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  replaceSearchSnapshot('content')
+  replaceSearchSnapshot('window')
   document.removeEventListener('focusout', handleFocusOut)
   cleanupContextMenuListener?.()
   cleanupContextMenuListener = null
@@ -1764,10 +1787,44 @@ onUnmounted(() => {
   background: var(--active-bg);
 }
 
-.grid-icon {
+.command-icon-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.grid-icon-wrap {
   width: 36px;
   height: 36px;
   margin-bottom: 6px;
+}
+
+.list-icon-wrap {
+  width: 28px;
+  height: 28px;
+}
+
+/* 与主搜索宫格保持相同的 DEV 角标尺寸、颜色和位置。 */
+.app-dev-badge {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  display: inline-flex;
+  min-width: 18px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--bg-color);
+  border-radius: 999px;
+  background: #389e0d;
+  color: var(--text-on-primary);
+  font-size: 8px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 2px 4px;
+}
+
+.grid-icon {
+  width: 36px;
+  height: 36px;
   border-radius: 8px;
   flex-shrink: 0;
   object-fit: contain;
@@ -1776,7 +1833,6 @@ onUnmounted(() => {
 .grid-icon-placeholder {
   width: 36px;
   height: 36px;
-  margin-bottom: 6px;
   border-radius: 8px;
   background: var(--primary-gradient);
   display: flex;

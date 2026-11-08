@@ -14,11 +14,10 @@ import { UwpManager } from '../../core/native'
 import { pluginFeatureAPI } from '../plugin/feature'
 import databaseAPI from '../shared/database'
 import { WINDOWS_SETTINGS } from '../../core/systemSettings/windowsSettings.js'
-import pluginsAPI from './plugins'
 import { executeSystemCommand } from './systemCommands'
 import { findCommandIndex, filterOutCommand, hasCommand } from './commandMatchers'
-import { systemSettingsAPI } from './systemSettings'
 import { shouldKeepMainWindowHiddenForLaunch, type PluginLaunchSource } from '@shared/pluginLaunch'
+import type { CommandCatalog } from '../../../shared/commandService'
 
 /**
  * 上次匹配状态接口
@@ -45,6 +44,19 @@ interface UwpAppsScanResult {
  * 应用管理API - 主程序专用
  */
 export class AppsAPI {
+  private catalogProvider?: () => Promise<CommandCatalog>
+  private catalogInvalidator?: () => void
+
+  /**
+   * 注入统一目录入口，保留设置页 getCommands 的兼容返回结构。
+   * @param provider 主进程统一目录提供器
+   * @param invalidate 目录来源变化回调
+   * @returns 无返回值
+   */
+  public setCatalogProvider(provider: () => Promise<CommandCatalog>, invalidate: () => void): void {
+    this.catalogProvider = provider
+    this.catalogInvalidator = invalidate
+  }
   // v5: Windows Start Menu 整体递归、桌面仅扫描顶层，并废弃可能仅含 UWP 的旧缓存。
   private static readonly APP_CACHE_VERSION = 5
   private static readonly APP_CACHE_VERSION_KEY = 'cached-commands-version'
@@ -52,10 +64,9 @@ export class AppsAPI {
   private mainWindow: Electron.BrowserWindow | null = null
   private pluginManager: PluginManager | null = null
   private launchParam: any = null
+  private pluginLaunchParams = new Map<string, any>()
   private lastMatchState: LastMatchState | null = null
   private isLocalAppSearchEnabled = true
-  private cachedCommandsResult: { commands: any[]; regexCommands: any[]; plugins: any[] } | null =
-    null
   private afterFirstAppsReadyCallback: (() => void) | null = null
   private hasNotifiedFirstAppsReady = false
   /** 由外部注入，用于在多屏场景下正确显示窗口（跟随光标所在屏幕） */
@@ -103,12 +114,24 @@ export class AppsAPI {
     this.loadLocalAppSearchSetting()
   }
 
-  public getLaunchParam(): any {
-    return this.launchParam
+  /**
+   * 返回目标插件的进入快照，兼容无路径的旧内部调用。
+   * @param pluginPath 目标插件路径
+   * @returns 启动参数副本
+   */
+  public getLaunchParam(pluginPath?: string): any {
+    return structuredClone(
+      pluginPath ? this.pluginLaunchParams.get(pluginPath) || {} : this.launchParam || {}
+    )
   }
 
+  /**
+   * 通知统一服务重建目录，并按需刷新兼容页面。
+   * @param notifyRenderer 是否发送旧版应用列表通知
+   * @returns 无返回值
+   */
   public invalidateCommandsCache(notifyRenderer = false): void {
-    this.cachedCommandsResult = null
+    this.catalogInvalidator?.()
     console.log('[Commands] 指令缓存已清空:', { notifyRenderer })
 
     if (notifyRenderer) {
@@ -201,7 +224,7 @@ export class AppsAPI {
    *
    * @returns 系统应用列表；有效缓存存在时直接返回缓存。
    */
-  private async getApps(): Promise<any[]> {
+  public async getApps(): Promise<any[]> {
     console.log('[Commands] 收到获取应用列表请求')
 
     // 如果本地应用搜索被禁用，直接返回空列表
@@ -504,7 +527,7 @@ export class AppsAPI {
   }
 
   /**
-   * 纯启动编排：负责管理插件载入前的主窗口占位、自动分离、复用已分离窗口等逻辑。
+   * 编排插件启动，在唤起主窗口前统一确定搜索状态和进入行为，并处理自动分离。
    * @param options 插件路径、功能代码、显示名称和启动来源。
    * @param pluginConfig 已读取的插件配置。
    * @returns 插件启动结果。
@@ -516,13 +539,14 @@ export class AppsAPI {
       featureCode: string
       name?: string
       launchSource?: PluginLaunchSource
+      param?: any
     },
     pluginConfig: any
   ): Promise<{ success: boolean; error?: string }> {
     if (!this.pluginManager) {
       return { success: false, error: 'Plugin Manager 未初始化' }
     }
-    const { path: appPath, featureCode, name, launchSource } = options
+    const { path: appPath, featureCode, name, launchSource, param } = options
     const plugin = this.getPluginsFromDB().find((p: any) => p.path === appPath)
     const effectiveName = plugin?.name
     // 检查是否配置为自动分离
@@ -544,7 +568,8 @@ export class AppsAPI {
     const reusedDetached = await this.pluginManager.reuseDetachedSingletonIfExists(
       appPath,
       featureCode,
-      'launch-precheck'
+      'launch-precheck',
+      param
     )
 
     if (reusedDetached) {
@@ -556,22 +581,32 @@ export class AppsAPI {
     }
 
     if (shouldAutoDetach) {
-      const result = await this.pluginManager.createPluginInDetachedWindow(appPath, featureCode)
+      const result = await this.pluginManager.createPluginInDetachedWindow(
+        appPath,
+        featureCode,
+        param
+      )
 
       if (!result.success) {
         console.error('[Commands] 在独立窗口中创建插件失败:', result.error)
-        // 如果创建失败，降级到主窗口模式
-        this.notifyRenderer('show-plugin-placeholder')
-        await this.pluginManager.createPluginView(appPath, featureCode, name)
+        // 降级时也使用同一启动快照，避免顶部栏清空与插件跳过进入不一致。
+        const launchState = this.pluginManager.getMainWindowLaunchState(appPath, featureCode, param)
+        this.notifyRenderer('show-plugin-placeholder', launchState)
+        await this.pluginManager.createPluginView(
+          appPath,
+          featureCode,
+          name,
+          param,
+          launchState.mode
+        )
       } else {
         // 创建成功，隐藏主窗口
         this.mainWindow?.hide()
       }
     } else {
-      // 先通知渲染进程切换到插件视图模式
-      // 必须在 show() 之前发送，否则 show() 触发的 focus-search 事件
-      // 会在渲染进程中因 currentView 仍为 Search 而调用 hidePlugin()
-      this.notifyRenderer('show-plugin-placeholder')
+      // 在 show() 改变可见性前固定进入行为，并先切换宿主模式，避免 focus-search 重置插件。
+      const launchState = this.pluginManager.getMainWindowLaunchState(appPath, featureCode, param)
+      this.notifyRenderer('show-plugin-placeholder', launchState)
 
       // 全局快捷键和超级面板触发 mainHide feature 时，保持主窗口隐藏，避免先显示搜索窗口再收起插件区域。
       const shouldKeepMainWindowHidden = shouldKeepMainWindowHiddenForLaunch(
@@ -590,7 +625,7 @@ export class AppsAPI {
       }
 
       // 在主窗口中创建插件
-      await this.pluginManager.createPluginView(appPath, featureCode, name)
+      await this.pluginManager.createPluginView(appPath, featureCode, name, param, launchState.mode)
     }
 
     return { success: true }
@@ -612,14 +647,21 @@ export class AppsAPI {
     confirmDialog?: ConfirmDialogOptions // 确认对话框配置
     launchSource?: PluginLaunchSource
   }): Promise<any> {
-    const { path: appPath, type, param, name, cmdType, confirmDialog, launchSource } = options
+    const { path: appPath, type, name, cmdType, confirmDialog, launchSource } = options
+    const param = structuredClone(options.param || {})
     let { featureCode } = options
     this.launchParam = param || {}
 
     try {
       // 判断是插件还是直接启动
       if (type === 'plugin') {
-        if (pluginsAPI.isPluginDisabled(appPath)) {
+        const disabled = databaseAPI.dbGet('disabled-plugins')
+        const plugin = this.getPluginsFromDB().find((item) => item.path === appPath)
+        // 执行时读取最新稳定标识，设置变更不能被旧路径缓存覆盖。
+        if (
+          Array.isArray(disabled) &&
+          (disabled.includes(appPath) || disabled.includes(plugin?.name))
+        ) {
           return { success: false, error: '插件已禁用' }
         }
         // 如果没有传 featureCode，自动查找第一个非匹配 feature
@@ -633,7 +675,9 @@ export class AppsAPI {
         }
 
         // 插件启动参数中添加 featureCode
-        this.launchParam.code = featureCode || ''
+        param.code = featureCode || ''
+        this.launchParam = param
+        this.pluginLaunchParams.set(appPath, structuredClone(param))
 
         console.log('[Commands] 启动插件:', {
           path: appPath,
@@ -641,47 +685,6 @@ export class AppsAPI {
           name,
           launchParam: this.launchParam
         })
-
-        // 更新指令使用统计（所有指令都统计，用于匹配推荐排序）
-        this.updateUsageStats({ path: appPath, type, featureCode, name })
-
-        // 判断命令类型并决定是否添加历史记录
-        if (cmdType === 'window') {
-          // window 类型：不记录历史，不保存状态（仅用于窗口匹配）
-          console.log('[Commands] window 类型命令，跳过历史记录')
-        } else if (['img', 'over', 'files', 'regex'].includes(cmdType || '')) {
-          // 匹配指令：保存状态并添加"上次匹配"到历史记录
-          // 从param中提取完整的输入状态
-          const inputState = param?.inputState || {}
-
-          if (param?.inputState) {
-            // 保存上次匹配状态（内存+数据库）
-            this.lastMatchState = {
-              searchQuery: inputState.searchQuery || '',
-              pastedImage: inputState.pastedImage || null,
-              pastedFiles: inputState.pastedFiles || null,
-              pastedText: inputState.pastedText || null,
-              timestamp: Date.now()
-            }
-            console.log('[Commands] 保存上次匹配状态:', this.lastMatchState)
-            // 持久化到数据库
-            this.saveLastMatchState()
-
-            // 先删除历史记录中旧的"上次匹配"
-            this.removeFromHistory('special:last-match')
-
-            // 将"上次匹配"作为普通指令加入历史记录
-            this.addToHistory({
-              path: 'special:last-match',
-              type: 'plugin',
-              name: '上次匹配',
-              cmdType: 'text'
-            })
-          }
-        } else {
-          // 非匹配指令，正常添加到历史记录
-          this.addToHistory({ path: appPath, type, featureCode, param, name, cmdType })
-        }
 
         // 读取 plugin.json（一次性读取，后续复用）
         let pluginConfig: any = null
@@ -695,7 +698,7 @@ export class AppsAPI {
         // 检查是否为 system 插件（特殊处理：执行系统命令而不是创建视图）
         if (pluginConfig?.name === 'system') {
           console.log('[Commands] 检测到 system 插件，执行系统命令:', featureCode)
-          return await executeSystemCommand(
+          const result = await executeSystemCommand(
             featureCode || '',
             {
               mainWindow: this.mainWindow,
@@ -703,23 +706,36 @@ export class AppsAPI {
             },
             param
           )
+          if (result?.success !== false)
+            await this.recordSuccessfulPluginLaunch(
+              appPath,
+              featureCode || '',
+              name,
+              cmdType,
+              param
+            )
+          return result
         }
-        return await this.preparePluginLaunch(
+        const result = await this.preparePluginLaunch(
           {
             path: appPath,
             featureCode: featureCode || '',
             name,
-            launchSource
+            launchSource,
+            param
           },
           pluginConfig
         )
+        if (result.success)
+          await this.recordSuccessfulPluginLaunch(appPath, featureCode || '', name, cmdType, param)
+        return result
       } else if (type === 'file') {
         // 文件/文件夹类型：在文件管理器中定位
         console.log('[Commands] 在文件管理器中定位:', appPath)
         shell.showItemInFolder(appPath)
 
         // 添加到历史记录
-        this.addToHistory({ path: appPath, type: 'file', name, cmdType: 'text' })
+        await this.addToHistory({ path: appPath, type: 'file', name, cmdType: 'text' })
 
         // 隐藏当前插件视图（如果有）
         this.pluginManager?.hidePluginView()
@@ -746,7 +762,8 @@ export class AppsAPI {
         }
 
         // 添加到历史记录
-        this.addToHistory({ path: appPath, type: type || 'app', name, cmdType: 'text' })
+        await this.addToHistory({ path: appPath, type: type || 'app', name, cmdType: 'text' })
+        this.updateUsageStats({ path: appPath, type: 'app', name })
 
         // 隐藏当前插件视图（如果有）
         this.pluginManager?.hidePluginView()
@@ -1285,133 +1302,79 @@ export class AppsAPI {
   }
 
   /**
-   * 获取所有指令（供 AllCommands 页面和设置页 alias 目标选择使用）
-   * 返回处理后的 commands、regexCommands 和 plugins
-   * 结果会被缓存，直到应用列表、插件状态或 alias 映射发生变化时清除
+   * 在启动编排成功后记录使用与恢复状态，失败启动不污染用户排序。
+   * @param appPath 插件路径
+   * @param featureCode 实际功能代码
+   * @param name 显示名称
+   * @param cmdType 原始匹配类型
+   * @param param 本次启动快照
+   * @returns 持久化结束的 Promise
+   */
+  private async recordSuccessfulPluginLaunch(
+    appPath: string,
+    featureCode: string,
+    name: string | undefined,
+    cmdType: string | undefined,
+    param: any
+  ): Promise<void> {
+    const type = 'plugin'
+    // 更新指令使用统计（所有指令都统计，用于匹配推荐排序）
+    this.updateUsageStats({ path: appPath, type, featureCode, name })
+
+    // 判断命令类型并决定是否添加历史记录
+    if (cmdType === 'window') {
+      // window 类型：不记录历史，不保存状态（仅用于窗口匹配）
+      console.log('[Commands] window 类型命令，跳过历史记录')
+    } else if (['img', 'over', 'files', 'regex'].includes(cmdType || '')) {
+      // 匹配指令：保存状态并添加"上次匹配"到历史记录
+      // 从param中提取完整的输入状态
+      const inputState = param?.inputState || {}
+
+      if (param?.inputState) {
+        // 保存上次匹配状态（内存+数据库）
+        this.lastMatchState = {
+          searchQuery: inputState.searchQuery || '',
+          pastedImage: inputState.pastedImage || null,
+          pastedFiles: inputState.pastedFiles || null,
+          pastedText: inputState.pastedText || null,
+          timestamp: Date.now()
+        }
+        console.log('[Commands] 保存上次匹配状态:', this.lastMatchState)
+        // 持久化到数据库
+        this.saveLastMatchState()
+
+        // 先删除历史记录中旧的"上次匹配"
+        this.removeFromHistory('special:last-match')
+
+        // 将"上次匹配"作为普通指令加入历史记录
+        await this.addToHistory({
+          path: 'special:last-match',
+          type: 'plugin',
+          name: '上次匹配',
+          cmdType: 'text'
+        })
+      }
+    } else {
+      // 非匹配指令，正常添加到历史记录
+      await this.addToHistory({ path: appPath, type, featureCode, param, name, cmdType })
+    }
+  }
+
+  /**
+   * 为 AllCommands 和设置页提供统一目录的兼容返回结构。
+   * @returns 原始指令、匹配规则与插件列表，不包含内部搜索索引字段
    */
   public async getCommands(): Promise<{
     commands: any[]
     regexCommands: any[]
     plugins: any[]
   }> {
-    // 命中缓存直接返回
-    if (this.cachedCommandsResult) {
-      console.log('[Commands] 命中指令缓存，直接返回 getCommands 结果')
-      return this.cachedCommandsResult
-    }
-
-    console.log('[Commands] 指令缓存未命中，开始重建 getCommands 结果')
-    try {
-      const rawApps = await this.getApps()
-
-      // 调用 pluginsAPI 获取所有插件列表（包括 system 插件）
-      const plugins = await pluginsAPI.getAllPlugins()
-
-      const commands: any[] = []
-      const regexCommands: any[] = []
-
-      // 处理应用指令
-      for (const app of rawApps) {
-        commands.push({
-          name: app.name,
-          path: app.path,
-          icon: app.icon,
-          type: 'direct',
-          subType: 'app'
-        })
-      }
-
-      // 调用 systemSettingsAPI 获取系统设置指令
-      const systemSettings = await systemSettingsAPI.getSystemSettings()
-      for (const setting of systemSettings) {
-        commands.push({
-          name: setting.name,
-          path: setting.uri,
-          icon: undefined, // 图标由前端统一渲染
-          type: 'direct',
-          subType: 'system-setting'
-        })
-      }
-
-      // 处理本地启动项
-      try {
-        const localShortcuts = databaseAPI.dbGet('local-shortcuts')
-        if (localShortcuts && Array.isArray(localShortcuts)) {
-          for (const shortcut of localShortcuts) {
-            commands.push({
-              name: shortcut.alias || shortcut.name,
-              path: shortcut.path,
-              icon: shortcut.icon || '',
-              type: 'direct',
-              subType: 'local-shortcut'
-            })
-          }
-        }
-      } catch (error) {
-        console.error('[Commands] 获取本地启动项失败:', error)
-      }
-
-      // 处理插件指令。
-      for (const plugin of plugins) {
-        if (!plugin.features || !Array.isArray(plugin.features)) {
-          continue
-        }
-
-        for (const feature of plugin.features) {
-          if (!feature.cmds || !Array.isArray(feature.cmds)) {
-            continue
-          }
-
-          for (const cmd of feature.cmds) {
-            if (typeof cmd === 'string') {
-              // 功能指令
-              commands.push({
-                name: cmd,
-                path: plugin.path,
-                icon: feature.icon || plugin.logo,
-                type: 'plugin',
-                featureCode: feature.code,
-                pluginName: plugin.name,
-                pluginTitle: plugin.title,
-                pluginExplain: feature.explain,
-                cmdType: 'text'
-              })
-            } else if (typeof cmd === 'object') {
-              // 匹配指令
-              const matchCmd = {
-                ...cmd,
-                type: cmd.type,
-                match: cmd.match ?? cmd.regex ?? ''
-              }
-
-              regexCommands.push({
-                name: cmd.label || feature.explain || '',
-                path: plugin.path,
-                icon: feature.icon || plugin.logo,
-                type: 'plugin',
-                featureCode: feature.code,
-                pluginName: plugin.name,
-                pluginTitle: plugin.title,
-                pluginExplain: feature.explain,
-                cmdType: cmd.type,
-                matchCmd
-              })
-            }
-          }
-        }
-      }
-
-      const result = { commands, regexCommands, plugins }
-      this.cachedCommandsResult = result
-      console.log('[Commands] 指令列表重建完成:', {
-        commands: commands.length,
-        regexCommands: regexCommands.length,
-        plugins: plugins.length
-      })
-      return result
-    } catch (error) {
-      console.error('[Commands] 获取指令列表失败:', error)
-      return { commands: [], regexCommands: [], plugins: [] }
+    if (!this.catalogProvider) return { commands: [], regexCommands: [], plugins: [] }
+    const catalog = await this.catalogProvider()
+    return {
+      commands: catalog.canonical.filter((command) => !command.matchCmd),
+      regexCommands: catalog.canonical.filter((command) => !!command.matchCmd),
+      plugins: catalog.plugins
     }
   }
 }

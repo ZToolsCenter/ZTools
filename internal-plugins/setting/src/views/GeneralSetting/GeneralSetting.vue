@@ -22,7 +22,7 @@ import {
   type SearchWallpaperConfig
 } from '@shared/searchWallpaper'
 
-const { success, error, info, confirm } = useToast()
+const { success, error, info } = useToast()
 
 // Dropdown 选项数据
 const themeOptions = [
@@ -245,20 +245,6 @@ const superPanelTriggerMode = computed({
   }
 })
 
-function normalizePluginNameList(value: unknown): string[] {
-  if (!Array.isArray(value)) {
-    return []
-  }
-
-  return Array.from(
-    new Set(
-      value
-        .map((name) => (typeof name === 'string' ? name.trim() : ''))
-        .filter((name) => name.length > 0)
-    )
-  )
-}
-
 // 实际快捷键字符串
 const hotkey = ref('')
 
@@ -286,10 +272,6 @@ const devToolsMode = ref<'right' | 'bottom' | 'undocked' | 'detach'>('detach')
 
 // 关闭 GPU 加速（兜底方案，修改后需重启生效）
 const disableGpuAcceleration = ref(false)
-
-// 用户自定义内部 API 授权插件名
-const customInternalApiPluginNameInput = ref('')
-const customInternalApiPluginNames = ref<string[]>([])
 
 // 代理设置
 const proxyEnabled = ref(false)
@@ -1298,47 +1280,7 @@ async function handleProxyUrlChange(): Promise<void> {
     info('代理地址已更新')
   } catch (err: any) {
     console.error('更新代理地址失败:', err)
-    error(`更新代理地址失败: ${err.message || '未知错误'}`)
-  }
-}
-
-async function handleAddCustomInternalApiPluginName(): Promise<void> {
-  const pluginName = customInternalApiPluginNameInput.value.trim()
-  if (!pluginName) {
-    error('请输入插件名称')
-    return
-  }
-
-  if (customInternalApiPluginNames.value.includes(pluginName)) {
-    info('该插件已在授权列表中')
-    return
-  }
-
-  const confirmed = await confirm({
-    title: '授权内部 API 风险提示',
-    message: `即将允许插件 "${pluginName}" 调用内部 API。\n\n内部 API 可以读写 ZTools 设置、管理插件、注册快捷键、访问窗口信息并执行其他高权限操作。请仅授权你完全信任的插件；恶意插件可能造成隐私泄露、数据损坏或执行非预期操作。`,
-    type: 'danger',
-    confirmText: '已知风险，继续授权',
-    cancelText: '取消'
-  })
-  if (!confirmed) {
-    return
-  }
-
-  customInternalApiPluginNames.value = [...customInternalApiPluginNames.value, pluginName]
-  customInternalApiPluginNameInput.value = ''
-  await saveSettings()
-  success('内部 API 授权已添加')
-}
-
-async function handleRemoveCustomInternalApiPluginName(index: number): Promise<void> {
-  try {
-    customInternalApiPluginNames.value.splice(index, 1)
-    await saveSettings()
-    success('内部 API 授权已删除')
-  } catch (err) {
-    console.error('删除内部 API 授权失败:', err)
-    error('删除内部 API 授权失败')
+    error(`更新代理地址失败: ${err?.message || '未知错误'}`)
   }
 }
 
@@ -1439,9 +1381,6 @@ async function loadSettings(): Promise<void> {
       devToolsMode.value = data.devToolsMode ?? 'detach'
       // GPU 加速控制
       disableGpuAcceleration.value = data.disableGpuAcceleration ?? false
-      customInternalApiPluginNames.value = normalizePluginNameList(
-        data.customInternalApiPluginNames
-      )
 
       // 代理配置
       proxyEnabled.value = data.proxyEnabled ?? false
@@ -1534,7 +1473,6 @@ async function saveSettings(): Promise<void> {
       searchWallpaper: normalizeSearchWallpaperConfig(searchWallpaper.value),
       devToolsMode: devToolsMode.value,
       disableGpuAcceleration: disableGpuAcceleration.value,
-      customInternalApiPluginNames: [...customInternalApiPluginNames.value],
       proxyEnabled: proxyEnabled.value,
       proxyUrl: proxyUrl.value,
       autoCheckUpdate: autoCheckUpdate.value,
@@ -2523,48 +2461,6 @@ onUnmounted(() => {
         </div>
       </div>
 
-      <div class="setting-item internal-api-setting">
-        <div class="internal-api-content">
-          <div class="internal-api-header">
-            <div class="setting-label">
-              <span>内部 API 授权插件</span>
-              <span class="setting-desc">允许指定插件名称调用高权限内部 API</span>
-            </div>
-            <div class="setting-control internal-api-control">
-              <input
-                v-model="customInternalApiPluginNameInput"
-                type="text"
-                class="input internal-api-input"
-                placeholder="输入插件 name"
-                @keyup.enter="handleAddCustomInternalApiPluginName"
-              />
-              <button
-                class="btn btn-sm internal-api-add-btn"
-                @click="handleAddCustomInternalApiPluginName"
-              >
-                添加
-              </button>
-            </div>
-          </div>
-          <div v-if="customInternalApiPluginNames.length > 0" class="blocked-apps-tags">
-            <span
-              v-for="(pluginName, index) in customInternalApiPluginNames"
-              :key="pluginName"
-              class="blocked-app-tag"
-            >
-              {{ pluginName }}
-              <button
-                class="blocked-app-remove"
-                title="删除授权"
-                @click="handleRemoveCustomInternalApiPluginName(index)"
-              >
-                &times;
-              </button>
-            </span>
-          </div>
-        </div>
-      </div>
-
       <div class="setting-item">
         <div class="setting-label">
           <span>关闭 GPU 加速</span>
@@ -3011,34 +2907,9 @@ onUnmounted(() => {
   gap: 8px;
 }
 
-.internal-api-content {
-  width: 100%;
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
 .blocked-apps-header {
   display: flex;
   justify-content: space-between;
-}
-
-.internal-api-header {
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.internal-api-input {
-  min-width: 180px;
-  width: 220px;
-}
-
-.internal-api-add-btn {
-  min-width: 56px;
-  white-space: nowrap;
-  flex-shrink: 0;
 }
 
 .blocked-apps-tags {

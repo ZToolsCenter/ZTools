@@ -1,54 +1,13 @@
-import { computed, ref, watch } from 'vue'
+import { computed, onUnmounted, watch, type ComputedRef } from 'vue'
+import type { Command } from '@shared/commandService'
 import { useCommandDataStore } from '../stores/commandDataStore'
 import { useWindowStore } from '../stores/windowStore'
+export { deduplicateResults } from '@shared/commandResults'
 
 /**
- * 去重搜索结果，并合并同一个系统应用展开出的本地化名称与别名。
- *
- * @param results 待去重的搜索结果
- * @returns 保留首次出现结果的新数组
- */
-export function deduplicateResults<
-  T extends { type?: string; subType?: string; path: string; name: string; featureCode?: string }
->(results: T[]): T[] {
-  const seenFeatures = new Set<string>()
-  return results.filter((item) => {
-    // 系统应用会把本地化名称和 Bundle 名称展开为多条搜索项，按路径合并避免重复展示。
-    const normalizedPath = item.path.replace(/\\/g, '/').toLowerCase()
-    const featureKey =
-      item.type === 'plugin'
-        ? `${item.path}:${item.featureCode}`
-        : item.type === 'direct' && item.subType === 'app'
-          ? `direct-app:${normalizedPath}`
-          : `${item.name}|${item.path}`
-    if (seenFeatures.has(featureKey)) {
-      return false
-    }
-    seenFeatures.add(featureKey)
-    return true
-  })
-}
-
-/**
- * 根据使用统计对匹配指令结果排序（useCount 降序）
- */
-function sortByUsage<T extends { path: string; featureCode?: string }>(
-  results: T[],
-  statsMap: Map<string, number>
-): T[] {
-  if (statsMap.size === 0) return results
-  return [...results].sort((a, b) => {
-    const keyA = `${a.path}:${a.featureCode || ''}`
-    const keyB = `${b.path}:${b.featureCode || ''}`
-    const countA = statsMap.get(keyA) || 0
-    const countB = statsMap.get(keyB) || 0
-    return countB - countA
-  })
-}
-
-/**
- * 搜索结果计算 Composable
- * 统一管理所有搜索结果的计算逻辑
+ * 提交输入快照并展示服务端最终分组。
+ * @param props 输入展示状态
+ * @returns 各分组的响应式快照
  */
 export function useSearchResults(props: {
   searchQuery: string
@@ -56,265 +15,44 @@ export function useSearchResults(props: {
   pastedFiles?: any[] | null
   pastedText?: string | null
 }): {
-  bestSearchResults: any
-  bestMatches: any
-  recommendations: any
-  allListModeResults: any
+  bestSearchResults: ComputedRef<Command[]>
+  bestMatches: ComputedRef<Command[]>
+  recommendations: ComputedRef<Command[]>
+  allListModeResults: ComputedRef<Command[]>
 } {
-  const commandDataStore = useCommandDataStore()
+  const store = useCommandDataStore()
   const windowStore = useWindowStore()
-  const {
-    search,
-    searchInCommands,
-    searchImageCommands,
-    searchTextCommands,
-    searchFileCommands,
-    matchesWindowCommand,
-    sortRecommendations,
-    getSearchTermHeat,
-    searchTermStatKey
-  } = commandDataStore
-
-  // 使用统计缓存（key: "path:featureCode", value: useCount）
-  const usageStatsMap = ref<Map<string, number>>(new Map())
-
-  // 每次搜索条件变化时，异步加载最新的使用统计数据
   watch(
     [
       () => props.searchQuery,
       () => props.pastedImage,
+      () => props.pastedFiles,
       () => props.pastedText,
-      () => props.pastedFiles
+      () => windowStore.currentWindow,
+      () => windowStore.showMatchRecommendation,
+      () => store.stateVersion
     ],
-    async () => {
-      try {
-        const stats: any[] = await window.ztools.getUsageStats()
-        const map = new Map<string, number>()
-        for (const item of stats) {
-          const key = `${item.path}:${item.featureCode || ''}`
-          map.set(key, item.useCount || 0)
-        }
-        usageStatsMap.value = map
-      } catch (error) {
-        console.error('加载使用统计失败:', error)
-      }
+    () => {
+      void store
+        .query(
+          {
+            searchQuery: props.searchQuery,
+            pastedImage: props.pastedImage || null,
+            pastedFiles: props.pastedFiles || null,
+            pastedText: props.pastedText || null,
+            windowInfo: windowStore.currentWindow
+          },
+          windowStore.showMatchRecommendation
+        )
+        .catch((error) => console.error('[Commands] 搜索失败:', error))
     },
-    { immediate: true }
+    { immediate: true, flush: 'sync' }
   )
-
-  function filterUnavailableWindowCommands<
-    T extends { cmdType?: string; matchCmd?: { type?: string } }
-  >(results: T[]): T[] {
-    return results.filter((cmd) => {
-      const cmdType = cmd.cmdType || cmd.matchCmd?.type
-      return cmdType !== 'window' || matchesWindowCommand(cmd as any, windowStore.currentWindow)
-    })
-  }
-
-  // 统一的搜索结果（只执行一次搜索）
-  const unifiedSearchResult = computed(() => {
-    if (!props.searchQuery.trim()) {
-      return { bestMatches: [], regexMatches: [] }
-    }
-    return search(props.searchQuery)
-  })
-
-  // 最佳搜索结果（模糊搜索：应用、插件、系统设置）
-  const bestSearchResults = computed(() => {
-    // 粘贴图片或文件时不显示最佳搜索结果
-    if (props.pastedImage || props.pastedFiles) {
-      return []
-    }
-
-    // 粘贴文本时，检查是否有 regex 类型的匹配
-    if (props.pastedText) {
-      const allMatched = searchTextCommands(props.pastedText)
-      const regexMatched = allMatched.filter((cmd) => {
-        const cmdType = cmd.cmdType || cmd.matchCmd?.type
-        return cmdType === 'regex'
-      })
-
-      // 如果有 regex 匹配，则不显示 over 类型
-      if (regexMatched.length > 0) {
-        return []
-      }
-
-      // 返回 over 类型的指令
-      const matchedCommands = allMatched.filter((cmd) => {
-        const cmdType = cmd.cmdType || cmd.matchCmd?.type
-        return cmdType === 'over'
-      })
-
-      // 如果有搜索关键词，在匹配的指令中搜索
-      if (props.searchQuery.trim()) {
-        return sortByUsage(
-          searchInCommands(matchedCommands, props.searchQuery),
-          usageStatsMap.value
-        )
-      }
-      return sortByUsage(matchedCommands, usageStatsMap.value)
-    }
-
-    // 正常搜索
-    if (!props.searchQuery.trim()) {
-      return []
-    }
-
-    // 搜索结果已按匹配度排序，去重时保留第一条即可展示最匹配的名称。
-    return deduplicateResults(
-      filterUnavailableWindowCommands(unifiedSearchResult.value.bestMatches)
-    )
-  })
-
-  // 最佳匹配（匹配指令：regex/img/files 类型）
-  const bestMatches = computed(() => {
-    // 粘贴图片时，返回 img 类型的匹配指令
-    if (props.pastedImage) {
-      const matchedCommands = searchImageCommands()
-      if (props.searchQuery.trim()) {
-        return sortByUsage(
-          searchInCommands(matchedCommands, props.searchQuery),
-          usageStatsMap.value
-        )
-      }
-      return sortByUsage(matchedCommands, usageStatsMap.value)
-    }
-
-    // 粘贴文件时，返回 files 类型的匹配指令
-    if (props.pastedFiles) {
-      const matchedCommands = searchFileCommands(props.pastedFiles)
-      if (props.searchQuery.trim()) {
-        return sortByUsage(
-          searchInCommands(matchedCommands, props.searchQuery),
-          usageStatsMap.value
-        )
-      }
-      return sortByUsage(matchedCommands, usageStatsMap.value)
-    }
-
-    // 粘贴文本时，返回 regex 类型的匹配指令
-    if (props.pastedText) {
-      const allMatched = searchTextCommands(props.pastedText)
-      const regexMatched = allMatched.filter((cmd) => {
-        const cmdType = cmd.cmdType || cmd.matchCmd?.type
-        return cmdType === 'regex'
-      })
-
-      if (props.searchQuery.trim()) {
-        return sortByUsage(searchInCommands(regexMatched, props.searchQuery), usageStatsMap.value)
-      }
-      return sortByUsage(regexMatched, usageStatsMap.value)
-    }
-
-    // 普通搜索：过滤出 regex、img、files 类型（排除 over）
-    if (!props.searchQuery.trim()) {
-      return []
-    }
-
-    const filtered = unifiedSearchResult.value.regexMatches.filter((cmd) => {
-      const cmdType = cmd.cmdType || cmd.matchCmd?.type
-      return cmdType === 'regex' || cmdType === 'img' || cmdType === 'files'
-    })
-    return sortByUsage(filtered, usageStatsMap.value)
-  })
-
-  // 推荐列表（over 类型）
-  const recommendations = computed(() => {
-    if (!windowStore.showMatchRecommendation) {
-      return []
-    }
-
-    // 粘贴图片或文件时不显示推荐
-    if (props.pastedImage || props.pastedFiles) return []
-
-    let overTypeResults: any[] = []
-
-    // 粘贴文本时，获取 over 类型的匹配指令
-    if (props.pastedText) {
-      const allMatched = searchTextCommands(props.pastedText)
-      overTypeResults = allMatched.filter((cmd) => {
-        const cmdType = cmd.cmdType || cmd.matchCmd?.type
-        return cmdType === 'over'
-      })
-
-      if (props.searchQuery.trim()) {
-        overTypeResults = searchInCommands(overTypeResults, props.searchQuery)
-      }
-    } else {
-      // 普通搜索
-      if (props.searchQuery.trim() === '') {
-        return []
-      }
-
-      overTypeResults = unifiedSearchResult.value.regexMatches.filter((cmd) => {
-        const cmdType = cmd.cmdType || cmd.matchCmd?.type
-        return cmdType === 'over'
-      })
-    }
-
-    // 去重：同一个 feature 只保留第一个匹配的 cmd
-    const deduplicated = deduplicateResults(overTypeResults)
-    // 先保留原有使用频率排序，再应用用户独立设置的推荐置顶顺序。
-    return sortRecommendations(sortByUsage(deduplicated, usageStatsMap.value))
-  })
-
-  // 列表模式：合并所有搜索结果，按匹配分数排序
-  const allListModeResults = computed(() => {
-    const query = props.searchQuery.trim().toLowerCase()
-
-    // 合并所有结果
-    const allResults = [...bestSearchResults.value, ...bestMatches.value, ...recommendations.value]
-    const deduped = deduplicateResults(allResults)
-
-    // 无搜索词（如仅粘贴文本）时，返回去重后的原始顺序结果
-    if (!query) return deduped
-
-    // 热度映射：当前搜索词（含以其为前缀的历史词条）的累计命中次数
-    const heatMap = getSearchTermHeat(props.searchQuery)
-
-    // 排序：当前词热度 > 完全匹配 > 前缀匹配 > 系统应用 > 使用频率
-    return deduped.sort((a, b) => {
-      // 0. 当前搜索词热度优先，命中越多越靠前
-      const heatA = heatMap.get(searchTermStatKey(a)) || 0
-      const heatB = heatMap.get(searchTermStatKey(b)) || 0
-      if (heatA !== heatB) return heatB - heatA
-
-      const nameA = a.name.toLowerCase()
-      const nameB = b.name.toLowerCase()
-
-      // 1. 完全匹配优先
-      const isExactA = nameA === query
-      const isExactB = nameB === query
-      if (isExactA && !isExactB) return -1
-      if (!isExactA && isExactB) return 1
-
-      // 2. 前缀匹配优先
-      const isPrefixA = nameA.startsWith(query)
-      const isPrefixB = nameB.startsWith(query)
-      if (isPrefixA && !isPrefixB) return -1
-      if (!isPrefixA && isPrefixB) return 1
-
-      // 3. Windows 系统应用（app）/ 自带组件（system-setting）默认沉底
-      //    有当前搜索词热度时已在第 0 步被顶上来
-      const isWinAppA =
-        a.type === 'direct' && (a.subType === 'app' || a.subType === 'system-setting')
-      const isWinAppB =
-        b.type === 'direct' && (b.subType === 'app' || b.subType === 'system-setting')
-      if (isWinAppA !== isWinAppB) return isWinAppA ? 1 : -1
-
-      // 4. 使用频率排序
-      const keyA = `${a.path}:${a.featureCode || ''}`
-      const keyB = `${b.path}:${b.featureCode || ''}`
-      const countA = usageStatsMap.value.get(keyA) || 0
-      const countB = usageStatsMap.value.get(keyB) || 0
-      return countB - countA
-    })
-  })
-
+  onUnmounted(() => store.cancelQuery())
   return {
-    bestSearchResults,
-    bestMatches,
-    recommendations,
-    allListModeResults
+    bestSearchResults: computed(() => store.result.bestSearchResults),
+    bestMatches: computed(() => store.result.bestMatches),
+    recommendations: computed(() => store.result.recommendations),
+    allListModeResults: computed(() => store.result.allListModeResults)
   }
 }

@@ -72,6 +72,7 @@ const storefrontCategories = ref<Record<string, CategoryInfo>>({})
 const categoryLayouts = ref<Record<string, CategoryLayoutSection[]>>({})
 const isLoading = ref(false)
 const installingPlugin = ref<string | null>(null)
+const isCancellingUpgrade = ref(false)
 const downloadStates = ref<Record<string, PluginDownloadState | undefined>>({})
 const bannerActiveIndexes = ref<Record<string, number>>({})
 let stopDownloadProgressListener: (() => void) | undefined
@@ -331,7 +332,29 @@ function canUpgrade(plugin: Plugin): boolean {
   return compareVersions(plugin.localVersion, plugin.version) < 0
 }
 
+/**
+ * 升级市场插件，下载期间再次点击则取消当前任务。
+ * @param plugin 已安装且存在新版本的市场插件。
+ * @returns 升级或取消处理完成后结束的 Promise。
+ */
 async function handleUpgradePlugin(plugin: Plugin): Promise<void> {
+  // 下载可取消，安装阶段保持原子发布，不允许中断。
+  const currentState = downloadStates.value[plugin.name]
+  if (installingPlugin.value === plugin.name && currentState?.status === 'downloading') {
+    if (isCancellingUpgrade.value) return
+    isCancellingUpgrade.value = true
+    try {
+      const result = await window.ztools.internal.cancelPluginMarketDownload(
+        currentState.taskId || plugin.name
+      )
+      if (!result.success) error(`取消下载失败: ${result.error || '未知错误'}`)
+    } catch (err: unknown) {
+      error(`取消下载失败: ${err instanceof Error ? err.message : '未知错误'}`)
+    } finally {
+      isCancellingUpgrade.value = false
+    }
+    return
+  }
   if (installingPlugin.value) return
   if (!plugin.path) {
     error('无法升级：找不到插件路径')
@@ -340,14 +363,16 @@ async function handleUpgradePlugin(plugin: Plugin): Promise<void> {
 
   const confirmUpgrade = await confirm({
     title: '升级插件',
-    message: `发现新版本 ${plugin.version}，当前版本 ${plugin.localVersion}，是否升级？\n\n升级将先卸载旧版本。`,
+    message: `发现新版本 ${plugin.version}，当前版本 ${plugin.localVersion}，是否升级？\n\n升级将覆盖安装并保留插件数据。`,
     type: 'warning',
     confirmText: '升级',
     cancelText: '取消'
   })
-  if (!confirmUpgrade) return
+  // 确认期间可能启动了其他安装，避免重复创建任务。
+  if (!confirmUpgrade || installingPlugin.value) return
 
   installingPlugin.value = plugin.name
+  setDownloadState(plugin.name, { status: 'downloading', progress: null })
   try {
     const upgradeResult = await upgradeInstalledPluginFromMarket(
       { name: plugin.name, path: plugin.path },
@@ -360,7 +385,7 @@ async function handleUpgradePlugin(plugin: Plugin): Promise<void> {
         plugin.path = upgradeResult.plugin.path
       }
       await fetchPlugins()
-    } else {
+    } else if (!upgradeResult.cancelled) {
       throw new Error(upgradeResult.error || '升级失败')
     }
   } catch (err: unknown) {
@@ -368,7 +393,9 @@ async function handleUpgradePlugin(plugin: Plugin): Promise<void> {
     error(`升级出错: ${err instanceof Error ? err.message : '未知错误'}`)
     await fetchPlugins()
   } finally {
+    // 安装流程结束后恢复升级箭头，取消不改变已安装的旧版本。
     installingPlugin.value = null
+    clearDownloadState(plugin.name)
   }
 }
 

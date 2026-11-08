@@ -7,6 +7,9 @@ import { compareVersions, upgradeInstalledPluginFromMarket, weightedSearch } fro
 import { useJumpFunction, useZtoolsSubInput } from '@/composables'
 import { jumpFunctionPluginMarketSetting } from '@/views/PluginMarketSetting/PluginMarketSetting'
 import { useRouter } from 'vue-router'
+import PluginUpgradeButton from '@/components/common/PluginUpgradeButton.vue'
+import type { PluginDownloadState } from '@/components/common/PluginDetail/types'
+import type { UpgradeResult } from '@/utils/pluginUpgrade'
 
 // const emit = defineEmits<{
 //   (e: 'add-dev-consumed'): void
@@ -28,6 +31,12 @@ const isExportingAll = ref(false)
 const isCheckingMarketUpdates = ref(false)
 // 是否正在执行“全部更新”
 const isUpgradingAll = ref(false)
+// 单个插件升级期间串行处理升级请求，避免与批量更新重复安装。
+const upgradingPluginPath = ref<string | null>(null)
+const upgradingPluginName = ref<string | null>(null)
+const upgradeDownloadState = ref<PluginDownloadState>()
+const isCancellingUpgrade = ref(false)
+let stopDownloadProgressListener: (() => void) | undefined
 // “全部更新”当前完成数（用于进度展示）
 const upgradeProgressDone = ref(0)
 // “全部更新”总任务数（用于进度展示）
@@ -226,21 +235,108 @@ async function checkMarketUpdates(): Promise<void> {
   }
 }
 
-// 将单个已安装插件升级到市场最新版本（复用公共升级逻辑）
-async function upgradePluginToLatest(plugin: any): Promise<{ success: boolean; error?: string }> {
-  return upgradeInstalledPluginFromMarket(
-    { name: plugin.name, path: plugin.path },
-    plugin.marketPlugin
-  )
+/**
+ * 复用公共流程将已安装插件升级到市场最新版本。
+ * @param plugin 包含安装路径和市场版本信息的插件。
+ * @returns 升级结果及失败原因。
+ */
+async function upgradePluginToLatest(plugin: any): Promise<UpgradeResult> {
+  // 单个与批量升级共用当前任务标识，防止其他下载事件覆盖此行进度。
+  upgradingPluginPath.value = plugin.path
+  upgradingPluginName.value = plugin.name
+  upgradeDownloadState.value = { status: 'downloading', progress: null }
+  try {
+    return await upgradeInstalledPluginFromMarket(
+      { name: plugin.name, path: plugin.path },
+      plugin.marketPlugin
+    )
+  } finally {
+    upgradingPluginName.value = null
+    upgradeDownloadState.value = undefined
+  }
+}
+
+/**
+ * 将主进程下载与安装进度同步到当前升级按钮。
+ * @param payload 市场安装流程发布的进度事件。
+ * @returns 无返回值。
+ */
+function handleUpgradeDownloadProgress(
+  payload: PluginDownloadState & { pluginName: string }
+): void {
+  // 仅接收当前任务的事件，避免已完成任务的迟到事件改变新任务进度。
+  if (payload.pluginName !== upgradingPluginName.value) return
+  if (upgradeDownloadState.value?.taskId && upgradeDownloadState.value.taskId !== payload.taskId)
+    return
+  upgradeDownloadState.value = payload
+}
+
+/**
+ * 从更新列表直接升级单个插件，并刷新版本与更新数量。
+ * @param plugin 当前待升级的已安装插件。
+ * @returns 升级和列表刷新完成后结束的 Promise。
+ */
+async function handleUpgradePlugin(plugin: any): Promise<void> {
+  // 当前行再次点击用于取消下载；安装阶段不允许中断资源发布。
+  if (
+    upgradingPluginPath.value === plugin.path &&
+    upgradeDownloadState.value?.status === 'downloading'
+  ) {
+    if (isCancellingUpgrade.value) return
+    isCancellingUpgrade.value = true
+    try {
+      const result = await window.ztools.internal.cancelPluginMarketDownload(
+        upgradeDownloadState.value.taskId || plugin.name
+      )
+      if (!result.success) error(`取消下载失败: ${result.error || '未知错误'}`)
+    } catch (err: any) {
+      error(`取消下载失败: ${err.message || '未知错误'}`)
+    } finally {
+      isCancellingUpgrade.value = false
+    }
+    return
+  }
+  // 只允许有效的市场升级，并阻止重复点击或与批量更新并发。
+  if (
+    upgradingPluginPath.value ||
+    isUpgradingAll.value ||
+    !plugin.hasUpdate ||
+    !plugin.marketPlugin
+  ) {
+    return
+  }
+
+  upgradingPluginPath.value = plugin.path
+  const displayName = plugin.title || plugin.name
+  try {
+    const result = await upgradePluginToLatest(plugin)
+    if (result.cancelled) return
+    if (!result.success) {
+      error(`插件 "${displayName}" 升级失败: ${result.error || '未知错误'}`)
+      return
+    }
+
+    // 重新读取安装信息，让已升级插件退出更新列表并同步更新徽标数量。
+    await loadPlugins()
+    success(`插件 "${displayName}" 升级成功`)
+  } catch (err: any) {
+    console.error('升级插件失败:', err)
+    error(`插件 "${displayName}" 升级失败: ${err.message || '未知错误'}`)
+  } finally {
+    // 失败也释放升级状态，允许用户重试。
+    upgradingPluginPath.value = null
+  }
 }
 
 /**
  * 批量升级可更新插件
  * 逐个更新并实时反馈进度，完成后统一刷新列表与提示结果
+ * @returns 批量升级和列表刷新完成后结束的 Promise。
  */
 async function handleUpgradeAllPlugins(): Promise<void> {
   const targets = upgradablePlugins.value
-  if (isUpgradingAll.value || targets.length === 0) return
+  // 单个升级未结束时不能再次覆盖安装同一批插件。
+  if (isUpgradingAll.value || upgradingPluginPath.value || targets.length === 0) return
 
   const confirmed = await confirm({
     title: '全部更新插件',
@@ -249,7 +345,8 @@ async function handleUpgradeAllPlugins(): Promise<void> {
     confirmText: '全部更新',
     cancelText: '取消'
   })
-  if (!confirmed) return
+  // 确认框等待期间可能已触发单个升级，需要再次校验互斥状态。
+  if (!confirmed || isUpgradingAll.value || upgradingPluginPath.value) return
 
   isUpgradingAll.value = true
   upgradeProgressDone.value = 0
@@ -258,6 +355,7 @@ async function handleUpgradeAllPlugins(): Promise<void> {
 
   let successCount = 0
   let failCount = 0
+  let cancelledCount = 0
   const failedNames: string[] = []
 
   try {
@@ -274,6 +372,8 @@ async function handleUpgradeAllPlugins(): Promise<void> {
       const result = await upgradePluginToLatest(plugin)
       if (result.success) {
         successCount++
+      } else if (result.cancelled) {
+        cancelledCount++
       } else {
         failCount++
         failedNames.push(displayName)
@@ -284,7 +384,9 @@ async function handleUpgradeAllPlugins(): Promise<void> {
 
     await loadPlugins()
 
-    if (failCount === 0) {
+    if (cancelledCount > 0) {
+      info(`批量更新完成：成功 ${successCount} 个，失败 ${failCount} 个，取消 ${cancelledCount} 个`)
+    } else if (failCount === 0) {
       console.log('批量更新完成，全部成功:', successCount)
       success(`全部更新完成（共 ${successCount} 个）`)
     } else if (successCount === 0) {
@@ -300,6 +402,7 @@ async function handleUpgradeAllPlugins(): Promise<void> {
     error(`批量更新失败: ${err.message || '未知错误'}`)
   } finally {
     isUpgradingAll.value = false
+    upgradingPluginPath.value = null
     upgradeProgressDone.value = 0
     upgradeProgressTotal.value = 0
   }
@@ -571,8 +674,15 @@ function handleClickOutside(e: MouseEvent): void {
   }
 }
 
-// 初始化时加载插件列表
+/**
+ * 初始化列表、进度订阅和页面交互监听。
+ * @returns 初始化完成后结束的 Promise。
+ */
 onMounted(async () => {
+  // 在加载列表之前订阅，确保首次升级不会漏掉下载起始事件。
+  stopDownloadProgressListener = window.ztools.internal.onPluginMarketDownloadProgress(
+    handleUpgradeDownloadProgress
+  )
   try {
     const data = await window.ztools.internal.dbGet(PINNED_PLUGINS_KEY)
     pinnedPluginPaths.value = Array.isArray(data) ? data : []
@@ -593,7 +703,12 @@ useJumpFunction((state) => {
   }
 })
 
+/**
+ * 离开页面时释放进度订阅和交互监听。
+ * @returns 无返回值。
+ */
 onUnmounted(() => {
+  stopDownloadProgressListener?.()
   window.removeEventListener('keydown', handleKeydown, true)
   window.removeEventListener('click', handleClickOutside)
 })
@@ -752,7 +867,10 @@ async function handleInstallFromNpm(data: {
                 <button
                   class="more-menu-item"
                   :disabled="
-                    isUpgradingAll || isCheckingMarketUpdates || upgradablePluginsCount === 0
+                    isUpgradingAll ||
+                    !!upgradingPluginPath ||
+                    isCheckingMarketUpdates ||
+                    upgradablePluginsCount === 0
                   "
                   @click="handleUpgradeAllPlugins"
                 >
@@ -828,6 +946,21 @@ async function handleInstallFromNpm(data: {
             </div>
 
             <div class="plugin-meta">
+              <PluginUpgradeButton
+                v-if="filterStatus === 'upgradable'"
+                class="upgrade-btn"
+                :disabled="
+                  upgradingPluginPath === plugin.path
+                    ? isCancellingUpgrade
+                    : isUpgradingAll || !!upgradingPluginPath
+                "
+                :version="plugin.latestVersion"
+                :loading="upgradingPluginPath === plugin.path"
+                :download-state="
+                  upgradingPluginPath === plugin.path ? upgradeDownloadState : undefined
+                "
+                @click.stop="handleUpgradePlugin(plugin)"
+              />
               <button
                 class="icon-btn open-btn"
                 :disabled="isPluginDisabled(plugin.path)"

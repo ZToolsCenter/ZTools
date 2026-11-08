@@ -7,6 +7,7 @@ export interface UpgradePluginInput {
 
 export interface UpgradeResult {
   success: boolean
+  cancelled?: boolean
   error?: string
   plugin?: any
 }
@@ -31,6 +32,7 @@ export function compareVersions(v1: string, v2: string): number {
  * 流程：如在运行则先停止 -> 安装市场版本（覆盖安装，保留插件 LMDB 数据）。
  * @param installedPlugin 已安装插件信息
  * @param marketPlugin 插件市场中的目标版本数据
+ * @returns 升级结果、取消状态或失败原因。
  */
 export async function upgradeInstalledPluginFromMarket(
   installedPlugin: UpgradePluginInput,
@@ -50,6 +52,10 @@ export async function upgradeInstalledPluginFromMarket(
     const installResult = await window.ztools.internal.installPluginFromMarket(
       JSON.parse(JSON.stringify(marketPlugin))
     )
+    // 用户取消下载时保留独立状态，避免把主动取消显示为安装失败。
+    if (installResult.cancelled) {
+      return { success: false, cancelled: true }
+    }
     if (!installResult.success) {
       return { success: false, error: installResult.error || '安装新版本失败' }
     }

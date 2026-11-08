@@ -24,9 +24,7 @@ export function isInAppUpdateSource(source: SelectableUpdateSource): boolean {
  * @returns 默认下载源标识；没有可用来源时返回 null。
  */
 export function getDefaultUpdateSourceID(sources: SelectableUpdateSource[]): number | null {
-  const officialSource = sources.find(
-    (source) => source.platformName.trim() === '官方源'
-  )
+  const officialSource = sources.find((source) => source.platformName.trim() === '官方源')
   const githubSource = sources.find(
     (source) => source.platformName.trim().toLowerCase() === 'github'
   )

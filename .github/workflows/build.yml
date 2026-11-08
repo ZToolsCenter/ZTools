@@ -89,7 +89,7 @@ jobs:
       - name: Install pnpm
         uses: pnpm/action-setup@v2
         with:
-          version: 9
+          version: 10.33.0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -103,9 +103,9 @@ jobs:
           cache: 'pnpm'
 
       - name: Install plugin dependencies
-        run: |
-          cd internal-plugins/setting
-          pnpm install
+        working-directory: internal-plugins/setting
+        # 设置插件使用独立锁文件，避免根 workspace 将安装重定向到主项目。
+        run: pnpm install --frozen-lockfile --ignore-workspace
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -216,7 +216,7 @@ jobs:
       - name: Install pnpm
         uses: pnpm/action-setup@v2
         with:
-          version: 9
+          version: 10.33.0
 
       - name: Install Node.js
         uses: actions/setup-node@v4
