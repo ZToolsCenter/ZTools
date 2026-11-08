@@ -47,6 +47,17 @@ const homeRoutes: MenuRouterItemType[] = [
     }
   },
   {
+    path: '/scheduledTasks',
+    name: 'ScheduledTasks',
+    component: () => import('@/views/ScheduledTasksSetting/ScheduledTasksSetting.vue'),
+    meta: {
+      menu: {
+        label: '定时任务',
+        icon: 'i-z-clock'
+      }
+    }
+  },
+  {
     path: '/plugins',
     name: 'Plugins',
     component: () => import('@/views/PluginsSetting/PluginsSetting.vue'),

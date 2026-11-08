@@ -32,7 +32,11 @@ import databaseAPI from '../api/shared/database'
 import proxyManager from './proxyManager'
 import type { PluginEnterPayload, PluginMainWindowLaunchState } from '../../shared/pluginLaunch'
 import { sendPluginLifecycle } from '../core/pluginLifecycle'
-import { createPluginViewReadiness, type PluginViewReadiness } from '../core/pluginViewReadiness'
+import {
+  createPluginViewReadiness,
+  waitForPluginViewReady,
+  type PluginViewReadiness
+} from '../core/pluginViewReadiness'
 import devToolsShortcut, { getDevToolsMode } from '../utils/devToolsShortcut'
 import windowManager from './windowManager'
 import {
@@ -45,6 +49,10 @@ import aiRequestStatusTracker from '../core/aiRequestStatusTracker'
 console.log('[Plugin] mainPreload', mainPreload)
 
 const PLUGIN_OUT_GRACE_MS = 200
+// 单次启动等待页面就绪的上限；超时只结束本次启动，页面继续加载，后续启动重新等待。
+const PLUGIN_LAUNCH_READY_TIMEOUT_MS = 15000
+// 搜索结果不能被慢插件长时间阻塞，mainPush 查询使用更短的等待。
+const PLUGIN_MAIN_PUSH_READY_TIMEOUT_MS = 5000
 
 /**
  * 为插件视图注册外部链接拦截器
@@ -607,6 +615,7 @@ export class PluginManager {
       if (!this.pluginView && !cached?.loading.isReady) {
         api.resizeWindow(windowManager.getMainWindowHeaderHeight() + 1)
       }
+      this.reloadStalledPluginView(cached)
 
       // 与 mainPush 共用实例创建，避免前台启动与后台预加载各建一份视图。
       await this.preloadPlugin(pluginPath)
@@ -620,6 +629,23 @@ export class PluginManager {
     } catch (error) {
       this.handleLaunchFailure(request, error)
     }
+  }
+
+  /**
+   * 重新加载已停止加载却仍未就绪的缓存页面。
+   * 这类页面不会再收到就绪事件，直接复用只会让每次启动都立即失败。
+   * @param plugin 本次启动前已缓存的插件实例
+   * @returns 无返回值
+   */
+  private reloadStalledPluginView(plugin: PluginViewInfo | undefined): void {
+    const contents = plugin?.view.webContents
+    if (!plugin || !contents || contents.isDestroyed()) return
+    if (plugin.loading.isReady || contents.isLoading()) return
+    console.warn('[Plugin] 缓存插件页面未就绪且已停止加载，重新加载:', {
+      pluginPath: plugin.path,
+      url: contents.getURL()
+    })
+    plugin.loading.reload()
   }
 
   /**
@@ -657,7 +683,7 @@ export class PluginManager {
     let mode: string | undefined
     while (this.activeLaunch === request) {
       const documentReady = plugin.loading.ready
-      const ready = await documentReady
+      const ready = await waitForPluginViewReady(documentReady, PLUGIN_LAUNCH_READY_TIMEOUT_MS)
       if (this.activeLaunch !== request) return
       // 页面可能重定向或重载；继续等待新文档，不提交旧页面的准备结果。
       if (documentReady !== plugin.loading.ready) continue
@@ -1757,7 +1783,7 @@ export class PluginManager {
     // 其它请求可能已创建视图但仍在加载，查询跟随重定向等待当前文档的回调就绪。
     while (true) {
       const documentReady = plugin.loading.ready
-      const ready = await documentReady
+      const ready = await waitForPluginViewReady(documentReady, PLUGIN_MAIN_PUSH_READY_TIMEOUT_MS)
       if (plugin.view.webContents.isDestroyed() || !this.pluginViews.includes(plugin)) return []
       if (documentReady !== plugin.loading.ready) continue
       if (!ready) return []

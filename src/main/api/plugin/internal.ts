@@ -32,6 +32,8 @@ import {
 } from '@shared/commandShared'
 import { normalizeSearchWallpaperConfig, type SearchWallpaperConfig } from '@shared/searchWallpaper'
 import { registerInternalApiChannel } from '../../core/internalPlugins'
+import { getScheduledTaskService } from '../../core/scheduledTasks/runtime'
+import type { ScheduledTaskDraft } from '@shared/scheduledTasks'
 
 /**
  * 权限错误类
@@ -799,6 +801,30 @@ export class InternalPluginAPI {
     this.handleInternal('internal:unregister-app-shortcut', async (event, shortcut: string) => {
       this.requireApi(event, 'internal:unregister-app-shortcut')
       return settingsAPI.unregisterAppShortcut(shortcut)
+    })
+
+    // ==================== 定时任务 API ====================
+    this.handleInternal('internal:get-scheduled-tasks', async (event) => {
+      this.requireApi(event, 'internal:get-scheduled-tasks')
+      return getScheduledTaskService().list()
+    })
+
+    this.handleInternal(
+      'internal:save-scheduled-task',
+      async (event, draft: ScheduledTaskDraft) => {
+        this.requireApi(event, 'internal:save-scheduled-task')
+        return await getScheduledTaskService().save(draft)
+      }
+    )
+
+    this.handleInternal('internal:delete-scheduled-task', async (event, id: string) => {
+      this.requireApi(event, 'internal:delete-scheduled-task')
+      return getScheduledTaskService().remove(id)
+    })
+
+    this.handleInternal('internal:run-scheduled-task', async (event, id: string) => {
+      this.requireApi(event, 'internal:run-scheduled-task')
+      return await getScheduledTaskService().runNow(id)
     })
 
     // ==================== 系统设置 API ====================

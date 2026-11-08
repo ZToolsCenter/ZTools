@@ -129,7 +129,7 @@ const api = {
     name?: string
     cmdType?: string
     confirmDialog?: any
-    launchSource?: 'search' | 'global-shortcut' | 'super-panel'
+    launchSource?: 'search' | 'global-shortcut' | 'super-panel' | 'scheduled-task'
   }) => ipcRenderer.invoke('launch', options),
   launchAsAdmin: (appPath: string, name?: string) =>
     ipcRenderer.invoke('launch-as-admin', appPath, name),
@@ -688,7 +688,7 @@ declare global {
         name?: string
         cmdType?: string
         confirmDialog?: any
-        launchSource?: 'search' | 'global-shortcut' | 'super-panel'
+        launchSource?: 'search' | 'global-shortcut' | 'super-panel' | 'scheduled-task'
       }) => Promise<void>
       hideWindow: () => void
       resizeWindow: (height: number) => void

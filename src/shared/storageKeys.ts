@@ -9,6 +9,7 @@ export const HOST_STORAGE_KEYS = {
   localShortcuts: 'local-shortcuts',
   globalShortcuts: 'global-shortcuts',
   appShortcuts: 'app-shortcuts',
+  scheduledTasks: 'scheduled-tasks',
   commandAliases: 'command-aliases',
   disabledCommands: 'disable-commands',
   pluginCenterPinned: 'plugin-center-pinned',

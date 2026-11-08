@@ -16,6 +16,8 @@ const props = defineProps<{
   options: ShortcutsSettingCommandTargetOptionBase[]
   selectedCommandId?: string | null
   selectedOption?: ShortcutsSettingCommandTargetOptionBase | null
+  /** 未选择目标时不显示占位摘要卡片。 */
+  hideEmpty?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -177,7 +179,7 @@ function handleSelectTarget(target: ShortcutsSettingCommandTargetOptionBase): vo
         <div class="target-card-subtitle">{{ currentTarget.subtitle }}</div>
       </div>
     </div>
-    <div v-else class="target-card target-card-empty">
+    <div v-else-if="!hideEmpty" class="target-card target-card-empty">
       <div class="icon-preview">
         <div class="icon-placeholder">
           <div class="i-z-command font-size-16px" />

@@ -7,21 +7,15 @@ import type {
   ShortcutsSettingAliasCommandOption,
   ShortcutsSettingAliasDialogState,
   ShortcutsSettingAliasDraftTarget,
-  ShortcutsSettingCommandCmdType,
   ShortcutsSettingJumpFunction,
   ShortcutsSettingShortcutTargetOption,
   ShortcutsSettingTab
 } from '@/views/ShortcutsSetting/ShortcutsSetting'
-import { buildShortcutTargetValue } from '@/views/ShortcutsSetting/ShortcutsSetting'
 import {
-  COMMAND_ALIASES_KEY,
-  DIRECT_APP_ALIAS_GROUP_KEY,
-  DIRECT_APP_ALIAS_GROUP_TITLE,
-  LOCAL_SHORTCUT_ALIAS_GROUP_KEY,
-  LOCAL_SHORTCUT_ALIAS_GROUP_TITLE,
-  getCommandId as _getCommandId,
-  normalizeCommandAliases
-} from '@shared/commandShared'
+  buildShortcutTargetValue,
+  loadCommandTargetOptions
+} from '@/views/ShortcutsSetting/ShortcutsSetting'
+import { COMMAND_ALIASES_KEY, normalizeCommandAliases } from '@shared/commandShared'
 import type { CommandAliasEntry, CommandAliasStore } from '@shared/commandShared'
 import AliasMappingDialog from './components/AliasMappingDialog.vue'
 
@@ -233,26 +227,6 @@ const showEditor = ref(false)
 const editingShortcut = ref<GlobalShortcut | null>(null)
 const prefillTarget = ref('')
 
-function getCommandId(command: {
-  name: string
-  path?: string
-  type: 'plugin' | 'direct'
-  subType?: 'app' | 'system-setting' | 'local-shortcut'
-  featureCode?: string
-  cmdType?: 'text' | 'window'
-  pluginName?: string
-}): string {
-  return _getCommandId({
-    type: command.type,
-    subType: command.subType,
-    path: command.path,
-    pluginName: command.pluginName,
-    featureCode: command.featureCode,
-    name: command.name,
-    cmdType: command.cmdType
-  })
-}
-
 function getAliasTargetLabel(target: ShortcutsSettingAliasCommandOption | null): string {
   if (!target) return '目标已失效'
   return target.label
@@ -390,149 +364,7 @@ async function loadAliasMappings(): Promise<void> {
 
 async function loadAliasTargets(): Promise<void> {
   try {
-    const result = await window.ztools.internal.getCommands()
-    const pluginMap = new Map((result.plugins || []).map((plugin: any) => [plugin.name, plugin]))
-    const targetMap = new Map<string, ShortcutsSettingAliasCommandOption>()
-
-    const addTarget = (target: ShortcutsSettingAliasCommandOption): void => {
-      targetMap.set(target.commandId, target)
-    }
-
-    const addPluginTarget = (command: any, cmdType: ShortcutsSettingCommandCmdType): void => {
-      if (command.type !== 'plugin') return
-      if (!command.pluginName || !command.featureCode || !command.name) return
-
-      const plugin = pluginMap.get(command.pluginName)
-      const pluginTitle = command.pluginTitle || plugin?.title || command.pluginName
-      const commandId = getCommandId({
-        type: 'plugin',
-        path: command.path,
-        pluginName: command.pluginName,
-        featureCode: command.featureCode,
-        name: command.name,
-        cmdType
-      })
-
-      addTarget({
-        commandId,
-        type: 'plugin',
-        path: command.path,
-        groupKey: command.pluginName,
-        groupTitle: pluginTitle,
-        featureCode: command.featureCode,
-        subtitle: command.featureCode,
-        pluginName: command.pluginName,
-        pluginTitle,
-        cmdName: command.name,
-        cmdType,
-        icon: command.icon || plugin?.logo,
-        label: `${pluginTitle} / ${command.name}`
-      })
-    }
-
-    const addDirectAppTarget = (command: any): void => {
-      if (
-        command.type !== 'direct' ||
-        command.subType !== 'app' ||
-        !command.path ||
-        !command.name
-      ) {
-        return
-      }
-
-      const commandId = getCommandId({
-        type: 'direct',
-        subType: 'app',
-        path: command.path,
-        name: command.name,
-        cmdType: 'text'
-      })
-
-      addTarget({
-        commandId,
-        type: 'direct',
-        subType: 'app',
-        path: command.path,
-        groupKey: DIRECT_APP_ALIAS_GROUP_KEY,
-        groupTitle: DIRECT_APP_ALIAS_GROUP_TITLE,
-        featureCode: command.path,
-        subtitle: command.path,
-        pluginName: DIRECT_APP_ALIAS_GROUP_KEY,
-        pluginTitle: DIRECT_APP_ALIAS_GROUP_TITLE,
-        cmdName: command.name,
-        cmdType: 'text',
-        icon: command.icon,
-        label: `${DIRECT_APP_ALIAS_GROUP_TITLE} / ${command.name}`
-      })
-    }
-
-    const addLocalShortcutTarget = (command: any): void => {
-      if (
-        command.type !== 'direct' ||
-        command.subType !== 'local-shortcut' ||
-        !command.path ||
-        !command.name
-      ) {
-        return
-      }
-
-      const commandId = getCommandId({
-        type: 'direct',
-        subType: 'local-shortcut',
-        path: command.path,
-        name: command.name,
-        cmdType: 'text'
-      })
-
-      addTarget({
-        commandId,
-        type: 'direct',
-        subType: 'local-shortcut',
-        path: command.path,
-        groupKey: LOCAL_SHORTCUT_ALIAS_GROUP_KEY,
-        groupTitle: LOCAL_SHORTCUT_ALIAS_GROUP_TITLE,
-        featureCode: command.path,
-        subtitle: command.path,
-        pluginName: LOCAL_SHORTCUT_ALIAS_GROUP_KEY,
-        pluginTitle: LOCAL_SHORTCUT_ALIAS_GROUP_TITLE,
-        cmdName: command.name,
-        cmdType: 'text',
-        icon: command.icon,
-        label: `${LOCAL_SHORTCUT_ALIAS_GROUP_TITLE} / ${command.name}`
-      })
-    }
-
-    for (const command of result.commands || []) {
-      if (command.type === 'direct' && command.subType === 'app') {
-        addDirectAppTarget(command)
-        continue
-      }
-
-      if (command.type === 'direct' && command.subType === 'local-shortcut') {
-        addLocalShortcutTarget(command)
-        continue
-      }
-
-      if (command.cmdType === 'text') {
-        addPluginTarget(command, 'text')
-      }
-    }
-
-    for (const command of result.regexCommands || []) {
-      if (
-        command.cmdType === 'regex' ||
-        command.cmdType === 'over' ||
-        command.cmdType === 'img' ||
-        command.cmdType === 'files' ||
-        command.cmdType === 'window'
-      ) {
-        addPluginTarget(command, command.cmdType)
-      }
-    }
-
-    aliasTargetOptions.value = Array.from(targetMap.values()).sort((a, b) =>
-      a.label.localeCompare(b.label, 'zh-CN')
-    )
+    aliasTargetOptions.value = await loadCommandTargetOptions()
   } catch (err) {
     console.error('加载指令目标失败:', err)
   }

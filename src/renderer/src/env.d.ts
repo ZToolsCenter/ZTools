@@ -99,7 +99,7 @@ declare global {
         name?: string
         cmdType?: string // cmd 类型（用于判断是否添加历史记录）
         confirmDialog?: any // 确认对话框配置
-        launchSource?: 'search' | 'global-shortcut' | 'super-panel'
+        launchSource?: 'search' | 'global-shortcut' | 'super-panel' | 'scheduled-task'
       }) => Promise<any>
       launchAsAdmin: (appPath: string, name?: string) => Promise<void>
       hideWindow: () => void

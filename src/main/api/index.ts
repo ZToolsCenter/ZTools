@@ -55,6 +55,7 @@ import { runStartupDataMigrations } from '../core/startupDataMigrations'
 import superPanelManager from '../core/superPanelManager'
 import translationManager from '../core/translationManager'
 import { initializeCommandService, getCommandService } from '../core/commands/runtime'
+import { startScheduledTasks, stopScheduledTasks } from '../core/scheduledTasks/runtime'
 import { COMMAND_ALIASES_KEY } from '../../shared/commandShared'
 import { ENABLED_MAIN_PUSH_PLUGINS_KEY, normalizeConfigList } from '../../shared/pluginSettings'
 
@@ -242,6 +243,9 @@ class APIManager {
     settingsAPI.setGlobalShortcutHandler((target, context) =>
       this.handleGlobalShortcut(target, context)
     )
+
+    // 定时任务在主进程调度，依赖上面已初始化的指令服务。
+    startScheduledTasks(pluginManager)
   }
 
   /**
@@ -291,6 +295,7 @@ class APIManager {
    * 清理 API 管理器持有的运行时资源。
    */
   public cleanup(): void {
+    stopScheduledTasks()
     settingsAPI.cleanup()
   }
 

@@ -5,38 +5,42 @@ export interface PluginViewReadiness {
   readonly isReady: boolean
   /** 当前主框架页面的 DOM 就绪结果；导航或重载后读取会得到新的 Promise。 */
   readonly ready: Promise<boolean>
+  /** 重载当前页面，并在导航事件到达前就让 ready 指向新文档的等待。 */
+  reload(): void
 }
 
 /**
  * 在首次加载前绑定视图就绪等待，并随主框架导航更新等待结果。
+ * 等待本身不设时限，慢页面在任意时刻就绪都能被后续调用复用；时限由调用方各自决定。
  * @param contents 插件视图的 WebContents
- * @param timeoutMs 每次页面加载允许等待 DOM 就绪的毫秒数
- * @returns 随页面更新的就绪记录；失败、超时或销毁时本次等待返回 false
+ * @returns 随页面更新的就绪记录；失败或销毁时本次等待返回 false
  */
-export function createPluginViewReadiness(
-  contents: WebContents,
-  timeoutMs: number = 5000
-): PluginViewReadiness {
+export function createPluginViewReadiness(contents: WebContents): PluginViewReadiness {
   // 已销毁的视图不能再注册监听，也不能产生永远无法完成的等待。
-  if (contents.isDestroyed()) return { isReady: false, ready: Promise.resolve(false) }
+  if (contents.isDestroyed()) {
+    return { isReady: false, ready: Promise.resolve(false), reload: () => undefined }
+  }
 
   let ready: Promise<boolean>
   let resolveReady: (value: boolean) => void
-  let timer: ReturnType<typeof setTimeout> | undefined
   let settled = true
-  let navigationStarted = false
+  // 下一次主框架导航是否沿用已建立的等待：首次 loadURL 及主动重载在导航事件到达前已取得等待。
+  let adoptNextNavigation = true
   let loadFailed = false
   let domReady = false
+  // 已开始但尚未提交的主框架导航；被拦截、204 或转为下载时不会提交，原文档继续使用。
+  let pendingNavigation = false
+  let previousReady = false
+  let previousFailed = false
 
   /**
-   * 完成本次页面等待并释放计时器，继续观察迟到的页面就绪事件。
+   * 完成本次页面等待，继续观察迟到的页面就绪事件。
    * @param value 当前页面是否已经 DOM 就绪
    * @returns 无返回值
    */
   function finish(value: boolean): void {
     if (settled) return
     settled = true
-    clearTimeout(timer)
     resolveReady(value)
   }
 
@@ -45,8 +49,9 @@ export function createPluginViewReadiness(
    * @returns 无返回值
    */
   function onReady(): void {
-    // 超时只终止本次等待；慢页面随后就绪时，后续调用仍应可以使用该视图。
+    // 调用方等待超时后，慢页面随后就绪时，后续调用仍应可以使用该视图。
     if (loadFailed) return
+    pendingNavigation = false
     domReady = true
     if (settled) ready = Promise.resolve(true)
     finish(true)
@@ -69,6 +74,7 @@ export function createPluginViewReadiness(
     isMainFrame: boolean
   ): void {
     if (!isMainFrame) return
+    pendingNavigation = false
     // 加载失败后的错误页也可能发出 DOM 就绪，不能将其当成可用插件页面。
     loadFailed = true
     domReady = false
@@ -77,7 +83,7 @@ export function createPluginViewReadiness(
   }
 
   /**
-   * 为新的主框架页面建立有时间上限的等待。
+   * 为新的主框架页面建立等待。
    * @returns 无返回值
    */
   function begin(): void {
@@ -87,7 +93,6 @@ export function createPluginViewReadiness(
     ready = new Promise<boolean>((resolve) => {
       resolveReady = resolve
     })
-    timer = setTimeout(() => finish(false), timeoutMs)
   }
 
   /**
@@ -97,12 +102,62 @@ export function createPluginViewReadiness(
    */
   function onNavigation(details: Event<WebContentsDidStartNavigationEventParams>): void {
     if (!details.isMainFrame || details.isSameDocument) return
-    // 首次导航沿用创建时的等待；之后导航使旧文档的未完成等待失效。
-    if (navigationStarted || settled) {
+    // 连续导航只记录最初文档的状态，未提交时恢复的是仍在显示的那份文档。
+    if (!pendingNavigation) {
+      previousReady = domReady
+      previousFailed = loadFailed
+    }
+    pendingNavigation = true
+    // 首次导航及主动重载沿用已建立的等待；之后导航使旧文档的未完成等待失效。
+    if (!adoptNextNavigation || settled) {
       finish(false)
       begin()
     }
-    navigationStarted = true
+    adoptNextNavigation = false
+  }
+
+  /**
+   * 重载当前页面；导航开始事件可能异步到达，先建立新等待避免调用方读到旧文档结果。
+   * @returns 无返回值
+   */
+  function reload(): void {
+    if (contents.isDestroyed()) return
+    if (!pendingNavigation) {
+      previousReady = domReady
+      previousFailed = loadFailed
+    }
+    pendingNavigation = true
+    finish(false)
+    begin()
+    adoptNextNavigation = true
+    contents.reload()
+  }
+
+  /**
+   * 主框架提交新文档后，等待只属于新文档，停止加载时不再恢复旧文档状态。
+   * @returns 无返回值
+   */
+  function onCommit(): void {
+    pendingNavigation = false
+  }
+
+  /**
+   * 导航未提交即停止加载时恢复原文档状态，否则就绪状态会永久停在等待或失败。
+   * @returns 无返回值
+   */
+  function onStopLoading(): void {
+    if (!pendingNavigation) return
+    pendingNavigation = false
+    if (previousReady) {
+      domReady = true
+      if (settled) ready = Promise.resolve(true)
+      finish(true)
+      return
+    }
+    // 原文档本就不可用；保留失败标记，避免其错误页被当成插件页面。
+    loadFailed = previousFailed
+    finish(false)
+    ready = Promise.resolve(false)
   }
 
   /**
@@ -112,18 +167,23 @@ export function createPluginViewReadiness(
   function onDestroyed(): void {
     finish(false)
     domReady = false
+    pendingNavigation = false
     // 销毁后的读取必须返回失败，不能保留已就绪页面的成功结果。
     ready = Promise.resolve(false)
     contents.removeListener('dom-ready', onReady)
     contents.removeListener('did-fail-load', onFailed)
     contents.removeListener('did-start-navigation', onNavigation)
+    contents.removeListener('did-navigate', onCommit)
+    contents.removeListener('did-stop-loading', onStopLoading)
     contents.removeListener('destroyed', onDestroyed)
   }
 
-  // 每类事件只监听一次，跨导航及超时继续观察页面，直到视图销毁统一释放。
+  // 每类事件只监听一次，跨导航继续观察页面，直到视图销毁统一释放。
   contents.on('dom-ready', onReady)
   contents.on('did-fail-load', onFailed)
   contents.on('did-start-navigation', onNavigation)
+  contents.on('did-navigate', onCommit)
+  contents.on('did-stop-loading', onStopLoading)
   contents.once('destroyed', onDestroyed)
   begin()
   return {
@@ -140,6 +200,24 @@ export function createPluginViewReadiness(
      */
     get ready(): Promise<boolean> {
       return ready
-    }
+    },
+    reload
   }
+}
+
+/**
+ * 为单次调用限定等待时长，超时只影响本次调用，不改变页面的就绪记录。
+ * @param ready 调用开始时读取的页面就绪等待
+ * @param timeoutMs 本次调用允许等待的毫秒数
+ * @returns 页面在时限内就绪时为 true，失败、销毁或超时为 false
+ */
+export function waitForPluginViewReady(
+  ready: Promise<boolean>,
+  timeoutMs: number
+): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<boolean>((resolve) => {
+    timer = setTimeout(() => resolve(false), timeoutMs)
+  })
+  return Promise.race([ready, timeout]).finally(() => clearTimeout(timer))
 }

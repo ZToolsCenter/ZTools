@@ -472,6 +472,15 @@ declare global {
           aliases: Record<string, Array<{ alias: string; icon?: string }>>
         ) => Promise<{ success: boolean }>
 
+        // 定时任务
+        getScheduledTasks: () => Promise<import('@shared/scheduledTasks').ScheduledTaskView[]>
+        saveScheduledTask: (
+          draft: import('@shared/scheduledTasks').ScheduledTaskDraft
+        ) => Promise<{ success: boolean; error?: string }>
+        deleteScheduledTask: (id: string) => Promise<{ success: boolean }>
+        runScheduledTask: (id: string) => Promise<{ success: boolean; error?: string }>
+        onScheduledTasksChanged: (callback: () => void) => () => void
+
         // 本地启动管理
         localShortcuts: {
           getAll: () => Promise<

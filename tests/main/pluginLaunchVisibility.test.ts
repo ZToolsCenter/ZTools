@@ -10,6 +10,11 @@ describe('plugin launch window visibility', () => {
     expect(shouldKeepMainWindowHiddenForLaunch('super-panel', true)).toBe(true)
   })
 
+  it('suppresses the main window for mainHide scheduled task launches', () => {
+    expect(shouldKeepMainWindowHiddenForLaunch('scheduled-task', true)).toBe(true)
+    expect(shouldKeepMainWindowHiddenForLaunch('scheduled-task', false)).toBe(false)
+  })
+
   it('keeps ordinary search launches unchanged', () => {
     expect(shouldKeepMainWindowHiddenForLaunch('search', true)).toBe(false)
     expect(shouldKeepMainWindowHiddenForLaunch(undefined, true)).toBe(false)

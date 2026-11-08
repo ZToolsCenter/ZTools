@@ -1496,6 +1496,22 @@ window.ztools = {
       return () => electron.ipcRenderer.removeListener('command-aliases-changed', handler)
     },
 
+    // ==================== 定时任务 API ====================
+    getScheduledTasks: async () => await electron.ipcRenderer.invoke('internal:get-scheduled-tasks'),
+    saveScheduledTask: async (draft) =>
+      await electron.ipcRenderer.invoke('internal:save-scheduled-task', draft),
+    deleteScheduledTask: async (id) =>
+      await electron.ipcRenderer.invoke('internal:delete-scheduled-task', id),
+    runScheduledTask: async (id) =>
+      await electron.ipcRenderer.invoke('internal:run-scheduled-task', id),
+    onScheduledTasksChanged: (callback) => {
+      const handler = (_event) => {
+        if (typeof callback === 'function') callback()
+      }
+      electron.ipcRenderer.on('scheduled-tasks-changed', handler)
+      return () => electron.ipcRenderer.removeListener('scheduled-tasks-changed', handler)
+    },
+
     // ==================== 其他 API ====================
     revealInFinder: async (path) =>
       await electron.ipcRenderer.invoke('internal:reveal-in-finder', path),
