@@ -207,6 +207,7 @@ vi.mock('../../src/main/managers/pluginManager', () => ({
     getCurrentPluginPath: vi.fn(() => null),
     restoreCurrentPluginViewHeightOnWindowShow: vi.fn(),
     isPluginViewFocused: vi.fn(() => false),
+    isCurrentPluginSubInputVisible: vi.fn(() => false),
     focusPluginView: vi.fn(),
     forceRepaintCurrentView: vi.fn(),
     hidePluginView: vi.fn(),

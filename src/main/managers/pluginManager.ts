@@ -1074,6 +1074,18 @@ export class PluginManager {
   }
 
   /**
+   * 检查主窗口当前已挂载的插件是否显示顶部子输入框。
+   * @returns 当前插件可恢复子输入框焦点时返回 true。
+   */
+  public isCurrentPluginSubInputVisible(): boolean {
+    // 加载占位或后台插件的输入框状态不能用来恢复当前窗口的焦点。
+    return (
+      this.pluginView !== null &&
+      this.pluginViews.some((plugin) => plugin.view === this.pluginView && plugin.subInputVisible)
+    )
+  }
+
+  /**
    * 检查插件 WebContentsView 是否当前北有焦点
    * 供 Linux blur 事件处理器判断是否是应用内部焦点转移
    */

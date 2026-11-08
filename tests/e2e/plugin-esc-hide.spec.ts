@@ -248,3 +248,111 @@ test('插件内 ESC 可直接隐藏主窗口并立即返回搜索', async ({
     await fs.rm(dataRoot, { recursive: true, force: true })
   }
 })
+
+/**
+ * 触发主窗口的失焦隐藏，再通过与全局唤醒共用的 showWindow 路径显示。
+ * @param electronApp 当前使用隔离数据目录的 Electron 实例。
+ * @returns 窗口重新显示且 Space 锚点释放后结束的 Promise。
+ */
+async function blurAndWakeMainWindow(electronApp: ElectronApplication): Promise<void> {
+  // E2E 默认抑制失焦隐藏，只在测试的 blur 事件期间启用产品处理逻辑。
+  await expect
+    .poll(() =>
+      electronApp.evaluate(({ BrowserWindow }) => {
+        const main = BrowserWindow.getAllWindows().find(
+          (win) => win.getTitle() === 'ZTools' && win.getBounds().width > 1
+        )!
+        if (!main.isVisible()) return false
+        const e2eMode = process.env.ZTOOLS_E2E
+        delete process.env.ZTOOLS_E2E
+        try {
+          main.emit('blur')
+        } finally {
+          if (e2eMode !== undefined) process.env.ZTOOLS_E2E = e2eMode
+        }
+        return main.isVisible()
+      })
+    )
+    .toBe(false)
+
+  await electronApp.evaluate(({ ipcMain }) => {
+    ipcMain.emit('super-panel:show-main-window', {})
+  })
+
+  // 原生唤醒可能在动画期间补发 show 事件，等迁移收尾再检查最终焦点。
+  await expect
+    .poll(() =>
+      electronApp.evaluate(({ BrowserWindow }) => {
+        const windows = BrowserWindow.getAllWindows()
+        const hasAnchor = windows.some((win) => {
+          const [width, height] = win.getSize()
+          return width === 1 && height === 1
+        })
+        const main = windows.find((win) => win.getTitle() === 'ZTools' && win.getBounds().width > 1)
+        return !hasAnchor && main?.isVisible() === true
+      })
+    )
+    .toBe(true)
+}
+
+/**
+ * 读取键盘当前交给主窗口宿主页还是插件正文。
+ * @param electronApp 当前使用隔离数据目录的 Electron 实例。
+ * @returns 当前获得焦点的 WebContents 类型。
+ */
+async function readKeyboardTarget(
+  electronApp: ElectronApplication
+): Promise<'host' | 'plugin' | null> {
+  return await electronApp.evaluate(({ BrowserWindow, webContents }) => {
+    const main = BrowserWindow.getAllWindows().find(
+      (win) => win.getTitle() === 'ZTools' && win.getBounds().width > 1
+    )!
+    if (!main.isVisible()) return null
+    const focused = webContents.getFocusedWebContents()
+    if (!focused) return null
+    if (focused === main.webContents) return 'host'
+    if (focused.getURL().startsWith('http://127.0.0.1:15177')) return 'plugin'
+    return null
+  })
+}
+
+test('插件保留在主窗口时，失焦唤醒会恢复顶部输入或插件正文的键盘焦点', async () => {
+  test.skip(process.platform !== 'darwin', '验证 macOS Space 迁移后的焦点恢复')
+  const dataRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'ztools-plugin-wake-focus-'))
+  const legacyRoot = path.join(dataRoot, 'legacy')
+  let electronApp: ElectronApplication | undefined
+
+  try {
+    await fs.mkdir(legacyRoot, { recursive: true })
+    electronApp = await launchTestApp(dataRoot, legacyRoot)
+    const page = await electronApp.firstWindow()
+    const input = page.locator('.search-input')
+    await expect(input).toBeVisible()
+    await input.fill('通用设置')
+    await page.locator('.app-item, .list-item').filter({ hasText: '通用设置' }).first().click()
+    await expect.poll(() => readSettingsText(electronApp!)).toContain('开机自动启动')
+
+    // 用插件 API 同时切换原生 WebContents 焦点和 DOM 焦点，避免只验证 Playwright 的页面焦点。
+    expect(
+      await executeInSettings(electronApp, "window.ztools.setSubInput(() => {}, '唤醒焦点', true)")
+    ).toBe(true)
+    await expect.poll(() => readKeyboardTarget(electronApp!)).toBe('host')
+    await input.fill('保留插件输入')
+    await expect(input).toBeFocused()
+
+    await blurAndWakeMainWindow(electronApp)
+    await expect.poll(() => readKeyboardTarget(electronApp!)).toBe('host')
+    await expect(input).toBeFocused()
+    await expect(input).toHaveValue('保留插件输入')
+
+    // 即使顶部输入框仍可见，也不能覆盖用户最后选择的插件正文焦点。
+    expect(await executeInSettings(electronApp, 'window.ztools.subInputBlur()')).toBe(true)
+    await expect.poll(() => readKeyboardTarget(electronApp!)).toBe('plugin')
+    await blurAndWakeMainWindow(electronApp)
+    await expect.poll(() => readKeyboardTarget(electronApp!)).toBe('plugin')
+    await expect(input).toHaveValue('保留插件输入')
+  } finally {
+    await electronApp?.close()
+    await fs.rm(dataRoot, { recursive: true, force: true })
+  }
+})

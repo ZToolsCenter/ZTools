@@ -572,8 +572,7 @@ class WindowManager {
         savedFocusTarget === null ||
         pluginManager.getCurrentPluginView() === null
       ) {
-        this.mainWindow?.webContents.focus()
-        this.mainWindow?.webContents.send('focus-search', this.previousActiveWindow || null)
+        this.restoreMainWindowInputFocus()
       } else {
         // 如果有插件在显示（且上次不是主窗口），聚焦插件
         pluginManager.focusPluginView()
@@ -962,8 +961,26 @@ class WindowManager {
       return
     }
 
-    this.mainWindow.webContents.focus()
-    this.mainWindow.webContents.send('focus-search', this.previousActiveWindow || null)
+    this.restoreMainWindowInputFocus()
+  }
+
+  /**
+   * 恢复宿主页焦点，并在当前插件显示子输入框时恢复输入光标。
+   * @returns 无返回值。
+   */
+  private restoreMainWindowInputFocus(): void {
+    const contents = this.mainWindow?.webContents
+    if (!contents) return
+
+    // 在聚焦 WebContents 前读取记忆目标，避免程序触发的 focus 事件改变判断。
+    const restoreSubInput =
+      this.lastFocusTarget === 'mainWindow' && pluginManager.isCurrentPluginSubInputVisible()
+    contents.focus()
+    contents.send('focus-search', this.previousActiveWindow || null)
+    if (restoreSubInput) {
+      // 插件模式会跳过普通搜索处理；单独恢复光标，不清空插件输入。
+      contents.send('focus-sub-input')
+    }
   }
 
   /**
