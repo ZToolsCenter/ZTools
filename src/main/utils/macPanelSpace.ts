@@ -1,8 +1,11 @@
 import { platform } from '@electron-toolkit/utils'
 import { BrowserWindow, screen } from 'electron'
 
+// 给 macOS 留出提交子窗口脱离父窗口和正式唤出的原生事务的时间。
+const MAC_PANEL_ANCHOR_RELEASE_DELAY_MS = 450
+
 /**
- * 将隐藏的 macOS 面板登记到当前 Space，正式显示前恢复其独立窗口状态。
+ * 将隐藏的 macOS 面板登记到当前 Space，正式显示前解除挂接，随后释放锚点。
  * @param panel 即将显示的主窗口或超级面板。
  * @returns 无返回值；非 macOS、已销毁或已经可见的面板不执行迁移。
  * @throws Electron 创建窗口或迁移失败时抛出原始错误。
@@ -36,6 +39,8 @@ export function prepareMacPanelForShow(panel: BrowserWindow): void {
       minimizable: false,
       maximizable: false
     })
+    // 锚点在唤出动画期间仍然存活，但不应拦截点击。
+    anchor.setIgnoreMouseEvents(true)
     // 跳过异步进程类型变换，保持非激活 panel，避免把前台应用带回旧桌面。
     anchor.setVisibleOnAllWorkspaces(true, {
       visibleOnFullScreen: true,
@@ -63,8 +68,13 @@ export function prepareMacPanelForShow(panel: BrowserWindow): void {
         }
       }
     } finally {
-      // 成功和失败均释放锚点，避免长期运行积累窗口或旧 Space 归属。
-      if (anchor && !anchor.isDestroyed()) anchor.destroy()
+      if (anchor) {
+        // 立即销毁会让尚未提交的原生脱离事务按锚点原点重新定位面板。
+        const migrationAnchor = anchor
+        setTimeout(() => {
+          if (!migrationAnchor.isDestroyed()) migrationAnchor.destroy()
+        }, MAC_PANEL_ANCHOR_RELEASE_DELAY_MS).unref()
+      }
     }
   }
 }

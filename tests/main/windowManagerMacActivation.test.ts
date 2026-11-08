@@ -43,6 +43,7 @@ const mocks = vi.hoisted(() => {
       getOpacity: vi.fn(() => 1),
       setOpacity: vi.fn(),
       setAlwaysOnTop: vi.fn(),
+      setIgnoreMouseEvents: vi.fn(),
       setPosition: vi.fn(),
       getPosition: vi.fn(() => [100, 100]),
       getBounds: vi.fn(() => ({ x: 100, y: 100, width: 800, height: 600 })),
@@ -301,6 +302,7 @@ describe('windowManager macOS activation', () => {
     anchor.setPosition.mockClear()
     mainWindow.setPosition.mockClear()
     windowManager.showWindow()
+    vi.runOnlyPendingTimers()
     expect(anchor.destroy).toHaveBeenCalledTimes(1)
     expect(mainWindow.setPosition).toHaveBeenCalled()
   })
@@ -327,6 +329,7 @@ describe('windowManager macOS activation', () => {
     expect(mainWindow.setParentWindow).toHaveBeenLastCalledWith(null)
     expect(mainWindow.showInactive).toHaveBeenCalledTimes(1)
     expect(mainWindow.show).toHaveBeenCalledTimes(1)
+    vi.runOnlyPendingTimers()
     expect(firstAnchor.destroy).toHaveBeenCalledTimes(1)
 
     // 普通桌面和全屏都不会复用已销毁锚点。
@@ -337,6 +340,7 @@ describe('windowManager macOS activation', () => {
     const nextAnchor = mainWindow.setParentWindow.mock.calls.at(-2)[0]
     expect(nextAnchor).not.toBe(firstAnchor)
     expect(mainWindow.setParentWindow).toHaveBeenLastCalledWith(null)
+    vi.runOnlyPendingTimers()
     expect(nextAnchor.destroy).toHaveBeenCalledTimes(1)
   })
 
@@ -419,13 +423,15 @@ describe('windowManager macOS activation', () => {
     windowManager.showWindow()
     const firstAnchor = mainWindow.setParentWindow.mock.calls[0]?.[0]
     expect(firstAnchor).toBeDefined()
-    expect(firstAnchor.destroy).toHaveBeenCalledTimes(1)
+    expect(firstAnchor.destroy).not.toHaveBeenCalled()
 
-    // 已销毁的全屏 Space 不能通过复用旧锚点重新带回主窗口。
+    // 连续呼出也不会复用仍等待原生动画结束的锚点。
     windowManager.showWindow()
     const nextAnchor = mainWindow.setParentWindow.mock.calls[2]?.[0]
     expect(nextAnchor).toBeDefined()
     expect(nextAnchor).not.toBe(firstAnchor)
+    vi.runOnlyPendingTimers()
+    expect(firstAnchor.destroy).toHaveBeenCalledTimes(1)
     expect(nextAnchor.destroy).toHaveBeenCalledTimes(1)
   })
 

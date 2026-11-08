@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   isMacOS: true,
@@ -37,6 +37,7 @@ function createPanel(): any {
 
 describe('macOS panel Space migration', () => {
   beforeEach(() => {
+    vi.useFakeTimers()
     vi.clearAllMocks()
     mocks.isMacOS = true
     mocks.anchors = []
@@ -45,6 +46,7 @@ describe('macOS panel Space migration', () => {
         options,
         setVisibleOnAllWorkspaces: vi.fn(),
         setAlwaysOnTop: vi.fn(),
+        setIgnoreMouseEvents: vi.fn(),
         showInactive: vi.fn(),
         isDestroyed: vi.fn(() => false),
         destroy: vi.fn()
@@ -53,6 +55,8 @@ describe('macOS panel Space migration', () => {
       return anchor
     })
   })
+
+  afterEach(() => vi.useRealTimers())
 
   it('migrates on the target display with a fresh anchor and restores the independent panel', () => {
     const panel = createPanel()
@@ -67,7 +71,8 @@ describe('macOS panel Space migration', () => {
         visibleOnFullScreen: true,
         skipTransformProcessType: true
       })
-      expect(anchor.destroy).toHaveBeenCalledTimes(1)
+      expect(anchor.setIgnoreMouseEvents).toHaveBeenCalledWith(true)
+      expect(anchor.destroy).not.toHaveBeenCalled()
     }
     expect(panel.setOpacity.mock.calls).toEqual([[0], [0.8], [0], [0.8]])
     expect(panel.setParentWindow.mock.calls).toEqual([
@@ -77,6 +82,8 @@ describe('macOS panel Space migration', () => {
       [null]
     ])
     expect(panel.hide).toHaveBeenCalledTimes(2)
+    vi.runOnlyPendingTimers()
+    for (const anchor of mocks.anchors) expect(anchor.destroy).toHaveBeenCalledTimes(1)
   })
 
   it('restores opacity and releases the anchor when native migration throws', () => {
@@ -88,6 +95,7 @@ describe('macOS panel Space migration', () => {
     expect(() => prepareMacPanelForShow(panel)).toThrow('migration failed')
     expect(panel.setParentWindow).toHaveBeenLastCalledWith(null)
     expect(panel.setOpacity).toHaveBeenLastCalledWith(0.8)
+    vi.runOnlyPendingTimers()
     expect(mocks.anchors[0].destroy).toHaveBeenCalledTimes(1)
   })
 
@@ -100,6 +108,7 @@ describe('macOS panel Space migration', () => {
     expect(() => prepareMacPanelForShow(panel)).toThrow('window closed')
     expect(panel.setParentWindow).toHaveBeenLastCalledWith(null)
     expect(panel.setOpacity).toHaveBeenLastCalledWith(0.8)
+    vi.runOnlyPendingTimers()
     expect(mocks.anchors[0].destroy).toHaveBeenCalledTimes(1)
   })
 

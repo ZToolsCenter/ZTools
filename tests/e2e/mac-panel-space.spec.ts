@@ -8,16 +8,17 @@ const projectRoot = path.resolve(__dirname, '../..')
 /**
  * 经由现有 IPC 唤起主窗口并读取真实 Electron 窗口状态。
  * @param application 当前使用隔离数据目录的 Electron 实例。
- * @returns 主窗口可见性、透明度、父子关系及遗留锚点数量。
+ * @returns 主窗口可见性、透明度和父子关系。
  */
 async function summonMainWindow(application: ElectronApplication): Promise<{
   visible: boolean
   opacity: number
   parentId: number | null
-  anchors: number
 }> {
   return await application.evaluate(({ BrowserWindow, ipcMain }) => {
-    const main = BrowserWindow.getAllWindows().find((win) => win.getTitle() === 'ZTools')
+    const main = BrowserWindow.getAllWindows().find(
+      (win) => win.getTitle() === 'ZTools' && win.getBounds().width > 1
+    )
     if (!main) throw new Error('未找到主窗口')
     // 通过产品现有入口测试隐藏后唤起，避免绕开 WindowManager 的迁移流程。
     main.hide()
@@ -25,13 +26,59 @@ async function summonMainWindow(application: ElectronApplication): Promise<{
     return {
       visible: main.isVisible(),
       opacity: main.getOpacity(),
-      parentId: main.getParentWindow()?.id ?? null,
-      anchors: BrowserWindow.getAllWindows().filter((win) => {
-        const bounds = win.getBounds()
-        return bounds.width === 1 && bounds.height === 1
-      }).length
+      parentId: main.getParentWindow()?.id ?? null
     }
   })
+}
+
+/**
+ * 经由拖动窗口使用的入口设置记忆位置，固定本用例的目标显示器。
+ * @param application 当前使用隔离数据目录的 Electron 实例。
+ * @returns 主窗口应保持的坐标。
+ */
+async function setRememberedPosition(application: ElectronApplication): Promise<number[]> {
+  return await application.evaluate(({ BrowserWindow, ipcMain, screen }) => {
+    const main = BrowserWindow.getAllWindows().find(
+      (win) => win.getTitle() === 'ZTools' && win.getBounds().width > 1
+    )!
+    const { x, y, width, height } = screen.getPrimaryDisplay().workArea
+    // 固定定位所读的光标坐标，无需移动系统光标，也不影响其它应用。
+    screen.getCursorScreenPoint = () => ({
+      x: x + Math.floor(width / 2),
+      y: y + Math.floor(height / 2)
+    })
+    const targetX = x + Math.max(0, Math.floor((width - main.getBounds().width) / 2))
+    const targetY = y + Math.floor(height / 4)
+    ipcMain.emit('set-window-position', { sender: main.webContents }, targetX, targetY)
+    return [targetX, targetY]
+  })
+}
+
+/**
+ * 等待透明锚点释放后读取主窗口位置，覆盖正式显示后才发生的原生偏移。
+ * @param application 当前使用隔离数据目录的 Electron 实例。
+ * @returns 没有锚点残留时的主窗口坐标。
+ */
+async function readPositionAfterAnchorRelease(application: ElectronApplication): Promise<number[]> {
+  let position: number[] = []
+  await expect
+    .poll(async () => {
+      const { anchors, mainPosition } = await application.evaluate(({ BrowserWindow }) => {
+        const windows = BrowserWindow.getAllWindows()
+        const anchors = windows.filter((win) => {
+          const [width, height] = win.getSize()
+          return width === 1 && height === 1
+        }).length
+        const main = windows.find(
+          (win) => win.getTitle() === 'ZTools' && win.getBounds().width > 1
+        )!
+        return { anchors, mainPosition: main.getPosition() }
+      })
+      position = mainPosition
+      return anchors
+    })
+    .toBe(0)
+  return position
 }
 
 /**
@@ -81,7 +128,7 @@ async function setFixtureFullscreen(
   }, fullscreen)
 }
 
-test('macOS 反复唤起后主窗口仍可输入且不遗留 Space 锚点', async ({
+test('macOS 反复唤起后主窗口位置稳定、仍可输入且不遗留 Space 锚点', async ({
   browserName: _browserName
 }, testInfo) => {
   test.skip(process.platform !== 'darwin', 'macOS Space 回归验证')
@@ -113,17 +160,20 @@ test('macOS 反复唤起后主窗口仍可输入且不遗留 Space 锚点', asyn
     const input = page.locator('.search-input')
     await expect(input).toBeVisible()
 
+    const rememberedPosition = await setRememberedPosition(application)
+    // 等待拖动位置的防抖保存，覆盖偏移被记忆并带入下一次唤起的路径。
+    await page.waitForTimeout(550)
     for (let cycle = 0; cycle < 5; cycle++) {
       // 验证系统层可见性、窗口清理和真实键盘输入，不能只检查宿主 DOM。
       expect(await summonMainWindow(application)).toEqual({
         visible: true,
         opacity: 1,
-        parentId: null,
-        anchors: 0
+        parentId: null
       })
       await expect(input).toBeFocused()
-      // macOS 原生 show/fullscreen 动画会迟到地再次发布 focus-search，先等待其清空动作收尾。
-      await page.waitForTimeout(350)
+      // 等原生动画和防抖保存收尾，避免只看见 show() 同步返回时的正确坐标。
+      await page.waitForTimeout(550)
+      expect(await readPositionAfterAnchorRelease(application)).toEqual(rememberedPosition)
       await input.fill('')
       await input.press('x')
       await expect(input).toHaveValue('x')
@@ -137,8 +187,7 @@ test('macOS 反复唤起后主窗口仍可输入且不遗留 Space 锚点', asyn
       expect(await summonMainWindow(application)).toEqual({
         visible: true,
         opacity: 1,
-        parentId: null,
-        anchors: 0
+        parentId: null
       })
       expect(
         await fixture.evaluate(({ BrowserWindow }) =>
@@ -148,6 +197,7 @@ test('macOS 反复唤起后主窗口仍可输入且不遗留 Space 锚点', asyn
       await expect(input).toBeFocused()
       // 全屏 Space 激活动画完成后再输入，避免异步 focus-search 清空测试刚填入的值。
       await page.waitForTimeout(350)
+      await readPositionAfterAnchorRelease(application)
       await input.fill('fullscreen')
       await expect(input).toHaveValue('fullscreen')
       await setFixtureFullscreen(fixture, false)
