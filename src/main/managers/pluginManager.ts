@@ -5,6 +5,7 @@ import { pathToFileURL } from 'url'
 import hideWindowHtml from '../../../resources/hideWindow.html?asset'
 
 import mainPreload from '../../../resources/preload.js?asset'
+import { ensurePluginSessionPreload } from '../core/pluginSessionPreload'
 import api from '../api'
 import { WINDOW_DEFAULT_HEIGHT, WINDOW_WIDTH } from '../common/constants'
 import { STANDARD_MAIN_WINDOW_HEADER_HEIGHT } from '../../shared/mainWindowLayout'
@@ -294,7 +295,11 @@ export class PluginManager {
   }
 
   /**
-   * 创建并配置插件的 session（注册 preload、代理、图标协议）
+   * 创建并配置插件共享的 Session，包括 preload、代理和图标协议。
+   * @param pluginName 插件名称。
+   * @param pluginPath 插件实体路径。
+   * @returns 完成配置的插件 Session。
+   * @throws Session 注册、代理或图标协议配置失败时抛出原始错误。
    */
   private async setupPluginSession(
     pluginName: string,
@@ -307,7 +312,8 @@ export class PluginManager {
       partition
     })
     const sess = session.fromPartition(partition)
-    sess.registerPreloadScript({ type: 'frame', filePath: mainPreload })
+    // 主视图重建和独立窗口共享会话，宿主 preload 只注册一次。
+    ensurePluginSessionPreload(sess, mainPreload)
     await proxyManager.applyProxyToSession(sess, `插件 ${pluginName}`)
     if (isBundledInternalPlugin(pluginName)) {
       registerIconProtocolForSession(sess)

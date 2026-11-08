@@ -22,16 +22,30 @@ export class PluginWindowAPI {
   }
 
   /**
-   * 通过 plugin.api 统一通道注册 createBrowserWindow 相关 handler
+   * 通过 plugin.api 注册独立窗口创建和代理方法。
+   * @returns 无返回值。
    */
   private registerPluginApiHandlers(): void {
     const pluginManager = this.pluginManager!
 
     registerPluginApiServices({
-      // ── 同步 API：创建窗口 ──
+      /**
+       * 同步创建窗口，并按需将创建通知绑定到发起调用的文档。
+       * @param event 插件同步 IPC 事件。
+       * @param request 本地页面地址、窗口选项及是否需要创建通知。
+       * @returns 无返回值；窗口代理元数据通过 IPC 返回。
+       */
       createBrowserWindow: (
         event: Electron.IpcMainEvent,
-        { url, options }: { url: string; options: Electron.BrowserWindowConstructorOptions }
+        {
+          url,
+          options,
+          wantsCallback
+        }: {
+          url: string
+          options: Electron.BrowserWindowConstructorOptions
+          wantsCallback?: boolean
+        }
       ) => {
         const pluginInfo = pluginManager.getPluginInfoByWebContents(event.sender)
         if (!pluginInfo) {
@@ -64,7 +78,8 @@ export class PluginWindowAPI {
             getPluginSessionPartition(pluginInfo.name),
             url,
             options,
-            event.sender
+            event.sender,
+            wantsCallback === true ? event.senderFrame : null
           )
         } catch (error) {
           console.error('[pluginWindow:create] 创建插件窗口失败', error)

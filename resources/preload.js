@@ -1,4 +1,5 @@
 const electron = require('electron')
+const pluginWindowCreationChannel = 'plugin-window:creation-complete'
 
 // ── plugin.api 统一 IPC 公共方法（与 utools 写法一致）──
 
@@ -84,7 +85,8 @@ electron.ipcRenderer.on('__ipc_sendto_relay__', (_event, payload) => {
   const { senderId, channel, args } = payload
   if (typeof senderId !== 'number') return
   if (typeof channel !== 'string' || !channel) return
-  if (channel === '__ipc_sendto_relay__') return // 防止内部通道递归分发
+  // 中继消息不能递归分发或冒充主进程的窗口创建通知。
+  if (channel === '__ipc_sendto_relay__' || channel === pluginWindowCreationChannel) return
   if (!Array.isArray(args)) return
 
   // 兼容边界：只补 senderId，不模拟完整 IpcRendererEvent
@@ -110,6 +112,8 @@ let internalApiPermissionsChangedCallback = null
 const registeredTools = new Map()
 // 插件侧注册的 provider 处理器，按 type 存放，由主进程聚合后调用。
 const registeredProviders = new Map()
+// 创建回调只属于发起创建的文档和返回的窗口 ID。
+const pluginWindowCallbacks = new Map()
 
 /**
  * 创建懒注册的 IPC 事件监听器。
@@ -138,6 +142,32 @@ function lazyListen(channel, handler) {
 
 // ── 懒注册 IPC 事件实例 ──
 // 以下事件仅在插件调用对应 onXxx 注册回调后才开始监听，避免未订阅时产生无效 IPC 通信
+
+/**
+ * 消费窗口创建通知；失败或关闭时仅清理回调。
+ * @param {Electron.IpcRendererEvent} _event 主进程发送的通知事件。
+ * @param {number} winId 独立窗口 ID。
+ * @param {boolean} ready 窗口是否已到达首次 DOM 就绪。
+ * @returns {void} 无返回值。
+ */
+function completePluginWindowCreation(_event, winId, ready) {
+  // 先清理再执行用户回调，允许回调中继续创建其他窗口。
+  const callback = pluginWindowCallbacks.get(winId)
+  if (!pluginWindowCallbacks.delete(winId)) return
+  if (pluginWindowCallbacks.size === 0) lazyPluginWindowCreation.detach()
+  if (!ready) return
+
+  try {
+    callback()
+  } catch (error) {
+    console.warn('[pluginWindow:callback] 窗口创建回调执行失败:', error)
+  }
+}
+
+const lazyPluginWindowCreation = lazyListen(
+  pluginWindowCreationChannel,
+  completePluginWindowCreation
+)
 
 // 剪贴板变化事件（由 clipboard.onChange 触发注册）
 const lazyClipboardChange = lazyListen('clipboard-change', (_e, item) => {
@@ -677,18 +707,25 @@ window.ztools = {
   hideMainWindowTypeString: (text) => {
     return electron.ipcRenderer.sendSync('hide-main-window-type-string', text)
   },
-  // 创建独立窗口（白名单动态挂载模式，与 utools 一致）
+  /**
+   * 创建插件独立窗口并挂载允许调用的代理方法。
+   * @param {string} url 窗口的本地页面地址。
+   * @param {object} options 窗口创建配置。
+   * @param {Function} [callback] 此窗口首次 DOM 就绪时执行的可选回调。
+   * @returns {object} 包含窗口 ID 和可用窗口方法的代理。
+   * @throws {Error} 主进程拒绝创建或窗口配置无效时抛出错误。
+   */
   createBrowserWindow: (url, options, callback) => {
-    // 注册 callback（子窗口 dom-ready 时由主进程在父窗口触发）
-    if (typeof callback === 'function') {
-      window.ztools.__event__ = window.ztools.__event__ || {}
-      window.ztools.__event__.createBrowserWindowCallback = callback
-    }
-
     // 同步创建窗口，返回 { id, methods[], invokes[], webContents: { id, methods[], invokes[] } }
-    const result = ipcSendSync('createBrowserWindow', { url, options })
-
+    const wantsCallback = typeof callback === 'function'
+    const result = ipcSendSync('createBrowserWindow', { url, options, wantsCallback })
     const winId = result.id
+
+    // 创建通知经异步 IPC 送达，当前同步调用会先登记返回的窗口 ID。
+    if (wantsCallback) {
+      pluginWindowCallbacks.set(winId, callback)
+      lazyPluginWindowCreation.attach()
+    }
 
     // ── 挂载 BrowserWindow 同步方法 ──
     result.methods.forEach((method) => {

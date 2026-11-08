@@ -1,10 +1,16 @@
-import { BrowserWindow, BrowserWindowConstructorOptions, session } from 'electron'
+import {
+  BrowserWindow,
+  session,
+  type BrowserWindowConstructorOptions,
+  type WebFrameMain
+} from 'electron'
 import path from 'path'
 import mainPreload from '../../../resources/preload.js?asset'
 import proxyManager from '../managers/proxyManager'
 import { GLOBAL_SCROLLBAR_CSS } from './globalStyles'
 import { buildPluginThemeCSS, getCurrentPluginThemeState } from './pluginTheme'
 import { resolvePluginWindowUrl } from '../utils/pluginUrl'
+import { ensurePluginSessionPreload } from './pluginSessionPreload'
 
 /**
  * 插件可用的 BrowserWindow / WebContents 方法白名单
@@ -205,8 +211,16 @@ class PluginWindowManager {
   private windowInfoMap: Map<number, PluginWindowInfo> = new Map()
 
   /**
-   * 创建插件独立窗口
-   * @returns win.id（数字）
+   * 创建独立窗口并在首次 DOM 就绪时通知发起创建的文档。
+   * @param pluginPath 插件实体路径。
+   * @param pluginName 插件名称。
+   * @param sessionPartition 共享 Session 分区名称。
+   * @param url 独立窗口的本地页面地址。
+   * @param options 窗口创建配置。
+   * @param senderWebContents 创建窗口的插件实例。
+   * @param callbackFrame 接收创建通知的文档；未传回调时为 null。
+   * @returns 已登记的独立窗口。
+   * @throws 地址无效或 Electron 创建窗口失败时抛出原始错误。
    */
   public createWindow(
     pluginPath: string,
@@ -214,8 +228,12 @@ class PluginWindowManager {
     sessionPartition: string,
     url: string,
     options: BrowserWindowConstructorOptions = {},
-    senderWebContents: Electron.WebContents
+    senderWebContents: Electron.WebContents,
+    callbackFrame: WebFrameMain | null
   ): BrowserWindow {
+    // 先解析 URL，避免非法地址留下已创建但未加载的窗口。
+    const loadUrl = resolvePluginWindowUrl(pluginPath, url)
+
     // 处理 preload 路径（如果是相对路径）
     let preloadPath = options?.webPreferences?.preload
     if (preloadPath && !path.isAbsolute(preloadPath)) {
@@ -224,10 +242,7 @@ class PluginWindowManager {
 
     // 使用插件名称创建 session，确保和插件主视图共享同一个 session
     const sess = session.fromPartition(sessionPartition)
-    sess.registerPreloadScript({
-      type: 'frame',
-      filePath: mainPreload
-    })
+    ensurePluginSessionPreload(sess, mainPreload)
 
     // 应用代理配置到插件 session
     proxyManager
@@ -261,30 +276,45 @@ class PluginWindowManager {
       sessionPartition
     })
 
-    // 加载 URL（支持 `index.html?id=1#/route` 形式的 query 与 hash）
-    const loadUrl = resolvePluginWindowUrl(pluginPath, url)
-    win.loadURL(loadUrl)
+    const winId = win.id
+    const contents = win.webContents
+    let pendingFrame = callbackFrame
+    let hasCommittedDocument = false
 
-    // 子窗口 dom-ready 时触发父窗口 callback（与 utools 一致）
-    win.webContents.on('dom-ready', () => {
-      if (senderWebContents.isDestroyed()) return
+    // Chromium 的错误页也可能触发 dom-ready，只有成功的主文档导航才允许回调。
+    contents.once('did-navigate', () => {
+      hasCommittedDocument = true
+    })
 
+    /**
+     * 送达或取消该窗口的一次性创建通知。
+     * @param ready 独立窗口是否已到达首次 DOM 就绪。
+     * @returns 无返回值。
+     */
+    function finishCreation(ready: boolean): void {
+      // 先消费通知目标，后续导航、重载或关闭不会重复通知。
+      const target = pendingFrame
+      pendingFrame = null
+      if (!target) return
+      try {
+        if (!target.detached) target.send('plugin-window:creation-complete', winId, ready)
+      } catch (error) {
+        // 创建者可能在消息送达前已导航或退出，不影响独立窗口。
+        console.warn(`[pluginWindow:callback] winId=${winId} 创建通知发送失败:`, error)
+      }
+    }
+
+    contents.on('dom-ready', () => {
       // 子窗口 DOM 就绪后注入全局样式、主题色和默认字体。
-      void win.webContents.insertCSS(GLOBAL_SCROLLBAR_CSS)
-      void win.webContents.insertCSS(buildPluginThemeCSS(getCurrentPluginThemeState()))
-      win.webContents.insertCSS(
+      void contents.insertCSS(GLOBAL_SCROLLBAR_CSS)
+      void contents.insertCSS(buildPluginThemeCSS(getCurrentPluginThemeState()))
+      void contents.insertCSS(
         'body { font-family: system-ui, "PingFang SC", "Helvetica Neue", "Microsoft Yahei", sans-serif; }'
       )
-
-      // 在父窗口触发 callback（与 utools executeJavaScript 方式一致）
-      senderWebContents.executeJavaScript(
-        `if (window.ztools && window.ztools.__event__ && typeof window.ztools.__event__.createBrowserWindowCallback === 'function') {
-          try { window.ztools.__event__.createBrowserWindowCallback() } catch(e) {}
-          delete window.ztools.__event__.createBrowserWindowCallback
-        }`
-      )
-      console.debug(`[pluginWindow:callback] dom-ready → trigger parent callback, winId=${win.id}`)
+      // 保留首次 DOM 就绪时机，后续文档只重新注入样式。
+      if (hasCommittedDocument) finishCreation(true)
     })
+    contents.once('destroyed', () => finishCreation(false))
 
     win.webContents.on('render-process-gone', (_event, details) => {
       if (win.isDestroyed()) return
@@ -301,6 +331,9 @@ class PluginWindowManager {
       )
       this.windowInfoMap.delete(win.id)
     })
+
+    // 先监听生命周期再加载，失败时取消未送达的回调。
+    void win.loadURL(loadUrl).catch(() => finishCreation(false))
 
     console.info(
       `[pluginWindow:create] plugin=${pluginName} partition=${sessionPartition} winId=${win.id} url=${url} → ${loadUrl}`
