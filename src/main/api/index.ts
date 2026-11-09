@@ -345,6 +345,15 @@ class APIManager {
   }
 
   /**
+   * 仅调整窗口宽度（供「搜索框大小」设置使用）
+   * @param width 目标窗口宽度（像素）
+   * @returns 无返回值
+   */
+  public setWindowWidth(width: number): void {
+    windowAPI.setWindowWidth(width)
+  }
+
+  /**
    * 使用统一目录预解析是否需要复制取词。
    * @param target 快捷键配置名称
    * @returns 选中文本采集策略

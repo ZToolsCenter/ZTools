@@ -244,3 +244,50 @@ This project is licensed under the [MIT License](./LICENSE).
 Made with ❤️ by [lzx8589561](https://github.com/lzx8589561)
 
 </div>
+---
+
+## 🔧 本 Fork 的改动（myhjm94/ZTools）
+
+本仓库 Fork 自 [ZToolsCenter/ZTools](https://github.com/ZToolsCenter/ZTools)，在 v3.2.0 基础上做了以下定制，
+主要面向 Windows 使用场景，共涉及 14 个文件。
+
+### 1. 修复 Windows 透明窗口底部灰条
+- **问题**：无边框透明窗口底部会露出一条灰色底色。
+- **原因**：Chromium 的 `EnableTransparentHwndEnlargement` 会为透明窗口放大 HWND 以绘制阴影/圆角，
+  导致 HWND 与网页渲染区高度不一致（实测 47px vs 30px），把窗口的亚克力底色露了出来。
+- **方案**：主进程启动早期把 `EnableTransparentHwndEnlargement` 合并进 `disable-features`（仅 Windows），
+  使两者尺寸严格一致；灰条消失，阴影与圆角仍由 DWM 正常绘制。
+- 文件：`src/main/index.ts`
+
+### 2. 新增「搜索框大小」设置
+- 设置 → 通用 → 搜索 中新增滑块（20%–80%，步进 5%，默认值由原 800px 反推）。
+- 百分比含义为「主窗口宽度 ÷ 当前显示器宽度（DIP）」，拖动即时生效并持久化。
+- 设置页 UI 与文字随窗口宽度等比缩放（`setZoomFactor`，缩放系数 = 窗口宽度 / 800）。
+- 旧数据自动迁移：以 800px 为基准的旧值按 `800 × 旧值/100 ÷ 屏幕宽度` 换算，
+  并写入 `searchBoxScaleUnit: 'screen'` 标记。
+- 文件：`src/main/common/constants.ts`、`src/main/managers/windowManager.ts`、
+  `src/main/managers/pluginManager.ts`、`src/main/api/renderer/window.ts`、
+  `src/main/api/plugin/internal.ts`、`src/main/appMain.ts`、`resources/preload.js`、
+  `internal-plugins/setting/src/env.d.ts`、
+  `internal-plugins/setting/src/views/GeneralSetting/GeneralSetting.vue`
+
+### 3. 搜索结果按搜索词热度排序 + 系统应用默认沉底
+- 记录每个搜索词的命中次数（`searchTermStats`，对前缀匹配的词做聚合统计）。
+- 排序优先级：**当前搜索词热度 > 完全匹配 > 前缀匹配 > Windows 系统应用/自带组件 > 使用频率**。
+- Windows 系统应用（`subType=app`）与自带组件（`system-setting`）默认排在最后，
+  被使用过、产生热度后才会提前。
+- 文件：`src/renderer/src/stores/commandDataStore.ts`、
+  `src/renderer/src/composables/useSearchResults.ts`、
+  `src/renderer/src/components/search/SearchResults.vue`
+
+### 4. 修复设置界面「更换头像」选完不生效
+- **问题**：设置 → 通用 → 搜索框头像 → 选择图片，弹窗正常但选完无任何反应。
+- **原因**：共用的 `openDialog()` 弹出原生模态框时未抑制「失焦自动隐藏」，主窗口 blur → 隐藏窗口 →
+  设置插件视图被销毁，`selectAvatar` 的结果回不到渲染层，且不报错。
+- **方案**：用 `windowManager.withBlurHideSuppressed()` 包裹 `showOpenDialog`（动态 import 规避循环依赖）。
+  该修复同时惠及所有走 `openDialog()` 的原生文件对话框（选择图片、导入指令/插件等）。
+- 文件：`src/main/utils/windowUtils.ts`
+
+### 说明
+- 安装版（`resources/app.asar`）需重新构建或替换 asar 后改动才会生效；源码构建自带以上修复。
+- 与上游同步（rebase/合并）后，建议重新核对以上文件的改动是否仍成立。

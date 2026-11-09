@@ -89,6 +89,16 @@ export interface RecommendationPin {
   type: CommandType
 }
 
+/**
+ * 某个搜索词下某条指令被选中的累计次数，用于按搜索词热度排序。
+ */
+export interface SearchTermStat {
+  path: string
+  featureCode?: string
+  name: string
+  count: number
+}
+
 export interface CommandUserState {
   history: Command[]
   pinned: Command[]
@@ -102,9 +112,14 @@ export interface CommandUserState {
     lastUsed?: number
   }>
   preference: Record<string, { path: string; featureCode?: string; name: string }>
+  /** 搜索词 -> 指令唯一键 -> 累计选中次数 */
+  searchTermStats: Record<string, Record<string, SearchTermStat>>
 }
 
-export type CommandRankState = Pick<CommandUserState, 'preference' | 'usage' | 'recommendationPins'>
+export type CommandRankState = Pick<
+  CommandUserState,
+  'preference' | 'usage' | 'recommendationPins' | 'searchTermStats'
+>
 
 export interface CommandCatalogInput {
   localAppSearchEnabled?: boolean

@@ -124,10 +124,43 @@ export class CommandService {
         superPanelPinned: read('super-panel-pinned') || [],
         recommendationPins: read('recommendation-pinned') || [],
         usage: read('command-usage-stats') || [],
-        preference
+        preference,
+        searchTermStats: this.readSearchTermStats()
       }
     }
     return this.userState
+  }
+
+  /**
+   * 读取按搜索词聚合的选中热度统计。
+   * 旧版本曾把该结构写在 `search-preference` 中，读取时迁移到独立键，
+   * 避免与单关键词偏好结构混用导致两套排序都失效。
+   * @returns 搜索词 -> 指令唯一键 -> 累计选中次数
+   */
+  private readSearchTermStats(): CommandUserState['searchTermStats'] {
+    const stored = this.dependencies.read('search-term-stats')
+    if (stored && typeof stored === 'object' && !Array.isArray(stored)) return stored
+
+    const legacy = this.dependencies.read('search-preference')
+    const migrated: CommandUserState['searchTermStats'] = Object.create(null)
+    for (const [term, bucket] of Object.entries(legacy || {})) {
+      if (!bucket || typeof bucket !== 'object') continue
+      for (const [statKey, stat] of Object.entries(bucket as Record<string, unknown>)) {
+        const item = stat as { path?: unknown; name?: unknown; count?: unknown } | null
+        if (!item || typeof item.count !== 'number' || typeof item.path !== 'string') continue
+        migrated[term] = migrated[term] || Object.create(null)
+        migrated[term][statKey] = {
+          path: item.path,
+          featureCode: typeof (item as { featureCode?: unknown }).featureCode === 'string'
+            ? (item as { featureCode: string }).featureCode
+            : undefined,
+          name: typeof item.name === 'string' ? item.name : '',
+          count: item.count
+        }
+      }
+    }
+    if (Object.keys(migrated).length > 0) this.dependencies.write('search-term-stats', migrated)
+    return migrated
   }
 
   /**
@@ -135,8 +168,8 @@ export class CommandService {
    * @returns 名称排序与推荐置顶状态
    */
   private rankState(): CommandRankState {
-    const { preference, usage, recommendationPins } = this.state()
-    return { preference, usage, recommendationPins }
+    const { preference, usage, recommendationPins, searchTermStats } = this.state()
+    return { preference, usage, recommendationPins, searchTermStats }
   }
 
   /**
@@ -507,6 +540,20 @@ export class CommandService {
           }
         }
         this.dependencies.write('search-preference', preference)
+
+        // 同时累计当前搜索词下的选中热度，供后续按词排序保持结果稳定
+        const term = normalizeSearchText(context.searchQuery)
+        const stats = { ...this.state().searchTermStats }
+        const bucket = { ...(stats[term] || {}) }
+        const statKey = `${command.path}:${command.featureCode || ''}:${command.name}`
+        bucket[statKey] = {
+          path: command.path,
+          featureCode: command.featureCode,
+          name: command.name,
+          count: (bucket[statKey]?.count || 0) + 1
+        }
+        stats[term] = bucket
+        this.dependencies.write('search-term-stats', stats)
       }
       this.invalidate(false)
       return { success: true }

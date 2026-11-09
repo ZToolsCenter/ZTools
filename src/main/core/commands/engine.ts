@@ -48,6 +48,28 @@ function usageKey(command: { path: string; featureCode?: string }): string {
 }
 
 /**
+ * 生成搜索词热度统计中的指令唯一键，与所选指令的持久化结构保持一致。
+ * @param command 目录命令
+ * @returns 热度统计键
+ */
+function searchTermStatKey(command: CatalogCommand): string {
+  return `${command.path}:${command.featureCode || ''}:${command.name}`
+}
+
+/**
+ * 判断目录项是否属于 Windows 系统应用或系统自带组件。
+ * 这类结果命中范围过宽，同分时应排在用户可定制的指令之后。
+ * @param command 目录命令
+ * @returns 是否属于系统应用或自带组件
+ */
+function isSystemCatalogEntry(command: CatalogCommand): boolean {
+  return (
+    command.type === 'direct' &&
+    (command.subType === 'app' || command.subType === 'system-setting')
+  )
+}
+
+/**
  * 为不可变目录建立六类名称索引，匹配、排名与高亮均在 Worker 内完成。
  */
 export class CommandSearchEngine {
@@ -156,6 +178,28 @@ export class CommandSearchEngine {
   }
 
   /**
+   * 聚合当前搜索词热度，包含所有以该词为前缀的历史词条。
+   * @param stats 搜索词 -> 指令唯一键 -> 累计选中次数
+   * @param text 当前搜索词
+   * @returns 指令唯一键 -> 累计选中次数
+   */
+  private searchTermHeat(
+    stats: CommandRankState['searchTermStats'],
+    text: string
+  ): Map<string, number> {
+    const heat = new Map<string, number>()
+    const key = text.trim().toLowerCase()
+    if (!key || !stats) return heat
+    for (const [term, bucket] of Object.entries(stats)) {
+      if (!term.startsWith(key)) continue
+      for (const [statKey, stat] of Object.entries(bucket || {})) {
+        heat.set(statKey, (heat.get(statKey) || 0) + (stat?.count || 0))
+      }
+    }
+    return heat
+  }
+
+  /**
    * 使用已建索引筛选候选，偏好键在主进程加载状态时已经规范化。
    * @param commands 查询范围，省略时使用普通名称目录
    * @param query 已准备查询快照
@@ -192,6 +236,17 @@ export class CommandSearchEngine {
     }
     // 先选出每个功能的最佳显示表示，再把唯一获胜路径发送到页面。
     ranked.sort(compareRankedNames)
+    // 叠加搜索词热度：同一搜索词下被选中过的指令优先，其余保持上面的匹配顺序；
+    // Windows 系统应用与自带组件同分时沉底，避免淹没用户可定制的指令。
+    const heat = this.searchTermHeat(work.state.searchTermStats, query.text)
+    ranked.sort((a, b) => {
+      const heatA = heat.get(searchTermStatKey(a.command)) || 0
+      const heatB = heat.get(searchTermStatKey(b.command)) || 0
+      if (heatA !== heatB) return heatB - heatA
+      const systemA = isSystemCatalogEntry(a.command)
+      const systemB = isSystemCatalogEntry(b.command)
+      return systemA === systemB ? 0 : systemA ? 1 : -1
+    })
     return deduplicateResults(
       ranked.map(({ command, match }) => ({
         ...command,
