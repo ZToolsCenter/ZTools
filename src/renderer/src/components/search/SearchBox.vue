@@ -9,8 +9,34 @@
   >
     <!-- 拖放蒙版 -->
     <div v-if="isDraggingOver" class="drag-overlay"></div>
-    <!-- 隐藏的测量元素,用于计算文本宽度 -->
     <div class="search-input-container">
+      <!-- 输入框优先进入键盘焦点顺序，避免原生唤醒先聚焦关闭按钮。 -->
+      <!-- 主搜索界面始终显示，插件模式下受 subInputVisible 控制 -->
+      <div v-if="currentView !== 'plugin' || windowStore.subInputVisible" class="input-wrapper">
+        <span ref="measureRef" class="measure-text"></span>
+        <!-- 独立的占位符显示 -->
+        <div v-if="!modelValue && !isComposing" class="placeholder-text">
+          {{ currentPlaceholder }}
+        </div>
+        <input
+          ref="inputRef"
+          type="text"
+          :value="modelValue"
+          placeholder=""
+          class="search-input"
+          @input="onInput"
+          @compositionstart="onCompositionStart"
+          @compositionend="onCompositionEnd"
+          @keydown="onKeydown"
+          @keydown.left="(e) => keydownEvent(e, 'left')"
+          @keydown.right="(e) => keydownEvent(e, 'right')"
+          @keydown.down="(e) => keydownEvent(e, 'down')"
+          @keydown.up="(e) => keydownEvent(e, 'up')"
+          @keydown.enter="(e) => keydownEvent(e, 'enter')"
+          @keydown.tab="(e) => keydownEvent(e, 'tab')"
+          @paste="handlePaste"
+        />
+      </div>
       <!-- 插件模式胶囊标签 -->
       <div
         v-if="currentView === 'plugin' && windowStore.currentPlugin"
@@ -113,33 +139,6 @@
         <div class="text-info">
           <span class="text-content">{{ truncatedPastedText }}</span>
         </div>
-      </div>
-      <!-- 输入框包装器：占位符和输入框在同一容器内 -->
-      <!-- 主搜索界面始终显示，插件模式下受 subInputVisible 控制 -->
-      <div v-if="currentView !== 'plugin' || windowStore.subInputVisible" class="input-wrapper">
-        <span ref="measureRef" class="measure-text"></span>
-        <!-- 独立的占位符显示 -->
-        <div v-if="!modelValue && !isComposing" class="placeholder-text">
-          {{ currentPlaceholder }}
-        </div>
-        <input
-          ref="inputRef"
-          type="text"
-          :value="modelValue"
-          placeholder=""
-          class="search-input"
-          @input="onInput"
-          @compositionstart="onCompositionStart"
-          @compositionend="onCompositionEnd"
-          @keydown="onKeydown"
-          @keydown.left="(e) => keydownEvent(e, 'left')"
-          @keydown.right="(e) => keydownEvent(e, 'right')"
-          @keydown.down="(e) => keydownEvent(e, 'down')"
-          @keydown.up="(e) => keydownEvent(e, 'up')"
-          @keydown.enter="(e) => keydownEvent(e, 'enter')"
-          @keydown.tab="(e) => keydownEvent(e, 'tab')"
-          @paste="handlePaste"
-        />
       </div>
     </div>
 
@@ -1623,6 +1622,8 @@ defineExpose({
 }
 
 .input-wrapper {
+  /* 保持标签和粘贴内容显示在输入框左侧。 */
+  order: 1;
   position: relative; /* 为占位符提供定位上下文 */
   flex: 1;
   min-width: 0;
