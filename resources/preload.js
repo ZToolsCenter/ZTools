@@ -681,10 +681,11 @@ window.ztools = {
       callback({ hex: result.hex, rgb: result.rgb })
     }
   },
-  // 显示主窗口
-  showMainWindow: async () => {
-    return await electron.ipcRenderer.invoke('show-main-window')
-  },
+  /**
+   * 同步请求显示主窗口。
+   * @returns {boolean} 显示成功时返回 true，分离窗口、自建窗口或唤起失败时返回 false。
+   */
+  showMainWindow: () => electron.ipcRenderer.sendSync('show-main-window'),
   // 拖动文件到外部
   startDrag: (filePath) => electron.ipcRenderer.send('start-drag-file', filePath),
   // 隐藏主窗口

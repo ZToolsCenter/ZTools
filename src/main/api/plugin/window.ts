@@ -211,15 +211,18 @@ export class PluginWindowAPI {
     })
   }
 
+  /**
+   * 注册插件窗口相关的 IPC 监听。
+   * @returns 无返回值。
+   */
   private setupIPC(): void {
     // 发送消息到父窗口
     ipcMain.on('send-to-parent', (event, channel: string, ...args: any[]) => {
       pluginWindowManager.sendToParent(event.sender, channel, args)
     })
 
-    // 显示主窗口
-    ipcMain.handle('show-main-window', () => {
-      windowManager.showWindow()
+    ipcMain.on('show-main-window', (event) => {
+      event.returnValue = this.showMainWindow(event.sender)
     })
 
     // 隐藏主窗口
@@ -252,6 +255,29 @@ export class PluginWindowAPI {
         event.returnValue = 'main'
       }
     })
+  }
+
+  /**
+   * 从主窗口上下文唤起主窗口，拒绝独立窗口的调用。
+   * @param sender 发起调用的 WebContents。
+   * @returns 主窗口显示时返回 true；调用被拒绝或唤起失败时返回 false。
+   */
+  private showMainWindow(sender: Electron.WebContents): boolean {
+    try {
+      // 根据调用时的窗口归属判断，插件视图分离后也应立即生效。
+      const mainWindow = this.mainWindow
+      if (!mainWindow || mainWindow.isDestroyed() || this.getWindowType(sender) !== 'main') {
+        return false
+      }
+
+      // 复用正常唤起流程，并以实际可见性处理唤醒黑名单等拦截情况。
+      windowManager.showWindow()
+      return !mainWindow.isDestroyed() && mainWindow.isVisible()
+    } catch (error) {
+      // 同步 IPC 即使唤起失败也必须返回结果，避免调用方继续等待。
+      console.error('[pluginWindow] 唤起主窗口失败:', error)
+      return false
+    }
   }
 
   /**
