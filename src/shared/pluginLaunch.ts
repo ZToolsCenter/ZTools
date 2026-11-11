@@ -19,6 +19,15 @@ export interface PluginEnterPayload {
 }
 
 /**
+ * 判断一次显式启动是否必须重新通知当前插件进入。
+ * @param source 插件启动来源。
+ * @returns 全局快捷键或超级面板启动时返回 true，否则返回 false。
+ */
+export function shouldForcePluginReEnterOnLaunch(source: PluginLaunchSource | undefined): boolean {
+  return source === 'global-shortcut' || source === 'super-panel'
+}
+
+/**
  * 判断一次插件启动是否应保持主窗口隐藏。
  * @param source 插件启动来源。
  * @param mainHide feature 是否声明了 `mainHide: true`。

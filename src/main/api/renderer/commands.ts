@@ -16,7 +16,11 @@ import databaseAPI from '../shared/database'
 import { WINDOWS_SETTINGS } from '../../core/systemSettings/windowsSettings.js'
 import { executeSystemCommand } from './systemCommands'
 import { findCommandIndex, filterOutCommand, hasCommand } from './commandMatchers'
-import { shouldKeepMainWindowHiddenForLaunch, type PluginLaunchSource } from '@shared/pluginLaunch'
+import {
+  shouldForcePluginReEnterOnLaunch,
+  shouldKeepMainWindowHiddenForLaunch,
+  type PluginLaunchSource
+} from '@shared/pluginLaunch'
 import type { CommandCatalog } from '../../../shared/commandService'
 
 /**
@@ -547,6 +551,7 @@ export class AppsAPI {
       return { success: false, error: 'Plugin Manager 未初始化' }
     }
     const { path: appPath, featureCode, name, launchSource, param } = options
+    const forceReEnter = shouldForcePluginReEnterOnLaunch(launchSource)
     const plugin = this.getPluginsFromDB().find((p: any) => p.path === appPath)
     const effectiveName = plugin?.name
     // 检查是否配置为自动分离
@@ -569,7 +574,8 @@ export class AppsAPI {
       appPath,
       featureCode,
       'launch-precheck',
-      param
+      param,
+      forceReEnter
     )
 
     if (reusedDetached) {
@@ -590,7 +596,12 @@ export class AppsAPI {
       if (!result.success) {
         console.error('[Commands] 在独立窗口中创建插件失败:', result.error)
         // 降级时也使用同一启动快照，避免顶部栏清空与插件跳过进入不一致。
-        const launchState = this.pluginManager.getMainWindowLaunchState(appPath, featureCode, param)
+        const launchState = this.pluginManager.getMainWindowLaunchState(
+          appPath,
+          featureCode,
+          param,
+          launchSource
+        )
         this.notifyRenderer('show-plugin-placeholder', launchState)
         await this.pluginManager.createPluginView(
           appPath,
@@ -605,7 +616,12 @@ export class AppsAPI {
       }
     } else {
       // 在 show() 改变可见性前固定进入行为，并先切换宿主模式，避免 focus-search 重置插件。
-      const launchState = this.pluginManager.getMainWindowLaunchState(appPath, featureCode, param)
+      const launchState = this.pluginManager.getMainWindowLaunchState(
+        appPath,
+        featureCode,
+        param,
+        launchSource
+      )
       this.notifyRenderer('show-plugin-placeholder', launchState)
 
       // 全局快捷键和超级面板触发 mainHide feature 时，保持主窗口隐藏，避免先显示搜索窗口再收起插件区域。
