@@ -32,6 +32,11 @@ import { OFFICIAL_SYNC_SERVER_URL } from '../../../shared/syncServerUrl'
 import { openAfdianCheckout, closeAfdianCheckout } from '../../core/afdianPaymentWindow'
 import officialAIService from '../../core/officialAIService.js'
 import type { PluginManager } from '../../managers/pluginManager'
+import {
+  scheduleReconcileSyncedMarketPlugins,
+  setSyncedMarketPluginInstaller
+} from '../../core/sync/syncedMarketPlugins'
+import pluginsAPI from './plugins'
 
 /**
  * 同步 API（WebSocket 版）
@@ -56,6 +61,8 @@ export class SyncAPI {
   public init(mainWindow?: BrowserWindow, pluginManager?: PluginManager): void {
     this.mainWindow = mainWindow || null
     this.pluginManager = pluginManager || null
+    // 对账补装复用市场安装器；延迟到 installer 已初始化后调用。
+    setSyncedMarketPluginInstaller((plugin) => pluginsAPI.installer.installPluginFromMarket(plugin))
     this.recreateSyncClient()
     this.setupIPC()
     this.registerStorageSwitchListener()
@@ -109,11 +116,15 @@ export class SyncAPI {
       this.sendStatusPatch({ state })
       if (state === 'live') {
         this.markSyncCompleted()
+        // 进入实时同步后对账一次，补装远端清单中本机缺失的市场插件。
+        scheduleReconcileSyncedMarketPlugins()
       }
       this.scheduleStatusChanged()
     })
     client.on('pull', (docs: any[]) => {
       void docs
+      // 远端 apply 不发 change；依赖 pull 事件触发市场插件对账。
+      scheduleReconcileSyncedMarketPlugins()
       this.scheduleStatusChanged()
     })
     client.on('sync-error', (msg: string) => {

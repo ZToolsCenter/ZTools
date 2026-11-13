@@ -2,6 +2,8 @@ export const HOST_STORAGE_KEYS = {
   settingsGeneral: 'settings-general',
   plugins: 'plugins',
   disabledPlugins: 'disabled-plugins',
+  /** 账号侧可同步的市场已装插件清单（不含本机 path） */
+  syncedMarketPlugins: 'synced-market-plugins',
   pluginOrder: 'plugin-order',
   aiModels: 'ai-models',
   pinnedCommands: 'pinned-commands',

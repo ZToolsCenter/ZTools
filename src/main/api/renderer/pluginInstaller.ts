@@ -218,7 +218,9 @@ export class PluginInstallerAPI {
   public async installPluginFromPath(filePath: string): Promise<any> {
     try {
       const { config, isZpx } = await this.readPluginJson(filePath)
-      return await this.installFromPackageFile(filePath, isZpx, config)
+      return await this.installFromPackageFile(filePath, isZpx, config, {
+        installedFrom: 'local'
+      })
     } catch (error: unknown) {
       console.error('[Plugins] 安装插件失败:', error)
       return { success: false, error: error instanceof Error ? error.message : '安装失败' }
@@ -317,8 +319,17 @@ export class PluginInstallerAPI {
 
       const result = await this.installFromPackageFile(tempFilePath, isZpx, marketConfig, {
         // 市场返回的来源类型由服务端维护，优先于插件包内可被用户修改的字段。
-        sourceType: plugin?.sourceType === 'closed_source' ? 'closed_source' : 'open_source'
+        sourceType: plugin?.sourceType === 'closed_source' ? 'closed_source' : 'open_source',
+        installedFrom: 'market'
       })
+      // 市场安装成功后写入账号侧同步清单，供其它设备对账补装。
+      if (result?.success) {
+        const { upsertSyncedMarketPlugin } = await import('../../core/sync/syncedMarketPlugins')
+        upsertSyncedMarketPlugin({
+          name: pluginName,
+          version: result.plugin?.version || marketConfig?.version
+        })
+      }
       this.emitMarketDownloadProgress(task, {
         pluginName,
         taskId,

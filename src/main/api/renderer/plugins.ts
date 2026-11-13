@@ -839,6 +839,17 @@ export class PluginsAPI {
       plugins.splice(pluginIndex, 1)
       databaseAPI.dbPut('plugins', plugins)
 
+      // 市场同步候选从账号清单移除，避免本机卸载后被对账重新装回。
+      try {
+        const { isMarketSyncCandidate, removeSyncedMarketPlugin } =
+          await import('../../core/sync/syncedMarketPlugins')
+        if (isMarketSyncCandidate(pluginInfo)) {
+          removeSyncedMarketPlugin(pluginInfo.name)
+        }
+      } catch (error) {
+        console.error('[Plugins] 更新市场同步清单失败:', error)
+      }
+
       this.devProjects.removePluginUsageData(pluginInfo.name)
 
       // 清理该插件的 provider 配置（启用 / 默认 / 自定义参数）

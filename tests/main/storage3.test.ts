@@ -52,11 +52,17 @@ describe('ZTools 3.0 storage routing', () => {
 
     db.put({ _id: 'ZTOOLS/settings-general', data: { theme: 'dark' } })
     db.put({ _id: 'ZTOOLS/plugins', data: [{ name: 'demo' }] })
+    db.put({
+      _id: 'ZTOOLS/synced-market-plugins',
+      data: { plugins: [{ name: 'demo' }] }
+    })
     db.put({ _id: 'ZTOOLS/ai-models', data: [{ id: 'model-a' }] })
     db.put({ _id: 'PLUGIN/demo/settings', data: { value: 'default' } })
 
     expect(manager.getDeviceDb().get('ZTOOLS/settings-general')).not.toBeNull()
     expect(manager.getDeviceDb().get('ZTOOLS/plugins')).not.toBeNull()
+    expect(manager.getAccountDb().get('ZTOOLS/synced-market-plugins')).not.toBeNull()
+    expect(manager.getDeviceDb().get('ZTOOLS/synced-market-plugins')).toBeNull()
     expect(manager.getAccountDb().get('ZTOOLS/ai-models')).not.toBeNull()
     expect(manager.getAccountDb().get('PLUGIN/demo/settings')).not.toBeNull()
     expect(manager.getDeviceDb().get('PLUGIN/demo/settings')).toBeNull()
@@ -82,11 +88,16 @@ describe('ZTools 3.0 storage routing', () => {
 
     db.put({ _id: 'ZTOOLS/settings-general', data: { theme: 'dark' } })
     db.put({ _id: 'ZTOOLS/ai-models', data: [{ id: 'model-a' }] })
+    db.put({
+      _id: 'ZTOOLS/synced-market-plugins',
+      data: { plugins: [{ name: 'demo' }] }
+    })
     db.put({ _id: 'PLUGIN/demo/settings', data: { value: 'default' } })
 
     const changes = db.getChangesSince(0)
     expect(changes.map((change) => change.docId)).toEqual([
       'ZTOOLS/ai-models',
+      'ZTOOLS/synced-market-plugins',
       'PLUGIN/demo/settings'
     ])
     manager.close()

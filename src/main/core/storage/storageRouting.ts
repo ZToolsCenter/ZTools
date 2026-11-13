@@ -7,6 +7,7 @@ export const ACCOUNT_SYNC_PREFIXES = [
   'ZTOOLS/ai-models',
   'ZTOOLS/web-search-engines',
   'ZTOOLS/avatar',
+  toHostDocId(HOST_STORAGE_KEYS.syncedMarketPlugins),
   'PLUGIN/'
 ]
 
@@ -15,6 +16,7 @@ const ACCOUNT_EXACT_KEYS = new Set([
   'ZTOOLS/ai-models',
   'ZTOOLS/web-search-engines',
   'ZTOOLS/avatar',
+  toHostDocId(HOST_STORAGE_KEYS.syncedMarketPlugins),
   'SYNC/profile',
   'SYNC/private-session'
 ])
