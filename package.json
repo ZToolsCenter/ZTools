@@ -27,6 +27,8 @@
     "dev:clean": "pnpm kill && pnpm dev",
     "build": "pnpm typecheck && pnpm build:setting && electron-vite build",
     "build:setting": "cd internal-plugins/setting && pnpm build",
+    "install:setting": "cd internal-plugins/setting && pnpm install --ignore-workspace",
+    "setup": "pnpm install && pnpm install:setting",
     "build:unpack": "pnpm build && electron-builder --dir",
     "build:win": "cross-env ZTOOLS_TARGET_PLATFORM=win32 pnpm build && electron-builder --win --publish never",
     "build:mac": "cross-env ZTOOLS_TARGET_PLATFORM=darwin pnpm build && electron-builder --mac --publish never",

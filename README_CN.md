@@ -83,6 +83,10 @@ cd ZTools
 # 安装依赖
 pnpm install
 
+# 安装内置设置插件的依赖（独立 lockfile，
+# --ignore-workspace 避免 pnpm 把安装重定向到主项目）
+pnpm install:setting
+
 # 开发模式
 pnpm dev
 
@@ -177,6 +181,9 @@ git clone https://github.com/ZToolsCenter/ZTools.git --recurse-submodules
 ```bash
 # 安装依赖
 pnpm install
+
+# 安装内置设置插件的依赖（独立 lockfile）
+pnpm install:setting
 
 # 开发模式（热重载）
 pnpm dev

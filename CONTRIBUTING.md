@@ -66,6 +66,9 @@ git checkout -b fix/my-bugfix
 # 安装依赖
 pnpm install
 
+# 安装内置设置插件的依赖（独立 lockfile）
+pnpm install:setting
+
 # 启动开发模式
 pnpm dev
 
