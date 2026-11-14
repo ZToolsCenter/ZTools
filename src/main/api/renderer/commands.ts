@@ -632,6 +632,19 @@ export class AppsAPI {
   }
 
   /**
+   * 收起搜索界面：关闭插件视图、通知渲染进程清空搜索状态并隐藏主窗口。
+   * @returns 无返回值；隐藏动作同步完成，不等待窗口动画或前台切换。
+   */
+  private hideSearchUi(): void {
+    // 先关闭可能存在的插件视图，避免隐藏主窗口后插件仍驻留
+    this.pluginManager?.hidePluginView()
+    // 通知渲染进程应用已启动（清空搜索框等）
+    this.notifyRenderer('app-launched')
+    // 直接隐藏，不触发 windowManager 的前台恢复，避免抢走刚启动应用的前台
+    this.mainWindow?.hide()
+  }
+
+  /**
    * 启动应用或插件（统一接口）。
    * @param options 启动目标及可选的插件功能、参数和启动来源。
    * @returns 启动结果或底层启动器返回值。
@@ -730,18 +743,14 @@ export class AppsAPI {
           await this.recordSuccessfulPluginLaunch(appPath, featureCode || '', name, cmdType, param)
         return result
       } else if (type === 'file') {
+        // 先收起搜索界面，再定位文件，避免等待资源管理器响应
+        this.hideSearchUi()
         // 文件/文件夹类型：在文件管理器中定位
         console.log('[Commands] 在文件管理器中定位:', appPath)
         shell.showItemInFolder(appPath)
 
         // 添加到历史记录
         await this.addToHistory({ path: appPath, type: 'file', name, cmdType: 'text' })
-
-        // 隐藏当前插件视图（如果有）
-        this.pluginManager?.hidePluginView()
-        // 通知渲染进程应用已启动（清空搜索框等）
-        this.notifyRenderer('app-launched')
-        this.mainWindow?.hide()
       } else {
         // 直接启动（app / system-setting / local-shortcut / UWP / 协议链接）
         // 本地应用走统一启动器，文件和文件夹继续使用 shell.openPath。
@@ -750,26 +759,32 @@ export class AppsAPI {
           ? localShortcuts.find((shortcut: any) => shortcut.path === appPath)
           : undefined
 
-        if (localShortcut && !(process.platform === 'win32' && localShortcut.type === 'app')) {
-          const result = await shell.openPath(appPath)
-          if (result) {
-            console.error('[Commands] 打开本地启动项失败:', result)
-            throw new Error(`打开失败: ${result}`)
+        // 确认框需要在可见窗口上交互，仅有确认框时保留“启动完成后再隐藏”的顺序
+        const shouldHideBeforeLaunch = !confirmDialog
+
+        // 同一轮事件循环内先发起启动，保留主窗口的前台权限，再立即隐藏搜索框
+        const launchPromise = (async (): Promise<void> => {
+          if (localShortcut && !(process.platform === 'win32' && localShortcut.type === 'app')) {
+            const result = await shell.openPath(appPath)
+            if (result) {
+              console.error('[Commands] 打开本地启动项失败:', result)
+              throw new Error(`打开失败: ${result}`)
+            }
+            return
           }
-        } else {
           // 统一走 launchApp（内部处理 uwp: / 协议链接 / 普通应用等）
           await launchApp(appPath, confirmDialog)
-        }
+        })()
+
+        if (shouldHideBeforeLaunch) this.hideSearchUi()
+
+        await launchPromise
 
         // 添加到历史记录
         await this.addToHistory({ path: appPath, type: type || 'app', name, cmdType: 'text' })
         this.updateUsageStats({ path: appPath, type: 'app', name })
 
-        // 隐藏当前插件视图（如果有）
-        this.pluginManager?.hidePluginView()
-        // 通知渲染进程应用已启动（清空搜索框等）
-        this.notifyRenderer('app-launched')
-        this.mainWindow?.hide()
+        if (!shouldHideBeforeLaunch) this.hideSearchUi()
       }
     } catch (error) {
       console.error('[Commands] 启动失败:', error)
