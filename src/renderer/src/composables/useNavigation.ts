@@ -113,35 +113,24 @@ export function useNavigation(
         selectedCol.value = Math.min(selectedCol.value, upRowItems.length - 1)
         break
       }
+      // 左右方向键按选中行的形态分流：
+      // - 选中行是多卡片横向行（推荐/最佳匹配等）→ 行内左右循环切换卡片，不跨行；
+      // - 选中行是单项行（搜索结果列表等）→ 不拦截，交给主搜索框移动光标/编辑文本；
+      // - 带修饰键（Cmd/Alt/Shift/Ctrl）一律交给输入框，保证行首行尾/按词/选区编辑始终可用。
       case 'ArrowRight': {
+        const rowItems = grid[selectedRow.value]?.items
+        if (!rowItems || rowItems.length <= 1) return
+        if (event.metaKey || event.altKey || event.shiftKey || event.ctrlKey) return
         event.preventDefault()
-        if (grid.length > 0 && selectedRow.value < grid.length) {
-          const currentRowItems = grid[selectedRow.value].items
-          if (selectedCol.value < currentRowItems.length - 1) {
-            selectedCol.value++
-          } else if (selectedRow.value < grid.length - 1) {
-            selectedRow.value++
-            selectedCol.value = 0
-          } else {
-            selectedRow.value = 0
-            selectedCol.value = 0
-          }
-        }
+        selectedCol.value = selectedCol.value < rowItems.length - 1 ? selectedCol.value + 1 : 0
         break
       }
       case 'ArrowLeft': {
+        const rowItems = grid[selectedRow.value]?.items
+        if (!rowItems || rowItems.length <= 1) return
+        if (event.metaKey || event.altKey || event.shiftKey || event.ctrlKey) return
         event.preventDefault()
-        if (selectedCol.value > 0) {
-          selectedCol.value--
-        } else if (selectedRow.value > 0) {
-          selectedRow.value--
-          const prevRowItems = grid[selectedRow.value].items
-          selectedCol.value = prevRowItems.length - 1
-        } else {
-          selectedRow.value = grid.length - 1
-          const lastRowItems = grid[selectedRow.value].items
-          selectedCol.value = lastRowItems.length - 1
-        }
+        selectedCol.value = selectedCol.value > 0 ? selectedCol.value - 1 : rowItems.length - 1
         break
       }
       case 'Enter': {

@@ -142,19 +142,13 @@ const MAC_PRESETS: PresetEntry[] = [
   {
     id: 'iterm2',
     label: 'iTerm2',
+    // 用 iTerm 原生的文件夹打开方式：session 直接以目标目录启动，终端里不会出现
+    // 注入的 cd 命令回显；已有窗口时 iTerm 在当前窗口新建标签页，未运行时启动并打开
+    // 单个窗口（也避免了旧版 AppleScript create window 的冷启动双窗口问题）。
     preset: {
-      type: 'applescript',
-      build: (p) => {
-        const safePath = escapeAppleScriptString(p)
-        return `
-    tell application "iTerm"
-      activate
-      tell (create window with default profile)
-        write session "cd " & quoted form of "${safePath}"
-      end tell
-    end tell
-  `
-      }
+      type: 'cli',
+      command: 'open',
+      args: ['-a', 'iTerm', '{path}']
     }
   }
 ]
