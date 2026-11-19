@@ -448,8 +448,27 @@ class WindowManager {
         }
       }
 
-      // 检查应用快捷键（仅在按键按下时触发，且未打开插件时生效）
+      // 快捷键只在按下时触发。
       if (input.type === 'keyDown') {
+        // ⌘Q 在主窗口内处理，避免经过应用级退出事件。
+        if (
+          platform.isMacOS &&
+          input.meta &&
+          !input.control &&
+          !input.alt &&
+          !input.shift &&
+          input.key.toLowerCase() === 'q' &&
+          this.isKillPluginShortcutEnabled()
+        ) {
+          event.preventDefault()
+          if (pluginManager.getCurrentPluginPath() !== null) {
+            pluginManager.killCurrentPlugin()
+          } else {
+            this.hideWindow(false)
+          }
+          return
+        }
+
         if (
           (input.key === 'w' || input.key === 'W') &&
           (input.meta || input.control) &&
@@ -1800,8 +1819,8 @@ class WindowManager {
   }
 
   /**
-   * 检查 Cmd+Q 内置快捷键（killPlugin）是否被用户禁用
-   * 用于 before-quit 事件：禁用时不隐藏窗口，让 Cmd+Q 可被用作呼出快捷键
+   * 读取内置结束插件快捷键的开关，关闭时让按键继续分发。
+   * @returns 快捷键是否启用，默认启用。
    */
   public isKillPluginShortcutEnabled(): boolean {
     try {
