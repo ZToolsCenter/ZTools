@@ -1,5 +1,5 @@
 import { platform } from '@electron-toolkit/utils'
-import { app, BrowserWindow, session, webContents } from 'electron'
+import { app, BrowserWindow, Menu, session, webContents } from 'electron'
 import log from 'electron-log'
 import path from 'path'
 import lmdbInstance from './core/lmdb/lmdbInstance'
@@ -130,6 +130,21 @@ export function getCurrentShortcut(): string {
 }
 
 app.whenReady().then(async () => {
+  if (platform.isMacOS) {
+    // 保留原生退出菜单，将 ⌘Q 留给窗口和插件的快捷键处理。
+    const [appMenu, ...otherMenus] = Menu.getApplicationMenu()?.items ?? []
+    if (appMenu?.submenu) {
+      const submenu = Menu.buildFromTemplate(
+        appMenu.submenu.items.map((item) =>
+          item.role === 'quit' ? { role: 'quit', accelerator: '' } : item
+        )
+      )
+      Menu.setApplicationMenu(
+        Menu.buildFromTemplate([{ label: appMenu.label, submenu }, ...otherMenus])
+      )
+    }
+  }
+
   // macOS 辅助功能权限检查和请求（如果未授权则弹窗提示）
   await ensureMacAccessibilityPermission()
 
@@ -236,13 +251,24 @@ app.on('will-quit', () => {
   activityHeartbeatService.stop()
 })
 
+/**
+ * 处理应用退出请求，允许 macOS 在重启时执行常规退出清理。
+ * @param event Electron 退出事件。
+ * @returns 无返回值。
+ */
 app.on('before-quit', (event) => {
-  // 自动化关闭应用时不拦截退出流程，避免测试进程残留。
+  // 系统退出沿用 Electron 的窗口关闭流程，悬浮球需要先解除关闭拦截。
+  if (platform.isMacOS && !windowManager.getQuitting()) {
+    windowManager.setQuitting(true)
+    floatingBallManager.cleanup()
+    return
+  }
+
+  // 其余自动化退出由 Electron 关闭窗口。
   if (isE2ETest) return
 
-  // 检查是否是通过托盘菜单主动退出
   if (!windowManager.getQuitting()) {
-    // 不是主动退出（如 Command+Q），阻止退出
+    // 非 macOS 保留原有的快捷键退出拦截。
     event.preventDefault()
     console.log('[Main] 阻止了 Command+Q 退出，请使用托盘菜单退出')
     const hasActivePlugin = pluginManager.getCurrentPluginPath() !== null
@@ -253,13 +279,11 @@ app.on('before-quit', (event) => {
       windowManager.hideWindow(false)
     }
   } else {
-    // 主动退出时，同步销毁所有窗口
-    console.log('[Main] 开始同步销毁所有窗口...')
-
     // 先清理悬浮球窗口（避免 close 事件干扰）
     floatingBallManager.cleanup()
 
-    // 通过 Electron API 获取所有 webContents 并销毁（包括主窗口、分离窗口、插件视图）
+    // 显式退出和更新保留同步销毁窗口及插件视图的流程。
+    console.log('[Main] 开始同步销毁所有窗口...')
     const allContents = webContents.getAllWebContents()
     console.log('[Main] 找到', allContents.length, '个 webContents')
     for (const contents of allContents) {
@@ -267,7 +291,6 @@ app.on('before-quit', (event) => {
         ;(contents as any).destroy()
       }
     }
-
     console.log('[Main] 所有窗口同步销毁完成')
   }
 })
