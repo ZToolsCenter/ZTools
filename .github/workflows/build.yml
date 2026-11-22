@@ -37,7 +37,7 @@ jobs:
             # electron-builder expects the certificate subject without its type prefix.
             signing_identity: 'Zhengzhou Zhongsen Yunke Information Technology Co., Ltd. (4S4HH8375U)'
           # macOS ARM64 (Apple Silicon)
-          - os: macos-14
+          - os: macos-15
             arch: arm64
             build_cmd: pnpm run build:mac:arm64
             signing_identity: 'Zhengzhou Zhongsen Yunke Information Technology Co., Ltd. (4S4HH8375U)'
@@ -236,7 +236,7 @@ jobs:
       - name: Download macOS ARM64 artifact
         uses: actions/download-artifact@v4
         with:
-          name: artifact-macos-14-arm64
+          name: artifact-macos-15-arm64
           path: dist/mac-arm64
 
       - name: Download Windows artifact
