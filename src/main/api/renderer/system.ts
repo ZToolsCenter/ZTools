@@ -1,3 +1,4 @@
+import { MainWindowClient, type MainWindowSource } from '../../common/mainWindowClient'
 import { app, clipboard, ipcMain, Menu, nativeImage, shell } from 'electron'
 import { promises as fs } from 'fs'
 import path from 'path'
@@ -16,10 +17,13 @@ const SEARCH_WALLPAPER_JPEG_QUALITY = 85
  * 系统集成API - 主程序专用
  * 包含终端、访达、剪贴板等系统功能
  */
-export class SystemAPI {
-  private mainWindow: Electron.BrowserWindow | null = null
-
-  public init(mainWindow: Electron.BrowserWindow): void {
+export class SystemAPI extends MainWindowClient {
+  /**
+   * 绑定主窗口来源，初始化本模块的宿主服务。
+   * @param mainWindow 主窗口实例或当前宿主提供器。
+   * @returns 无返回值。
+   */
+  public init(mainWindow: MainWindowSource): void {
     this.mainWindow = mainWindow
     this.setupIPC()
   }
@@ -191,8 +195,6 @@ export class SystemAPI {
    * @returns 菜单创建并展示后结束的 Promise
    */
   private async showContextMenu(event: Electron.IpcMainInvokeEvent, menuItems: any): Promise<void> {
-    if (!this.mainWindow) return
-
     const senderWebContents = event.sender
 
     const buildTemplate = (items: any[], senderWebContents: Electron.WebContents): any[] => {
@@ -224,13 +226,13 @@ export class SystemAPI {
     const template = buildTemplate(menuItems, senderWebContents)
 
     const menu = Menu.buildFromTemplate(template)
-    menu.popup({ window: this.mainWindow })
+    menu.popup({ window: this.mainWindow ?? undefined })
   }
 
   public async selectAvatar(): Promise<any> {
     try {
       const result = await openDialog(
-        this.mainWindow!,
+        this.mainWindow,
         {
           title: '选择头像图片',
           filters: [{ name: '图片文件', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'] }],
@@ -259,7 +261,7 @@ export class SystemAPI {
   public async selectImageFile(): Promise<any> {
     try {
       const result = await openDialog(
-        this.mainWindow!,
+        this.mainWindow,
         {
           title: '选择图片',
           filters: [{ name: '图片文件', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'] }],
@@ -293,7 +295,7 @@ export class SystemAPI {
   }> {
     try {
       const result = await openDialog(
-        this.mainWindow!,
+        this.mainWindow,
         {
           title: '选择主搜索窗口壁纸',
           filters: [{ name: '图片文件', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'] }],

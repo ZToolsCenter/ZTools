@@ -1,3 +1,4 @@
+import { MainWindowClient, type MainWindowSource } from '../../common/mainWindowClient'
 import { BrowserWindow, net, type IpcMainInvokeEvent, type WebContents } from 'electron'
 import type { PluginManager } from '../../managers/pluginManager'
 import { loadOfficialAccountSession } from '../../core/account/officialAccountService'
@@ -27,20 +28,19 @@ interface PaymentWatch {
   callbacks: Set<string>
   resume?: () => void
 }
-export class PluginPaymentAPI {
+export class PluginPaymentAPI extends MainWindowClient {
   private manager: PluginManager | null = null
-  private main: BrowserWindow | null = null
   private watches = new Map<string, PaymentWatch>()
   private creating = new Set<number>()
 
   /**
    * 注册插件支付与记录 API，身份只能由真实 IPC 来源推导。
-   * @param main 主窗口。
+   * @param main 主窗口实例或当前宿主提供器。
    * @param manager 插件运行时管理器。
    * @returns 无返回值。
    */
-  init(main: BrowserWindow, manager: PluginManager): void {
-    this.main = main
+  init(main: MainWindowSource, manager: PluginManager): void {
+    this.mainWindow = main
     this.manager = manager
     registerPluginApiServices({
       requestPayment: this.requestPayment.bind(this),
@@ -61,7 +61,7 @@ export class PluginPaymentAPI {
     if (!account?.token || !account.username) throw new Error('请先登录 ZTools')
     // 支付结束后只恢复真实发起窗口，分离插件不能意外唤起主窗口。
     const paymentOwner =
-      detachedWindowManager.getWindowByPluginWebContents(event.sender.id) || this.main
+      detachedWindowManager.getWindowByPluginWebContents(event.sender.id) || this.mainWindow
     return { event, sender: event.sender, username: account.username, pluginId, paymentOwner }
   }
 

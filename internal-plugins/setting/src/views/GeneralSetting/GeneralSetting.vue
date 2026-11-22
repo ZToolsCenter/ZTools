@@ -22,6 +22,11 @@ import {
   type SearchWallpaperConfig
 } from '@shared/searchWallpaper'
 
+import {
+  DEFAULT_MAIN_WINDOW_SLEEP_SECONDS,
+  normalizeMainWindowSleepSeconds
+} from '@shared/mainWindowSleep'
+
 const { success, error, info } = useToast()
 
 // Dropdown 选项数据
@@ -252,6 +257,25 @@ const opacity = ref(1)
 
 // 主窗口紧凑顶部栏设置
 const compactMainWindowHeader = ref(false)
+const mainWindowSleepEnabled = ref(false)
+const mainWindowSleepSeconds = ref(DEFAULT_MAIN_WINDOW_SLEEP_SECONDS)
+
+/**
+ * 校验并保存用户提交的回收延时。
+ * @param event 数值输入框的变更事件。
+ * @returns 保存完成后结束的 Promise。
+ */
+async function changeMainWindowSleepSeconds(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement
+  // 保留上一次有效值，避免空输入、零或小数触发立即销毁。
+  if (!input.validity.valid || !Number.isSafeInteger(input.valueAsNumber)) {
+    input.value = String(mainWindowSleepSeconds.value)
+    error('请输入大于 0 的整数秒数')
+    return
+  }
+  mainWindowSleepSeconds.value = input.valueAsNumber
+  await saveSettings()
+}
 
 // 插件默认高度设置
 const windowDefaultHeight = ref(541)
@@ -1292,6 +1316,8 @@ async function loadSettings(): Promise<void> {
 
     if (data) {
       opacity.value = data.opacity ?? 1
+      mainWindowSleepEnabled.value = data.mainWindowSleepEnabled === true
+      mainWindowSleepSeconds.value = normalizeMainWindowSleepSeconds(data.mainWindowSleepSeconds)
       compactMainWindowHeader.value = data.compactMainWindowHeader === true
       windowDefaultHeight.value = data.windowDefaultHeight ?? 541
       hotkey.value = data.hotkey ?? defaultHotkey.value
@@ -1391,6 +1417,8 @@ async function saveSettings(): Promise<void> {
       ...existing,
       opacity: opacity.value,
       compactMainWindowHeader: compactMainWindowHeader.value,
+      mainWindowSleepEnabled: mainWindowSleepEnabled.value,
+      mainWindowSleepSeconds: mainWindowSleepSeconds.value,
       windowDefaultHeight: windowDefaultHeight.value,
       hotkey: hotkey.value,
       placeholder: placeholder.value,
@@ -2053,6 +2081,43 @@ onUnmounted(() => {
             :options="autoPasteOptions"
             @change="handleAutoPasteChange"
           />
+        </div>
+      </div>
+
+      <div class="setting-item">
+        <div class="setting-label">
+          <span>隐藏主窗口后节省模式</span>
+          <span class="setting-desc">
+            搜索窗口和超级面板各自隐藏达到设定时间后释放内存，下次唤醒时重新加载。主窗口内打开的插件会保留。
+          </span>
+        </div>
+        <div class="setting-control">
+          <label class="toggle">
+            <input
+              v-model="mainWindowSleepEnabled"
+              type="checkbox"
+              aria-label="隐藏主窗口后节省模式"
+              @change="saveSettings"
+            />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+      </div>
+      <div v-if="mainWindowSleepEnabled" class="setting-item">
+        <div class="setting-label"><span>隐藏后等待时间</span></div>
+        <div class="setting-control">
+          <input
+            :value="mainWindowSleepSeconds"
+            type="number"
+            class="input"
+            min="1"
+            step="1"
+            required
+            aria-label="隐藏后等待时间"
+            style="width: 80px"
+            @change="changeMainWindowSleepSeconds"
+          />
+          <span>秒</span>
         </div>
       </div>
 

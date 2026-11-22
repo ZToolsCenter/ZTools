@@ -1152,6 +1152,12 @@ window.ztools = {
       await electron.ipcRenderer.invoke('internal:get-running-plugins'),
     killPlugin: async (pluginPath) =>
       await electron.ipcRenderer.invoke('internal:kill-plugin', pluginPath),
+    /**
+     * 读取当前账号的市场安装记录。
+     * @returns {Promise<Array>} 按安装时间排序的记录。
+     */
+    getMarketInstallHistory: () =>
+      electron.ipcRenderer.invoke('internal:get-market-install-history'),
     fetchPluginMarket: async () =>
       await electron.ipcRenderer.invoke('internal:fetch-plugin-market'),
     fetchPluginMarketRecommendations: async (limit) =>
@@ -1535,7 +1541,8 @@ window.ztools = {
     },
 
     // ==================== 定时任务 API ====================
-    getScheduledTasks: async () => await electron.ipcRenderer.invoke('internal:get-scheduled-tasks'),
+    getScheduledTasks: async () =>
+      await electron.ipcRenderer.invoke('internal:get-scheduled-tasks'),
     saveScheduledTask: async (draft) =>
       await electron.ipcRenderer.invoke('internal:save-scheduled-task', draft),
     deleteScheduledTask: async (id) =>

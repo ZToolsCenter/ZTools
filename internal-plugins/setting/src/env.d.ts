@@ -2,6 +2,7 @@
 /// <reference types="@ztools-center/ztools-api-types" />
 
 import type { SearchWallpaperConfig } from '@shared/searchWallpaper'
+import type { MarketInstallRecord } from '@shared/marketInstallHistory'
 import type {
   AiProviderInput,
   AiProviderMutationResult,
@@ -135,6 +136,7 @@ declare global {
         openApp: (appPath: string) => Promise<void>
 
         // 插件市场
+        getMarketInstallHistory: () => Promise<MarketInstallRecord[]>
         fetchPluginMarket: () => Promise<{
           success: boolean
           data?: any
@@ -848,6 +850,7 @@ declare global {
         onSyncStatusChanged?: (
           callback: (payload: {
             state?: string
+            marketInstallHistoryChanged?: boolean
             retryStatus?: any
             lastSyncTime?: number
             lastError?: string
@@ -936,6 +939,7 @@ declare global {
           ) => Promise<{ success: boolean; data?: any; error?: string }>
           // 翻译引擎（内置 Bergamot）状态与总开关
           getTranslationStatus: () => Promise<{
+            enabled: boolean
             status: 'idle' | 'downloading' | 'initializing' | 'ready' | 'error'
             error?: string
           }>
@@ -984,6 +988,7 @@ declare global {
         // 超级面板翻译
         updateSuperPanelTranslate: (enabled: boolean) => Promise<{ success: boolean }>
         getTranslationStatus: () => Promise<{
+          enabled: boolean
           status: 'idle' | 'downloading' | 'initializing' | 'ready' | 'error'
           error?: string
         }>

@@ -1,5 +1,4 @@
 import chokidar, { FSWatcher } from 'chokidar'
-import { BrowserWindow } from 'electron'
 import fs from 'fs'
 import path from 'path'
 import appsAPI from './api/renderer/commands'
@@ -29,9 +28,9 @@ const SKIP_FOLDERS = [
 ]
 
 class AppWatcher {
+  private initialized = false
   private recursiveWatcher: FSWatcher | null = null
   private flatRootWatcher: FSWatcher | null = null
-  private mainWindow: BrowserWindow | null = null
   private debounceTimer: NodeJS.Timeout | null = null
   private pendingRefreshType: 'full' | 'uwp' | null = null
   private started = false
@@ -40,11 +39,10 @@ class AppWatcher {
   /**
    * 初始化应用目录与 UWP 包变化监听器。
    *
-   * @param mainWindow 接收应用列表变化通知的主窗口。
    * @returns 无返回值。
    */
-  public init(mainWindow: BrowserWindow): void {
-    this.mainWindow = mainWindow
+  public init(): void {
+    this.initialized = true
     if (this.started) {
       return
     }
@@ -337,11 +335,15 @@ class AppWatcher {
     this.pendingRefreshType = null
   }
 
-  // 重启监听
+  /**
+   * 重新加载已初始化的目录监听，主窗口休眠期间仍可刷新应用列表。
+   * @returns 无返回值。
+   */
   public restart(): void {
     this.stop()
-    if (this.mainWindow) {
-      this.startWatching()
+    // 首次初始化前不启动后台扫描。
+    if (this.initialized) {
+      this.init()
     }
   }
 }

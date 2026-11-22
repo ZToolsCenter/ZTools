@@ -1,3 +1,4 @@
+import { MainWindowClient, type MainWindowSource } from '../../common/mainWindowClient'
 import type { PluginManager } from '../../managers/pluginManager'
 import { ipcMain, type WebContents } from 'electron'
 import path from 'path'
@@ -57,8 +58,7 @@ export interface PluginUpdateCheckResult {
 /**
  * 插件管理API - 主程序专用
  */
-export class PluginsAPI {
-  private mainWindow: Electron.BrowserWindow | null = null
+export class PluginsAPI extends MainWindowClient {
   private pluginManager: PluginManager | null = null
   private disabledPluginPathSet: Set<string> | null = null
   private commandsCacheInvalidator: (() => void) | null = null
@@ -68,16 +68,17 @@ export class PluginsAPI {
 
   /**
    * 初始化插件 API 及其依赖，并注册 IPC 处理器。
-   * @param mainWindow 主窗口
+   * @param mainWindow 主窗口实例或当前宿主提供器。
    * @param pluginManager 插件运行管理器
    * @returns 无返回值
    */
-  public init(mainWindow: Electron.BrowserWindow, pluginManager: PluginManager): void {
+  public init(mainWindow: MainWindowSource, pluginManager: PluginManager): void {
     this.mainWindow = mainWindow
     this.pluginManager = pluginManager
+    const host = this
     this.devProjects = new PluginDevProjectsAPI({
       get mainWindow() {
-        return mainWindow
+        return host.mainWindow
       },
       get pluginManager() {
         return pluginManager
@@ -92,7 +93,7 @@ export class PluginsAPI {
     this.market = new PluginMarketAPI()
     this.installer = new PluginInstallerAPI({
       get mainWindow() {
-        return mainWindow
+        return host.mainWindow
       },
       get pluginManager() {
         return pluginManager

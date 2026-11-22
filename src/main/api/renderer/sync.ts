@@ -1,4 +1,5 @@
-import { BrowserWindow, ipcMain, shell } from 'electron'
+import { MainWindowClient, type MainWindowSource } from '../../common/mainWindowClient'
+import { ipcMain, shell } from 'electron'
 import { readFile } from 'fs/promises'
 import path from 'path'
 import { fileURLToPath } from 'url'
@@ -32,14 +33,14 @@ import { OFFICIAL_SYNC_SERVER_URL } from '../../../shared/syncServerUrl'
 import { openAfdianCheckout, closeAfdianCheckout } from '../../core/afdianPaymentWindow'
 import officialAIService from '../../core/officialAIService.js'
 import type { PluginManager } from '../../managers/pluginManager'
+import { MARKET_INSTALL_HISTORY_PREFIX } from '../../../shared/marketInstallHistory'
 
 /**
  * 同步 API（WebSocket 版）
  */
-export class SyncAPI {
+export class SyncAPI extends MainWindowClient {
   private syncClient: SyncClient | null = null
   private pluginManager: PluginManager | null = null
-  private mainWindow: BrowserWindow | null = null
   private lastSyncTimeSave: Promise<void> = Promise.resolve()
   private lastPersistedSyncTime = 0
   private statusNotifyTimer: ReturnType<typeof setTimeout> | null = null
@@ -49,11 +50,11 @@ export class SyncAPI {
 
   /**
    * 初始化同步客户端、IPC 和账号凭据状态监听。
-   * @param mainWindow 主窗口实例；当前同步通知直接发送到设置插件。
+   * @param mainWindow 主窗口实例或当前宿主提供器。
    * @param pluginManager 插件管理器，用于向设置插件发送状态更新。
    * @returns 无返回值。
    */
-  public init(mainWindow?: BrowserWindow, pluginManager?: PluginManager): void {
+  public init(mainWindow?: MainWindowSource, pluginManager?: PluginManager): void {
     this.mainWindow = mainWindow || null
     this.pluginManager = pluginManager || null
     this.recreateSyncClient()
@@ -104,6 +105,11 @@ export class SyncAPI {
     this.bindSyncClientEvents(this.syncClient)
   }
 
+  /**
+   * 将同步客户端状态及已经应用的远端记录变化通知设置插件。
+   * @param client 当前账号的同步客户端。
+   * @returns 无返回值。
+   */
   private bindSyncClientEvents(client: SyncClient): void {
     client.on('state', (state: string) => {
       this.sendStatusPatch({ state })
@@ -113,7 +119,10 @@ export class SyncAPI {
       this.scheduleStatusChanged()
     })
     client.on('pull', (docs: any[]) => {
-      void docs
+      // 首次拉取和实时推送都在文档落盘后触发。仅安装历史变化才刷新个人中心。
+      if (docs.some((doc) => doc._id?.startsWith(MARKET_INSTALL_HISTORY_PREFIX))) {
+        this.sendStatusPatch({ marketInstallHistoryChanged: true })
+      }
       this.scheduleStatusChanged()
     })
     client.on('sync-error', (msg: string) => {

@@ -1,12 +1,14 @@
 export type StorageScope = 'device' | 'account' | 'both'
 
 import { HOST_STORAGE_KEYS, toHostDocId } from '../../../shared/storageKeys'
+import { MARKET_INSTALL_HISTORY_PREFIX } from '../../../shared/marketInstallHistory'
 
 export const ACCOUNT_SYNC_PREFIXES = [
   'ZTOOLS/user-settings',
   'ZTOOLS/ai-models',
   'ZTOOLS/web-search-engines',
   'ZTOOLS/avatar',
+  MARKET_INSTALL_HISTORY_PREFIX,
   'PLUGIN/'
 ]
 
@@ -41,7 +43,7 @@ const DEVICE_EXACT_KEYS = new Set([
 ])
 
 const DEVICE_PREFIXES = ['SYNC/']
-const ACCOUNT_PREFIXES = ['PLUGIN/']
+const ACCOUNT_PREFIXES = ['PLUGIN/', MARKET_INSTALL_HISTORY_PREFIX]
 
 export function getStorageScopeForKey(key?: string | null): StorageScope {
   if (!key) return 'both'

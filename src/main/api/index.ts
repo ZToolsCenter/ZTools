@@ -54,7 +54,11 @@ import { startProviderBridgeHost } from '../core/provider/providerBridgeHost'
 import { runStartupDataMigrations } from '../core/startupDataMigrations'
 import superPanelManager from '../core/superPanelManager'
 import translationManager from '../core/translationManager'
-import { initializeCommandService, getCommandService } from '../core/commands/runtime'
+import {
+  initializeCommandService,
+  getCommandService,
+  registerCommandHost
+} from '../core/commands/runtime'
 import { startScheduledTasks, stopScheduledTasks } from '../core/scheduledTasks/runtime'
 import { COMMAND_ALIASES_KEY } from '../../shared/commandShared'
 import { ENABLED_MAIN_PUSH_PLUGINS_KEY, normalizeConfigList } from '../../shared/pluginSettings'
@@ -91,6 +95,16 @@ class APIManager {
   private pluginManager: PluginManager | null = null
 
   /**
+   * 将新窗口绑定到已经运行的搜索和窗口服务。
+   * @param window 重建后的主搜索窗口。
+   * @returns 无返回值。
+   */
+  public bindRecreatedMainWindow(window: BrowserWindow): void {
+    registerCommandHost(window.webContents)
+    windowAPI.setupWindowEvents()
+  }
+
+  /**
    * 初始化 API、主进程指令服务和窗口适配器。
    * @param mainWindow 主搜索窗口
    * @param pluginManager 插件运行时
@@ -98,6 +112,8 @@ class APIManager {
    */
   public init(mainWindow: BrowserWindow, pluginManager: PluginManager): void {
     this.pluginManager = pluginManager
+
+    const currentWindow = () => windowManager.getMainWindow()
 
     // 初始化共享API
     databaseAPI.init(pluginManager)
@@ -108,17 +124,20 @@ class APIManager {
 
     // 初始化主程序API
     aiModelsAPI.init()
-    appsAPI.init(mainWindow, pluginManager)
-    appsAPI.setShowWindowCallback(() => windowManager.showWindow())
-    pluginsAPI.init(mainWindow, pluginManager)
+    appsAPI.init(currentWindow, pluginManager)
+    appsAPI.setWindowCallbacks(
+      () => windowManager.showWindow(),
+      () => windowManager.ensureMainWindowReady()
+    )
+    pluginsAPI.init(currentWindow, pluginManager)
     pluginsAPI.setCommandsCacheInvalidator(() => appsAPI.invalidateCommandsCache(false))
-    windowAPI.init(mainWindow)
-    settingsAPI.init(mainWindow, pluginManager)
+    windowAPI.init(currentWindow)
+    settingsAPI.init(currentWindow, pluginManager)
     storageAPI.init()
-    systemAPI.init(mainWindow)
+    systemAPI.init(currentWindow)
     systemSettingsAPI.init()
-    syncAPI.init(mainWindow, pluginManager)
-    localShortcutsAPI.init(mainWindow)
+    syncAPI.init(currentWindow, pluginManager)
+    localShortcutsAPI.init(currentWindow)
     localShortcutsAPI.setCommandsCacheInvalidator(() => appsAPI.invalidateCommandsCache(false))
 
     // 初始化插件 API 统一分发器（必须在插件 API 初始化之前）
@@ -132,25 +151,25 @@ class APIManager {
     pluginProvidersAPI.init()
     // Provider 桥接宿主：原生层（截图翻译等）反向调用 ocr/translation provider
     startProviderBridgeHost()
-    pluginAiAPI.init(mainWindow, pluginManager)
-    pluginLifecycleAPI.init(mainWindow, pluginManager)
-    pluginUIAPI.init(mainWindow, pluginManager)
+    pluginAiAPI.init(currentWindow, pluginManager)
+    pluginLifecycleAPI.init(currentWindow, pluginManager)
+    pluginUIAPI.init(currentWindow, pluginManager)
     pluginUserAPI.init(pluginManager)
-    pluginPaymentAPI.init(mainWindow, pluginManager)
+    pluginPaymentAPI.init(currentWindow, pluginManager)
     // 注入主题信息变更钩子：当主题色/材质变更时通知所有插件视图
     windowManager.setOnThemeInfoChanged(() => {
       pluginUIAPI.broadcastThemeInfoToAllPlugins()
     })
     pluginClipboardAPI.init()
     pluginDeviceAPI.init()
-    pluginDialogAPI.init(mainWindow, pluginManager)
-    pluginWindowAPI.init(mainWindow, pluginManager)
-    pluginScreenAPI.init(mainWindow)
+    pluginDialogAPI.init(currentWindow, pluginManager)
+    pluginWindowAPI.init(currentWindow, pluginManager)
+    pluginScreenAPI.init(currentWindow)
     // 初始化插件输入 API（需要 windowManager 和 clipboardManager 支持 paste/type 功能）
     pluginInputAPI.init(pluginManager, windowManager, clipboardManager)
     // 初始化插件 Shell API（需要 clipboardManager 获取当前窗口信息）
     pluginShellAPI.init(clipboardManager)
-    pluginRedirectAPI.init(mainWindow, pluginManager)
+    pluginRedirectAPI.init(currentWindow, pluginManager)
     pluginFeatureAPI.init(pluginManager)
     pluginFeatureAPI.setCommandsCacheInvalidator(() => appsAPI.invalidateCommandsCache(false))
     pluginHttpAPI.init(pluginManager)
@@ -161,13 +180,13 @@ class APIManager {
     zbrowserAPI.init(mainWindow, pluginManager)
 
     // 初始化内置插件专用API
-    internalPluginAPI.init(mainWindow, pluginManager)
+    internalPluginAPI.init(currentWindow, pluginManager)
 
     // 初始化插件高级 API 权限管理（申请 / 审批 / 按通道授权）
-    pluginInternalApiPermissionsAPI.init(mainWindow, pluginManager)
+    pluginInternalApiPermissionsAPI.init(currentWindow, pluginManager)
 
     // 初始化软件更新API
-    updaterAPI.init(mainWindow)
+    updaterAPI.init(currentWindow)
 
     // 初始化 HTTP 服务，并复用应用内插件启动入口处理外部插件启动请求。
     httpServer.setPluginLauncher((options) => this.launchPlugin(options))
@@ -216,7 +235,7 @@ class APIManager {
     )
 
     // 初始化超级面板管理器
-    superPanelManager.init(mainWindow)
+    superPanelManager.init(currentWindow)
 
     // 初始化翻译管理器
     translationManager.init()
@@ -227,7 +246,7 @@ class APIManager {
       type: 'translation',
       label: '离线翻译引擎（Bergamot）',
       description: '英译中离线引擎，首次启用需下载约 55MB 模型',
-      isReady: () => translationManager.getStatus().status === 'ready',
+      isReady: () => translationManager.getStatus().enabled,
       invoke: async (input) => {
         const { text, from } = input as { text: string; from?: string; to?: string }
         // 当前内置引擎仅支持 en→zh，忽略 from/to 参数

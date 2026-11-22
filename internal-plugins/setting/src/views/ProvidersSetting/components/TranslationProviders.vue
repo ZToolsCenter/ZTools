@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useToast } from '@/components'
 
 interface ProviderEntry {
@@ -27,7 +27,7 @@ const loading = ref(true)
 // 内置 Bergamot 引擎状态
 const engineStatus = ref<'idle' | 'downloading' | 'initializing' | 'ready' | 'error'>('idle')
 const engineError = ref('')
-let statusTimer: ReturnType<typeof setInterval> | null = null
+const engineEnabled = ref(false)
 
 const enabledIds = computed(() => new Set(settings.value.enabled.translation || []))
 const defaultId = computed(() => settings.value.defaultId.translation)
@@ -90,53 +90,44 @@ async function handleSetDefault(p: ProviderEntry): Promise<void> {
 // 内置 Bergamot 引擎开关与状态轮询
 const bergamot = computed(() => providers.value.find((p) => p.id === 'builtin-bergamot'))
 
+/**
+ * 同步引擎开关及实际加载状态，待命期间开关仍然开启。
+ * @returns 状态刷新完成的 Promise。
+ */
 async function refreshEngineStatus(): Promise<void> {
   try {
     const res = await window.ztools.internal.providers.getTranslationStatus()
+    engineEnabled.value = res.enabled
     engineStatus.value = res.status
     engineError.value = res.error || ''
   } catch {
-    /* ignore */
+    /* 下次轮询重新同步 */
   }
 }
 
+/**
+ * 保存用户开关并刷新状态，加载和空闲回收由主进程负责。
+ * @param enabled 是否启用离线翻译。
+ * @returns 操作完成的 Promise。
+ */
 async function handleBergamotToggle(enabled: boolean): Promise<void> {
   try {
     await window.ztools.internal.providers.setTranslationEnabled(enabled)
-    // 开启后立即拉取状态并轮询，直到 ready / error
     await refreshEngineStatus()
-    if (
-      enabled &&
-      (engineStatus.value === 'downloading' || engineStatus.value === 'initializing')
-    ) {
-      startStatusPolling()
-    }
   } catch (err) {
     console.error('切换翻译引擎失败:', err)
     error('切换翻译引擎失败')
   }
 }
 
-function startStatusPolling(): void {
-  if (statusTimer) return
-  statusTimer = setInterval(async () => {
-    await refreshEngineStatus()
-    if (
-      engineStatus.value === 'ready' ||
-      engineStatus.value === 'error' ||
-      engineStatus.value === 'idle'
-    ) {
-      stopStatusPolling()
-    }
+// 仅在引擎启用且面板可见时发起查询；离开页面即清理轮询。
+watch(engineEnabled, (enabled, _, onCleanup) => {
+  if (!enabled) return
+  const timer = setInterval(() => {
+    if (!document.hidden) void refreshEngineStatus()
   }, 1500)
-}
-
-function stopStatusPolling(): void {
-  if (statusTimer) {
-    clearInterval(statusTimer)
-    statusTimer = null
-  }
-}
+  onCleanup(() => clearInterval(timer))
+})
 
 const engineStatusText = computed(() => {
   switch (engineStatus.value) {
@@ -149,17 +140,14 @@ const engineStatusText = computed(() => {
     case 'error':
       return '翻译引擎初始化失败'
     default:
-      return ''
+      return engineEnabled.value ? '待命，翻译时加载' : ''
   }
 })
 
-onMounted(async () => {
-  await load()
-  await refreshEngineStatus()
+onMounted(() => {
+  void load()
+  void refreshEngineStatus()
 })
-
-import { onUnmounted } from 'vue'
-onUnmounted(stopStatusPolling)
 </script>
 
 <template>
@@ -187,8 +175,7 @@ onUnmounted(stopStatusPolling)
           <label class="toggle">
             <input
               type="checkbox"
-              :checked="engineStatus !== 'idle'"
-              :disabled="engineStatus === 'downloading' || engineStatus === 'initializing'"
+              :checked="engineEnabled"
               @change="handleBergamotToggle(($event.target as HTMLInputElement).checked)"
             />
             <span class="toggle-slider"></span>

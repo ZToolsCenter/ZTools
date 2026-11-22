@@ -1,3 +1,4 @@
+import { MainWindowClient, type MainWindowSource } from '../../common/mainWindowClient'
 import { ipcMain, shell } from 'electron'
 import { execFile } from 'child_process'
 import type { PluginManager } from '../../managers/pluginManager'
@@ -43,7 +44,7 @@ interface UwpAppsScanResult {
 /**
  * 应用管理API - 主程序专用
  */
-export class AppsAPI {
+export class AppsAPI extends MainWindowClient {
   private catalogProvider?: () => Promise<CommandCatalog>
   private catalogInvalidator?: () => void
 
@@ -61,7 +62,6 @@ export class AppsAPI {
   private static readonly APP_CACHE_VERSION = 5
   private static readonly APP_CACHE_VERSION_KEY = 'cached-commands-version'
   private static readonly UWP_PACKAGE_SNAPSHOT_KEY = 'cached-uwp-package-snapshot'
-  private mainWindow: Electron.BrowserWindow | null = null
   private pluginManager: PluginManager | null = null
   private launchParam: any = null
   private pluginLaunchParams = new Map<string, any>()
@@ -72,8 +72,20 @@ export class AppsAPI {
   /** 由外部注入，用于在多屏场景下正确显示窗口（跟随光标所在屏幕） */
   private showWindowCallback?: () => void
 
-  public setShowWindowCallback(callback: () => void): void {
-    this.showWindowCallback = callback
+  private ensureHost?: () => Promise<Electron.BrowserWindow | null>
+
+  /**
+   * 注入正常唤醒与隐藏重建入口，后台插件可单独等待宿主就绪。
+   * @param show 显示并激活窗口的回调。
+   * @param ensure 创建并等待可接收消息的宿主。
+   * @returns 无返回值。
+   */
+  public setWindowCallbacks(
+    show: () => void,
+    ensure: () => Promise<Electron.BrowserWindow | null>
+  ): void {
+    this.showWindowCallback = show
+    this.ensureHost = ensure
   }
 
   public setAfterFirstAppsReadyCallback(callback: () => void): void {
@@ -105,7 +117,13 @@ export class AppsAPI {
     }
   }
 
-  public init(mainWindow: Electron.BrowserWindow, pluginManager: PluginManager): void {
+  /**
+   * 绑定主窗口来源，初始化本模块的宿主服务。
+   * @param mainWindow 主窗口实例或当前宿主提供器。
+   * @param pluginManager 管理插件视图与生命周期的实例。
+   * @returns 无返回值。
+   */
+  public init(mainWindow: MainWindowSource, pluginManager: PluginManager): void {
     this.mainWindow = mainWindow
     this.pluginManager = pluginManager
     this.setupIPC()
@@ -590,6 +608,8 @@ export class AppsAPI {
       if (!result.success) {
         console.error('[Commands] 在独立窗口中创建插件失败:', result.error)
         // 降级时也使用同一启动快照，避免顶部栏清空与插件跳过进入不一致。
+        if (this.ensureHost && !(await this.ensureHost()))
+          return { success: false, error: '主搜索窗口未就绪' }
         const launchState = this.pluginManager.getMainWindowLaunchState(appPath, featureCode, param)
         this.notifyRenderer('show-plugin-placeholder', launchState)
         await this.pluginManager.createPluginView(
@@ -604,6 +624,8 @@ export class AppsAPI {
         this.mainWindow?.hide()
       }
     } else {
+      if (this.ensureHost && !(await this.ensureHost()))
+        return { success: false, error: '主搜索窗口未就绪' }
       // 在 show() 改变可见性前固定进入行为，并先切换宿主模式，避免 focus-search 重置插件。
       const launchState = this.pluginManager.getMainWindowLaunchState(appPath, featureCode, param)
       this.notifyRenderer('show-plugin-placeholder', launchState)

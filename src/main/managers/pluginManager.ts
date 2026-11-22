@@ -1,4 +1,5 @@
-import { BrowserWindow, session, shell, WebContents, WebContentsView } from 'electron'
+import { MainWindowClient, type MainWindowSource } from '../common/mainWindowClient'
+import { session, shell, WebContents, WebContentsView } from 'electron'
 import fsSync from 'fs'
 import path from 'path'
 import { pathToFileURL } from 'url'
@@ -136,7 +137,7 @@ export interface PluginUpgradeRelaunchContext {
   detachedSnapshot?: DetachedPluginUpgradeSnapshot
 }
 
-export class PluginManager {
+export class PluginManager extends MainWindowClient {
   // ==================== 插件配置/视图创建辅助方法 ====================
 
   /**
@@ -411,11 +412,11 @@ export class PluginManager {
       path: pluginPath
     })
   }
-  private mainWindow: BrowserWindow | null = null
   private pluginView: WebContentsView | null = null
   private currentPluginPath: string | null = null
   private pluginViews: Array<PluginViewInfo> = []
   private activeLaunch: PluginLaunchRequest | null = null
+  private onMainWindowReleased?: () => void
   private nextLaunchId = 0
   // 记录最近一次插件 ESC 触发的时间，用于短时间内抑制主窗口 hide
   private lastPluginEscTime: number | null = null
@@ -555,8 +556,26 @@ export class PluginManager {
     return true
   }
 
-  public init(mainWindow: BrowserWindow): void {
+  /**
+   * 绑定宿主来源和插件离开主窗口后的资源回收通知。
+   * @param mainWindow 主窗口实例或当前宿主提供器。
+   * @param onReleased 插件解除占用后重新检查隐藏窗口的回调。
+   * @returns 无返回值。
+   */
+  public init(mainWindow: MainWindowSource, onReleased?: () => void): void {
     this.mainWindow = mainWindow
+    this.onMainWindowReleased = onReleased
+  }
+
+  /**
+   * 取消当前启动，并在插件视图拆卸完成后重新检查宿主的休眠期限。
+   * @returns 无返回值。
+   */
+  private releaseMainWindowLaunch(): void {
+    if (!this.activeLaunch) return
+    this.activeLaunch = null
+    // 等调用方拆完视图再检查，避免终止或分离插件时销毁仍在使用的窗口。
+    if (this.onMainWindowReleased) setImmediate(this.onMainWindowReleased)
   }
 
   /**
@@ -824,7 +843,7 @@ export class PluginManager {
    */
   public hidePluginView(): void {
     // 用户退出在页面尚未挂载时同样有效，不能让慢加载随后重新打开插件。
-    this.activeLaunch = null
+    this.releaseMainWindowLaunch()
     if (!this.pluginView) {
       this.mainWindow?.webContents.send('plugin-closed')
       return
@@ -895,7 +914,7 @@ export class PluginManager {
    */
   public detachPluginViewOnRefresh(): void {
     // 宿主重载也取消尚未挂载的启动；已有插件仅移除展示关系。
-    this.activeLaunch = null
+    this.releaseMainWindowLaunch()
     if (!this.pluginView || !this.mainWindow) return
     const pluginView = this.pluginView
     console.log('[Plugin] 检测到主渲染进程刷新，移除当前插件视图以防叠层:', this.currentPluginPath)
@@ -1240,7 +1259,7 @@ export class PluginManager {
     try {
       console.log('[Plugin] killPlugin 开始:', { pluginPath })
       const wasPreparing = this.preloadTasks.delete(pluginPath)
-      if (this.activeLaunch?.pluginPath === pluginPath) this.activeLaunch = null
+      if (this.activeLaunch?.pluginPath === pluginPath) this.releaseMainWindowLaunch()
       const index = this.pluginViews.findIndex((v) => v.path === pluginPath)
 
       if (index !== -1) {
@@ -1321,7 +1340,7 @@ export class PluginManager {
    * @returns 无返回值
    */
   public killAllPlugins(): void {
-    this.activeLaunch = null
+    this.releaseMainWindowLaunch()
     this.preloadTasks.clear()
     console.log('[Plugin] killAllPlugins 开始:', { total: this.pluginViews.length })
     for (const { view, path } of this.pluginViews) {
@@ -2131,7 +2150,7 @@ export class PluginManager {
       // 清空当前引用
       this.pluginView = null
       this.currentPluginPath = null
-      this.activeLaunch = null
+      this.releaseMainWindowLaunch()
 
       console.log('[Plugin] 插件已分离到独立窗口:', {
         pluginName: cached.name

@@ -12,7 +12,7 @@ import path from 'node:path'
 const projectRoot = path.resolve(__dirname, '../..')
 
 /**
- * 创建测试插件，提供立即重载和并发创建窗口两条入口。
+ * 创建测试插件，覆盖自建窗口和自动分离后的窗口 API。
  * @param pluginRoot 测试插件实体目录。
  * @returns 插件文件写入完成后的 Promise。
  */
@@ -28,7 +28,8 @@ async function createReloadPlugin(pluginRoot: string): Promise<void> {
       preload: 'preload.js',
       features: [
         { code: 'open', explain: '测试独立窗口重载', cmds: ['E2E 独立窗口重载'] },
-        { code: 'callbacks', explain: '测试独立窗口回调', cmds: ['E2E 独立窗口回调'] }
+        { code: 'callbacks', explain: '测试独立窗口回调', cmds: ['E2E 独立窗口回调'] },
+        { code: 'show-main-window', cmds: ['E2E 自动分离唤起主窗口'] }
       ]
     })
   )
@@ -38,6 +39,12 @@ async function createReloadPlugin(pluginRoot: string): Promise<void> {
     `
     window.readyCallbacks = []
     window.ztools.onPluginEnter(({ code }) => {
+      // 模拟 ctool 在进入独立窗口后立即请求唤起主窗口。
+      if (code === 'show-main-window') {
+        const result = window.ztools.showMainWindow()
+        window.showMainWindowResult = typeof result === 'boolean' ? result : null
+        return
+      }
       if (code !== 'open') return
       window.ztools.hideMainWindow(false)
       const child = window.ztools.createBrowserWindow('child.html', {
@@ -260,4 +267,111 @@ test('并行创建、失败和关闭的独立窗口只处理各自的回调', as
       { activeId, failedId, parentId }
     )
   ).toEqual(['A', 'B', 'C'])
+})
+
+test('自动分离的插件不能在进入回调中重新唤起主窗口', async ({
+  windowFixture: { application, main }
+}) => {
+  await main.evaluate(() => window.ztools.dbPut('auto-detach-plugin', ['e2e-child-reload']))
+  await main.getByRole('button', { name: '返回搜索' }).click()
+  await main.locator('.search-input').fill('E2E 自动分离唤起主窗口')
+  await main
+    .locator('.app-item, .list-item')
+    .filter({ hasText: 'E2E 自动分离唤起主窗口' })
+    .first()
+    .click()
+
+  // 等待插件实际收到 IPC 返回值，再检查宿主与独立窗口的可见状态。
+  await expect
+    .poll(() =>
+      application.evaluate(async ({ BrowserWindow, webContents }) => {
+        const plugin = webContents
+          .getAllWebContents()
+          .find((contents) => contents.getURL().endsWith('/e2e-child-reload/index.html'))
+        if (!plugin) return null
+        const result = await plugin.executeJavaScript('window.showMainWindowResult')
+        const windows = BrowserWindow.getAllWindows()
+        return {
+          result,
+          mainVisible: windows
+            .find((win) => win.webContents.getURL().endsWith('/index.html'))
+            ?.isVisible(),
+          detachedVisible: windows
+            .find((win) => win.webContents.getURL().endsWith('/detached-titlebar.html'))
+            ?.isVisible()
+        }
+      })
+    )
+    .toEqual({ result: false, mainVisible: false, detachedVisible: true })
+})
+
+test('插件自建窗口不能唤起主窗口，嵌入主窗口的插件仍可唤起', async ({
+  windowFixture: { application, main }
+}) => {
+  expect(
+    await main.evaluate(() =>
+      window.ztools.commands.execute({
+        target: 'E2E 独立窗口回调',
+        context: { searchQuery: '', pastedText: null, pastedImage: null, pastedFiles: null }
+      })
+    )
+  ).toMatchObject({ success: true })
+
+  // 等到主窗口插件的正文已加载，再让插件通过公开 API 创建子窗口。
+  await expect
+    .poll(() =>
+      application.evaluate(async ({ webContents }) => {
+        const plugin = webContents
+          .getAllWebContents()
+          .find((contents) => contents.getURL().endsWith('/e2e-child-reload/index.html'))
+        return plugin?.executeJavaScript('document.body?.innerText')
+      })
+    )
+    .toContain('插件入口')
+  const { parentId, childId } = await application.evaluate(async ({ webContents }) => {
+    const plugin = webContents
+      .getAllWebContents()
+      .find((contents) => contents.getURL().endsWith('/e2e-child-reload/index.html'))!
+    const childId = await plugin.executeJavaScript(
+      "ztools.createBrowserWindow('child.html', { show: false }).webContents.id"
+    )
+    return { parentId: plugin.id, childId }
+  })
+  await expect
+    .poll(() =>
+      application.evaluate(({ webContents }, id) => webContents.fromId(id)?.getURL(), childId)
+    )
+    .toContain('/child.html')
+
+  const result = await application.evaluate(
+    async ({ BrowserWindow, webContents }, { parentId, childId }) => {
+      const parent = webContents.fromId(parentId)!
+      const child = webContents.fromId(childId)!
+      const mainWindow = BrowserWindow.getAllWindows().find((win) =>
+        win.webContents.getURL().endsWith('/index.html')
+      )!
+      await parent.executeJavaScript('ztools.hideMainWindow(false)')
+      // 在渲染进程中检查返回类型，避免 executeJavaScript 自动等待 Promise。
+      const requestShow = `(() => {
+        const result = ztools.showMainWindow()
+        return typeof result === 'boolean' ? result : null
+      })()`
+      const childResult = await child.executeJavaScript(requestShow)
+      const visibleAfterChild = mainWindow.isVisible()
+      const parentResult = await parent.executeJavaScript(requestShow)
+      return {
+        childResult,
+        visibleAfterChild,
+        parentResult,
+        visibleAfterParent: mainWindow.isVisible()
+      }
+    },
+    { parentId, childId }
+  )
+  expect(result).toEqual({
+    childResult: false,
+    visibleAfterChild: false,
+    parentResult: true,
+    visibleAfterParent: true
+  })
 })

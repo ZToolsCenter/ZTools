@@ -102,6 +102,8 @@ declare global {
         launchSource?: 'search' | 'global-shortcut' | 'super-panel' | 'scheduled-task'
       }) => Promise<any>
       launchAsAdmin: (appPath: string, name?: string) => Promise<void>
+      takeSleepingSearch: () => Promise<import('@shared/mainWindowSleep').SleepingSearch | null>
+      mainSearchReady: () => void
       hideWindow: () => void
       resizeWindow: (height: number) => void
       onUpdateCompactMainWindowHeader: (callback: (enabled: boolean) => void) => () => void

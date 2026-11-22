@@ -2,7 +2,7 @@ import { platform } from '@electron-toolkit/utils'
 import { app, BrowserWindow, session, webContents } from 'electron'
 import log from 'electron-log'
 import path from 'path'
-import lmdbInstance from './core/lmdb/lmdbInstance'
+import lmdbInstance, { storageManager } from './core/lmdb/lmdbInstance'
 import api from './api/index'
 import updaterAPI from './api/updater'
 import appsAPI from './api/renderer/commands'
@@ -26,6 +26,7 @@ import { getLogsPath } from './core/appData/appDataPaths'
 import { loadInternalPlugins } from './core/internalPluginLoader'
 import pluginManager from './managers/pluginManager'
 import windowManager from './managers/windowManager'
+import superPanelManager from './core/superPanelManager'
 
 const isE2ETest = process.env.ZTOOLS_E2E === '1'
 
@@ -153,11 +154,20 @@ app.whenReady().then(async () => {
   // 初始化 API 和插件管理器
   if (mainWindow) {
     api.init(mainWindow, pluginManager)
-    pluginManager.init(mainWindow)
+    // 通用设置是设备文档，隐藏期间修改或关闭模式也要立即调整定时器。
+    storageManager.getDeviceDb().on('local-change', ({ docId }) => {
+      if (docId !== 'ZTOOLS/settings-general') return
+      windowManager.scheduleMainWindowSleep()
+      superPanelManager.refreshSleepSettings()
+    })
+    pluginManager.init(
+      () => windowManager.getMainWindow(),
+      () => windowManager.scheduleMainWindowSleep()
+    )
     if (!isE2ETest) {
       // 首次应用列表准备完成后再初始化应用目录监听器，避免启动时与应用扫描抢占磁盘 I/O。
       appsAPI.setAfterFirstAppsReadyCallback(() => {
-        appWatcher.init(mainWindow)
+        appWatcher.init()
       })
       activityHeartbeatService.start()
     }
@@ -215,7 +225,7 @@ app.whenReady().then(async () => {
 app.on('window-all-closed', () => {
   if (isLegacyImportWindowActive() || isAccessibilityPermissionWindowActive()) return
 
-  if (!platform.isMacOS) {
+  if (!platform.isMacOS && !windowManager.isMainWindowSleeping()) {
     app.quit()
   }
 })
@@ -277,7 +287,9 @@ app.on('activate', () => {
 
   if (!applicationInitialized) return
 
-  if (BrowserWindow.getAllWindows().length === 0) {
+  if (windowManager.isMainWindowSleeping()) {
+    windowManager.showWindow()
+  } else if (BrowserWindow.getAllWindows().length === 0) {
     windowManager.createWindow()
   }
 })

@@ -208,13 +208,12 @@ class FloatingBallManager {
   }
 
   /**
-   * 处理悬浮球点击
+   * 切换主窗口，休眠时通过正常入口唤醒。
+   * @returns 无返回值。
    */
   private handleBallClick(): void {
     const mainWindow = windowManager.getMainWindow()
-    if (!mainWindow) return
-
-    if (mainWindow.isVisible()) {
+    if (mainWindow?.isVisible()) {
       windowManager.hideWindow(false)
     } else {
       windowManager.showWindow()
@@ -222,16 +221,17 @@ class FloatingBallManager {
   }
 
   /**
-   * 处理悬浮球双击
+   * 处理悬浮球双击，必要时先等待主界面重建。
+   * @returns 完成目标指令调度后结束的 Promise。
    */
-  private handleBallDoubleClick(): void {
+  private async handleBallDoubleClick(): Promise<void> {
     if (!this.doubleClickCommand) {
       // 如果未配置双击指令，执行默认行为（打开/隐藏主窗口）
       this.handleBallClick()
       return
     }
 
-    const mainWindow = windowManager.getMainWindow()
+    const mainWindow = await windowManager.ensureMainWindowReady()
     if (!mainWindow) return
 
     // 显示主窗口并发送双击指令
@@ -248,10 +248,14 @@ class FloatingBallManager {
 
   /**
    * 处理文件拖放到悬浮球
-   * 显示主窗口并将文件数据发送给渲染进程（等同于复制文件后打开搜索框粘贴）
+   * 显示主窗口并将文件数据发送给渲染进程。
+   * @param files 拖入悬浮球的文件与目录。
+   * @returns 完成文件投递调度后结束的 Promise。
    */
-  private handleFileDrop(files: Array<{ path: string; name: string; isDirectory: boolean }>): void {
-    const mainWindow = windowManager.getMainWindow()
+  private async handleFileDrop(
+    files: Array<{ path: string; name: string; isDirectory: boolean }>
+  ): Promise<void> {
+    const mainWindow = await windowManager.ensureMainWindowReady()
     if (!mainWindow) return
 
     // 显示主窗口

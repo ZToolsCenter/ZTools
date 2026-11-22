@@ -87,12 +87,13 @@ export function applyWindowMaterial(
 /**
  * 打开文件选择窗口
  *
- * @param parentWindow 父窗口
+ * @param parentWindow 可用的父窗口；主窗口休眠时允许为空。
  * @param options 文件窗口选项
- * @param errorMessage 未选择任何文件时，返回错误信息
+ * @param errorMessage 未选择任何文件时返回的错误信息。
+ * @returns 文件选择结果或取消信息。
  */
 export async function openDialog(
-  parentWindow: BrowserWindow,
+  parentWindow: BrowserWindow | null,
   options: OpenDialogOptions,
   errorMessage: string
 ): Promise<{
@@ -100,8 +101,11 @@ export async function openDialog(
   data?: OpenDialogReturnValue
   error?: string
 }> {
-  const result = await dialog.showOpenDialog(parentWindow, options)
-  if (!parentWindow.isDestroyed()) {
+  // 设置插件可独立于主界面运行，休眠时仍可打开系统文件选择器。
+  const result = parentWindow
+    ? await dialog.showOpenDialog(parentWindow, options)
+    : await dialog.showOpenDialog(options)
+  if (parentWindow && !parentWindow.isDestroyed()) {
     parentWindow.show()
   }
   if (result.canceled || result.filePaths.length === 0) {

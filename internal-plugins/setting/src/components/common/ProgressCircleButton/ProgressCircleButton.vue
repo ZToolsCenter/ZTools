@@ -40,6 +40,8 @@ const dashOffset = computed(() => {
     :class="{ active, indeterminate: active && normalizedProgress === null }"
     :style="{ '--button-size': `${size}px` }"
     :title="active ? activeTitle || title : title"
+    :aria-label="active ? activeTitle || title : title"
+    :aria-busy="active"
     :disabled="disabled"
   >
     <svg class="progress-ring" width="24" height="24" viewBox="0 0 24 24" aria-hidden="true">

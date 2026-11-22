@@ -1,4 +1,7 @@
 /** 插件市场共享类型定义 */
+import type { PluginDownloadState } from '@/components/common/PluginDetail/types'
+
+export type { PluginDownloadState }
 
 export interface Plugin {
   name: string
@@ -32,13 +35,4 @@ export interface CategoryLayoutSection {
   plugins?: string[]
 }
 
-export type PluginDownloadStatus = 'downloading' | 'installing' | 'success' | 'error' | 'cancelled'
-
-export interface PluginDownloadState {
-  taskId?: string
-  status: PluginDownloadStatus
-  progress: number | null
-  receivedBytes?: number
-  totalBytes?: number
-  error?: string
-}
+export type PluginDownloadStatus = PluginDownloadState['status']

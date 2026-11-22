@@ -1585,6 +1585,10 @@ defineExpose({
   transition: all 0.15s;
 }
 
+.plugin-tag-close:focus {
+  outline: none;
+}
+
 .plugin-tag-close:hover {
   opacity: 0.7;
   background: rgba(0, 0, 0, 0.06);

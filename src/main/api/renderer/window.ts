@@ -1,3 +1,4 @@
+import { MainWindowClient, type MainWindowSource } from '../../common/mainWindowClient'
 import { ipcMain, screen } from 'electron'
 import { WINDOW_WIDTH } from '../../common/constants.js'
 import windowManager from '../../managers/windowManager.js'
@@ -8,11 +9,15 @@ type WindowMaterial = 'mica' | 'acrylic' | 'none'
 /**
  * 窗口管理API - 主程序专用
  */
-export class WindowAPI {
-  private mainWindow: Electron.BrowserWindow | null = null
+export class WindowAPI extends MainWindowClient {
   private lockedSize: { width: number; height: number } | null = null
 
-  public init(mainWindow: Electron.BrowserWindow): void {
+  /**
+   * 绑定主窗口来源，初始化本模块的宿主服务。
+   * @param mainWindow 主窗口实例或当前宿主提供器。
+   * @returns 无返回值。
+   */
+  public init(mainWindow: MainWindowSource): void {
     this.mainWindow = mainWindow
     this.setupIPC()
     this.setupWindowEvents()
@@ -24,6 +29,9 @@ export class WindowAPI {
    */
   private setupIPC(): void {
     // 主程序窗口控制集中注册，不承载插件页面就绪协议。
+    ipcMain.handle('take-sleeping-search', (event) =>
+      event.sender === this.mainWindow?.webContents ? windowManager.takeSleepingSearch() : null
+    )
     ipcMain.on('hide-window', () => this.hideWindow())
     ipcMain.on('resize-window', (_event, height: number) => this.resizeWindow(height))
     ipcMain.on('update-launch-context', (_event, context: any) => this.updateLaunchContext(context))
@@ -64,9 +72,18 @@ export class WindowAPI {
     ipcMain.on('open-settings', () => this.openSettings())
   }
 
-  private setupWindowEvents(): void {
+  /**
+   * 为本次窗口实例安装位置记忆，销毁时取消尚未执行的写入。
+   * @returns 无返回值。
+   */
+  public setupWindowEvents(): void {
+    const win = this.mainWindow
+    this.lockedSize = null
     let moveTimeout: NodeJS.Timeout | null = null
-    this.mainWindow?.on('move', () => {
+    win?.once('closed', () => {
+      if (moveTimeout) clearTimeout(moveTimeout)
+    })
+    win?.on('move', () => {
       if (moveTimeout) clearTimeout(moveTimeout)
       moveTimeout = setTimeout(() => {
         if (this.mainWindow) {

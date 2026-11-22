@@ -494,15 +494,21 @@ class HttpServer {
     }
   }
 
-  private handleShowWindow(body: Record<string, unknown>): ApiResponse {
+  /**
+   * 等待宿主恢复后显示窗口并投递可选搜索词。
+   * @param body 外部调用传入的请求体。
+   * @returns 完成投递安排后的响应。
+   */
+  private async handleShowWindow(body: Record<string, unknown>): Promise<ApiResponse> {
     try {
+      const mainWindow = await windowManager.ensureMainWindowReady()
       windowManager.showWindow()
 
       const text = typeof body.text === 'string' ? body.text : undefined
       if (text !== undefined) {
-        const mainWindow = windowManager.getMainWindow()
         setTimeout(() => {
-          mainWindow?.webContents.send('set-search-text', text)
+          if (mainWindow && !mainWindow.isDestroyed())
+            mainWindow.webContents.send('set-search-text', text)
         }, 100)
       }
 

@@ -354,7 +354,7 @@ export class PluginDevProjectsAPI {
     try {
       if (!pluginJsonPath) {
         const result = await openDialog(
-          this.deps.mainWindow!,
+          this.deps.mainWindow,
           {
             title: '选择插件配置文件',
             properties: ['openFile'],
@@ -660,7 +660,7 @@ export class PluginDevProjectsAPI {
 
       if (!configPath) {
         const result = await openDialog(
-          this.deps.mainWindow!,
+          this.deps.mainWindow,
           {
             title: '选择 plugin.json',
             properties: ['openFile'],
@@ -984,11 +984,15 @@ export class PluginDevProjectsAPI {
         }
 
         // 手动打包仍保留保存对话框和 Finder 定位行为。
-        const result = await dialog.showSaveDialog(this.deps.mainWindow!, {
+        const options = {
           title: '保存插件包',
           defaultPath: `${projectName}-v${resolvedVersion}.zpx`,
           filters: [{ name: '插件包', extensions: ['zpx'] }]
-        })
+        }
+        const parent = this.deps.mainWindow
+        const result = parent
+          ? await dialog.showSaveDialog(parent, options)
+          : await dialog.showSaveDialog(options)
 
         if (result.canceled || !result.filePath) return { success: false, error: '已取消' }
 

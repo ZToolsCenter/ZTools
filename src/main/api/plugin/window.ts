@@ -1,3 +1,4 @@
+import { MainWindowClient, type MainWindowSource } from '../../common/mainWindowClient'
 import { BrowserWindow, ipcMain, webContents } from 'electron'
 import type { PluginManager } from '../../managers/pluginManager'
 import pluginWindowManager, { winIpc } from '../../core/pluginWindowManager.js'
@@ -10,11 +11,16 @@ import { getUrlScheme } from '../../utils/pluginUrl'
 /**
  * 插件独立窗口管理API - 插件专用
  */
-export class PluginWindowAPI {
+export class PluginWindowAPI extends MainWindowClient {
   private pluginManager: PluginManager | null = null
-  private mainWindow: Electron.BrowserWindow | null = null
 
-  public init(mainWindow: Electron.BrowserWindow, pluginManager: PluginManager): void {
+  /**
+   * 绑定主窗口来源，初始化本模块的宿主服务。
+   * @param mainWindow 主窗口实例或当前宿主提供器。
+   * @param pluginManager 管理插件视图与生命周期的实例。
+   * @returns 无返回值。
+   */
+  public init(mainWindow: MainWindowSource, pluginManager: PluginManager): void {
     this.pluginManager = pluginManager
     this.mainWindow = mainWindow
     this.setupIPC()
@@ -222,6 +228,18 @@ export class PluginWindowAPI {
     })
 
     ipcMain.on('show-main-window', (event) => {
+      if (
+        windowManager.isMainWindowSleeping() &&
+        this.getWindowType(event.sender) === 'main' &&
+        event.sender !== this.mainWindow?.webContents
+      ) {
+        // 同步调用来自独立的缓存插件进程，可等宿主初始化后再返回实际显示结果。
+        void windowManager.ensureMainWindowReady().then((win) => {
+          event.returnValue =
+            !!win && !event.sender.isDestroyed() && this.showMainWindow(event.sender)
+        })
+        return
+      }
       event.returnValue = this.showMainWindow(event.sender)
     })
 

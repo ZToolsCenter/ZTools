@@ -1,3 +1,4 @@
+import { MainWindowClient, type MainWindowSource } from '../../common/mainWindowClient'
 import { ipcMain, screen, desktopCapturer, BrowserWindow } from 'electron'
 import { screenCapture } from '../../core/screenCapture.js'
 import { ColorPicker } from '../../core/native/index.js'
@@ -17,10 +18,13 @@ function hexToRgb(hex: string): string {
 /**
  * 屏幕和坐标相关API - 插件专用
  */
-export class PluginScreenAPI {
-  private mainWindow: BrowserWindow | null = null
-
-  public init(mainWindow: BrowserWindow): void {
+export class PluginScreenAPI extends MainWindowClient {
+  /**
+   * 绑定主窗口来源，初始化本模块的宿主服务。
+   * @param mainWindow 主窗口实例或当前宿主提供器。
+   * @returns 无返回值。
+   */
+  public init(mainWindow: MainWindowSource): void {
     this.mainWindow = mainWindow
     this.setupIPC()
   }

@@ -1,3 +1,4 @@
+import { MainWindowClient, type MainWindowSource } from '../../common/mainWindowClient'
 import { ipcMain } from 'electron'
 import type { PluginManager } from '../../managers/pluginManager'
 import detachedWindowManager from '../../core/detachedWindowManager'
@@ -93,18 +94,17 @@ const MAX_TOOL_ROUNDS = 25
  * AI 调用 API（插件专用）- 基于 OpenAI SDK 直接调用
  * 直接控制消息格式，确保 reasoning_content 等非标准字段正确透传
  */
-class PluginAiAPI {
+class PluginAiAPI extends MainWindowClient {
   private pluginManager: PluginManager | null = null
-  private mainWindow: Electron.BrowserWindow | null = null
   private abortControllers: Map<string, AbortController> = new Map()
 
   /**
    * 绑定主窗口和插件管理器，并注册插件侧 AI IPC。
-   * @param mainWindow ZTools 主窗口
+   * @param mainWindow 主窗口实例或当前宿主提供器。
    * @param pluginManager 插件运行时管理器
    * @returns 无返回值
    */
-  public init(mainWindow: Electron.BrowserWindow, pluginManager: PluginManager): void {
+  public init(mainWindow: MainWindowSource, pluginManager: PluginManager): void {
     this.mainWindow = mainWindow
     this.pluginManager = pluginManager
     this.setupIPC()

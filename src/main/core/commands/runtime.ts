@@ -23,14 +23,15 @@ export function getCommandService(): CommandService {
  * @returns 无返回值
  */
 export function registerCommandHost(contents: WebContents): void {
-  hosts.set(contents.id, contents)
+  const id = contents.id
+  hosts.set(id, contents)
   const release = (): void => {
-    service?.release(String(contents.id))
+    service?.release(String(id))
   }
   contents.on('did-start-loading', release)
   contents.once('destroyed', () => {
     release()
-    hosts.delete(contents.id)
+    hosts.delete(id)
   })
 }
 

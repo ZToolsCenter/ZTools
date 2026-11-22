@@ -1,3 +1,4 @@
+import { MainWindowClient, type MainWindowSource } from '../../common/mainWindowClient'
 import { app, globalShortcut, ipcMain, nativeTheme } from 'electron'
 import fs from 'fs'
 import type { PluginManager } from '../../managers/pluginManager'
@@ -44,11 +45,16 @@ interface ShortcutLaunchContext {
  * 设置管理API - 主程序专用
  * 包含主题、快捷键、开机启动等设置
  */
-export class SettingsAPI {
-  private mainWindow: Electron.BrowserWindow | null = null
+export class SettingsAPI extends MainWindowClient {
   private pluginManager: PluginManager | null = null
 
-  public init(mainWindow: Electron.BrowserWindow, pluginManager: PluginManager): void {
+  /**
+   * 绑定主窗口来源，初始化本模块的宿主服务。
+   * @param mainWindow 主窗口实例或当前宿主提供器。
+   * @param pluginManager 管理插件视图与生命周期的实例。
+   * @returns 无返回值。
+   */
+  public init(mainWindow: MainWindowSource, pluginManager: PluginManager): void {
     this.mainWindow = mainWindow
     this.pluginManager = pluginManager
     this.setupIPC()

@@ -33,6 +33,7 @@ import {
   requestPluginMarket
 } from './pluginMarketConfig'
 import { getPluginsPath } from '../../core/appData/appDataPaths'
+import { bindMarketInstallHistory } from '../../core/storage/marketInstallHistory'
 
 /** 插件的本地安装目录 */
 const PLUGIN_DIR = getPluginsPath()
@@ -106,7 +107,7 @@ export class PluginInstallerAPI {
   public async selectPluginFile(): Promise<any> {
     try {
       const result = await openDialog(
-        this.deps.mainWindow!,
+        this.deps.mainWindow,
         {
           title: '选择插件文件',
           filters: [{ name: '插件文件', extensions: ['zpx', 'zip'] }],
@@ -134,7 +135,7 @@ export class PluginInstallerAPI {
   public async importPlugin(): Promise<any> {
     try {
       const result = await openDialog(
-        this.deps.mainWindow!,
+        this.deps.mainWindow,
         {
           title: '选择插件文件',
           filters: [{ name: '插件文件', extensions: ['zpx', 'zip'] }],
@@ -257,6 +258,8 @@ export class PluginInstallerAPI {
     const tempFilePath = path.join(tempDir, `${safePluginName}.zpx`)
 
     try {
+      // 在首次异步下载前绑定发起安装的账号。
+      const saveHistory = bindMarketInstallHistory()
       console.log('[Plugins] 开始从市场安装插件:', pluginName)
       const downloadUrl = await this.resolveMarketDownloadUrl(plugin)
       if (!downloadUrl) {
@@ -319,6 +322,23 @@ export class PluginInstallerAPI {
         // 市场返回的来源类型由服务端维护，优先于插件包内可被用户修改的字段。
         sourceType: plugin?.sourceType === 'closed_source' ? 'closed_source' : 'open_source'
       })
+      // 仅成功注册后记录首次安装，后续升级和重装沿用原时间。
+      if (result.success) {
+        const platforms = plugin.platform ?? marketConfig.platform
+        try {
+          saveHistory({
+            name: pluginName,
+            title: plugin.title || marketConfig.title || pluginName,
+            logo: plugin.logo,
+            installedAt: result.plugin.installedAt,
+            installedOn: process.platform,
+            platform: typeof platforms === 'string' ? [platforms] : platforms
+          })
+        } catch (error) {
+          console.warn('[Plugins] 保存市场安装记录失败:', error)
+          result.warning = [result.warning, '未能保存本次安装记录'].filter(Boolean).join('；')
+        }
+      }
       this.emitMarketDownloadProgress(task, {
         pluginName,
         taskId,

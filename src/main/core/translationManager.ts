@@ -1,11 +1,14 @@
-import { Worker } from 'worker_threads'
+import { Worker, isMarkedAsUntransferable } from 'node:worker_threads'
 import path from 'path'
 import fs from 'fs'
 import https from 'https'
-import { app, ipcMain } from 'electron'
+import { ipcMain } from 'electron'
+import { pipeline } from 'node:stream/promises'
+import { getZToolsRoot } from './appData/appDataPaths'
 import databaseAPI from '../api/shared/database.js'
 
 const TRANSLATION_DIR = 'bergamot-translation'
+const IDLE_TIMEOUT_MS = 60_000
 
 // Bergamot WASM 资源下载地址（从 npm CDN）
 const BERGAMOT_CDN = 'https://unpkg.com/@browsermt/bergamot-translator@0.4.9/worker'
@@ -71,56 +74,62 @@ class TranslationManager {
   private status: TranslationStatus = 'idle'
   private errorMessage = ''
   private translationDir = ''
+  private resourceDownload: Promise<void> | null = null
+  private initialization: Promise<void> | null = null
+  private generation = 0
+  private activeRequests = 0
+  private idleTimer: NodeJS.Timeout | null = null
   private messageId = 0
   private pendingMessages = new Map<
     number,
     { resolve: (value: any) => void; reject: (reason: any) => void }
   >()
 
+  /**
+   * 注册接口并恢复开关，模型由第一次有效的翻译请求加载。
+   * @returns 无返回值。
+   */
   init(): void {
-    // 使用无空格路径，避免 Bergamot WASM 脚本的 URL 编码问题
-    // macOS 的 Application Support 含空格，会导致 %20 路径错误
-    this.translationDir = path.join(app.getPath('home'), '.ztools', TRANSLATION_DIR)
+    this.translationDir = path.join(getZToolsRoot(), TRANSLATION_DIR)
     this.setupIPC()
-    this.loadConfig()
-  }
-
-  private loadConfig(): void {
     try {
-      const data = databaseAPI.dbGet('settings-general')
-      this.enabled = data?.superPanelTranslateEnabled ?? false
-      if (this.enabled) {
-        this.initializeTranslator()
-      }
+      this.enabled = databaseAPI.dbGet('settings-general')?.superPanelTranslateEnabled ?? false
     } catch (error) {
       console.error('[Translation] 加载翻译配置失败:', error)
     }
   }
 
   /**
-   * 更新翻译功能开关，并持久化到 settings-general.superPanelTranslateEnabled。
-   * 翻译 tab 的开关独立于此前的通用设置页写入，因此这里自行合并保存。
+   * 保存引擎开关。显式启用时准备离线文件，禁用时释放内存。
+   * @param enabled 是否允许使用内置翻译。
+   * @returns 无返回值。
    */
   updateEnabled(enabled: boolean): void {
     this.enabled = enabled
-    // 合并写入，避免覆盖 settings-general 中的其他字段
     try {
       const data = databaseAPI.dbGet('settings-general') || {}
       databaseAPI.dbPut('settings-general', { ...data, superPanelTranslateEnabled: enabled })
     } catch (error) {
       console.error('[Translation] 持久化翻译开关失败:', error)
     }
-    if (enabled) {
-      this.initializeTranslator()
-    } else {
+    if (!enabled) {
       this.destroyWorker()
-      this.status = 'idle'
-      this.errorMessage = ''
+      return
     }
+    // 提前下载以供断网后首次使用，同时保持翻译线程休眠。
+    const generation = this.generation
+    void this.prepareResources().catch((error) => {
+      if (generation === this.generation) this.failWorker(error)
+    })
   }
 
-  getStatus(): { status: TranslationStatus; error?: string } {
-    return { status: this.status, error: this.errorMessage || undefined }
+  /**
+   * 分别报告用户的开关和引擎的实际状态，休眠时仍保持启用。
+   * @returns 是否启用、当前状态和最近一次错误。
+   */
+  getStatus(): { enabled: boolean; status: TranslationStatus; error?: string } {
+    const status = this.enabled && this.resourceDownload ? 'downloading' : this.status
+    return { enabled: this.enabled, status, error: this.errorMessage || undefined }
   }
 
   /**
@@ -137,65 +146,116 @@ class TranslationManager {
   }
 
   /**
-   * 翻译文本（英文 → 中文）
+   * 在首个有效请求到达时加载引擎，并在并发翻译之间复用同一线程。
+   * @param text 待翻译的文本。
+   * @returns 中文译文，跳过或失败时返回 null。
    */
   async translate(text: string): Promise<string | null> {
-    if (!this.enabled || this.status !== 'ready' || !this.worker) return null
-    if (!text || text.trim().length === 0) return null
-
-    // 如果文本主要是中文，跳过翻译
-    if (this.isMostlyChinese(text)) return null
-
-    // 限制翻译长度（避免超长文本卡死）
+    if (!this.enabled || !text?.trim() || this.isMostlyChinese(text)) return null
     const truncated = text.length > 1000 ? text.slice(0, 1000) + '...' : text
-
+    const generation = this.generation
+    this.activeRequests++
+    this.cancelIdleTimer()
     try {
+      await this.ensureReady()
+      // 禁用后即使立刻重新启用，也不向新实例投递旧请求。
+      if (generation !== this.generation) return null
       const result = await this.sendWorkerMessage('translate', [
-        {
-          models: [{ from: 'en', to: 'zh' }],
-          texts: [{ text: truncated, html: false }]
-        }
+        { models: [{ from: 'en', to: 'zh' }], texts: [{ text: truncated, html: false }] }
       ])
       return result?.[0]?.target?.text || null
     } catch (error) {
       console.error('[Translation] 翻译失败:', error)
       return null
+    } finally {
+      this.activeRequests--
+      this.scheduleIdleRelease()
     }
   }
 
   /**
-   * 初始化翻译引擎（下载资源 + 创建 Worker + 加载模型）
+   * 合并首次加载和休眠后的并发唤醒，失败后允许下次请求重试。
+   * @returns 引擎完成初始化的 Promise。
+   * @throws 资源准备、线程启动或模型加载失败时拒绝。
    */
-  private async initializeTranslator(): Promise<void> {
-    if (this.status === 'downloading' || this.status === 'initializing') return
-
-    try {
-      // 检查资源是否已下载
-      if (!this.areResourcesReady()) {
-        this.status = 'downloading'
-        console.log('[Translation] 开始下载翻译资源...')
-        await this.downloadResources()
-        console.log('[Translation] 翻译资源下载完成')
-      }
-
-      this.patchWorkerScriptIfNeeded()
-      this.status = 'initializing'
-      await this.createWorker()
-      await this.loadModel()
-      this.status = 'ready'
-      this.errorMessage = ''
-      console.log('[Translation] Bergamot 翻译引擎已就绪')
-    } catch (error) {
-      this.status = 'error'
-      this.errorMessage = error instanceof Error ? error.message : '初始化失败'
-      console.error('[Translation] 初始化翻译引擎失败:', error)
+  private ensureReady(): Promise<void> {
+    if (this.status === 'ready') return Promise.resolve()
+    if (!this.initialization) {
+      const generation = this.generation
+      this.initialization = this.initializeTranslator(generation)
+        .catch((error) => {
+          if (generation === this.generation) this.failWorker(error)
+          throw error
+        })
+        .finally(() => {
+          if (generation === this.generation) this.initialization = null
+        })
     }
+    return this.initialization
+  }
+
+  /**
+   * 先准备离线文件，再创建线程并移交模型。
+   * @param generation 本次初始化所属的生命周期版本。
+   * @returns 模型就绪后结束的 Promise。
+   * @throws 初始化被取消或模型无法加载时拒绝。
+   */
+  private async initializeTranslator(generation: number): Promise<void> {
+    await this.prepareResources()
+    if (generation !== this.generation) throw new Error('翻译初始化已取消')
+    this.status = 'initializing'
+    this.errorMessage = ''
+    this.patchWorkerScriptIfNeeded()
+    await this.createWorker()
+    if (generation !== this.generation) throw new Error('翻译初始化已取消')
+    await this.loadModel()
+    if (generation !== this.generation) throw new Error('翻译初始化已取消')
+    this.status = 'ready'
+  }
+
+  /**
+   * 复用首次启用和翻译请求的资源下载，下载完毕后保留磁盘缓存。
+   * @returns 本地资源可用后结束的 Promise。
+   * @throws 文件检查或下载失败时拒绝。
+   */
+  private async prepareResources(): Promise<void> {
+    if (this.resourceDownload) return this.resourceDownload
+    if (this.areResourcesReady()) return
+    this.resourceDownload = this.downloadResources().finally(() => {
+      this.resourceDownload = null
+    })
+    return this.resourceDownload
+  }
+
+  /**
+   * 取消旧的空闲期限，避免使用中的线程被回收。
+   * @returns 无返回值。
+   */
+  private cancelIdleTimer(): void {
+    if (this.idleTimer) clearTimeout(this.idleTimer)
+    this.idleTimer = null
+  }
+
+  /**
+   * 从最后一个请求结束时开始计时，超时仅释放内存中的引擎。
+   * @returns 无返回值。
+   */
+  private scheduleIdleRelease(): void {
+    this.cancelIdleTimer()
+    if (this.activeRequests || this.status !== 'ready') return
+    this.idleTimer = setTimeout(() => this.destroyWorker(), IDLE_TIMEOUT_MS)
+    this.idleTimer.unref()
   }
 
   private areResourcesReady(): boolean {
     return RESOURCE_FILES.every((f) => fs.existsSync(path.join(this.translationDir, f.name)))
   }
 
+  /**
+   * 下载缺少的离线资源，只在文件写入完成后发布最终文件名。
+   * @returns 全部资源可用后结束的 Promise。
+   * @throws 资源无法下载或写入时拒绝。
+   */
   private async downloadResources(): Promise<void> {
     if (!fs.existsSync(this.translationDir)) {
       fs.mkdirSync(this.translationDir, { recursive: true })
@@ -206,13 +266,13 @@ class TranslationManager {
       if (fs.existsSync(filePath)) continue
 
       console.log(`[Translation] 下载: ${file.name}`)
+      // 重启时不把上一次中断的下载识别为可直接加载的模型。
+      const partialPath = filePath + '.part'
       try {
-        await this.downloadResource(file.url, filePath)
+        await this.downloadResource(file.url, partialPath)
+        fs.renameSync(partialPath, filePath)
       } catch (error) {
-        // 下载失败时清理已下载的部分文件
-        if (fs.existsSync(filePath)) {
-          fs.unlinkSync(filePath)
-        }
+        fs.rmSync(partialPath, { force: true })
         throw new Error(
           `下载 ${file.name} 失败: ${error instanceof Error ? error.message : '未知错误'}`
         )
@@ -221,7 +281,11 @@ class TranslationManager {
   }
 
   /**
-   * 使用 Node.js 原生 https 下载资源（避免 Electron net 模块附加额外请求头）
+   * 下载资源并等待文件流完整结束。
+   * @param url 资源地址。
+   * @param filePath 本地目标文件。
+   * @returns 资源写入完成的 Promise。
+   * @throws 网络或文件流出错时拒绝。
    */
   private downloadResource(url: string, filePath: string): Promise<void> {
     return new Promise((resolve, reject) => {
@@ -231,58 +295,46 @@ class TranslationManager {
           (response.statusCode === 301 || response.statusCode === 302) &&
           response.headers.location
         ) {
+          response.resume()
           this.downloadResource(response.headers.location, filePath).then(resolve, reject)
           return
         }
 
         if (response.statusCode !== 200) {
+          response.resume()
           reject(new Error(`HTTP ${response.statusCode}`))
           return
         }
 
-        const fileStream = fs.createWriteStream(filePath)
-        response.pipe(fileStream)
-        fileStream.on('finish', () => {
-          fileStream.close()
-          resolve()
-        })
-        fileStream.on('error', reject)
+        // 流中断时让下载方清理残缺文件，下次请求可重试。
+        pipeline(response, fs.createWriteStream(filePath)).then(resolve, reject)
       })
       request.on('error', reject)
     })
   }
 
+  /**
+   * 启动翻译线程并监听当前实例的回复和异常退出。
+   * @returns WASM 引擎初始化完成的 Promise。
+   * @throws Worker 无法创建或 WASM 初始化失败时拒绝。
+   */
   private async createWorker(): Promise<void> {
-    this.destroyWorker()
-
-    const workerPath = path.join(this.translationDir, 'translator-worker.js')
-    this.worker = new Worker(workerPath)
-
-    this.worker.on('message', (msg: { id: number; result?: any; error?: any }) => {
+    const worker = new Worker(path.join(this.translationDir, 'translator-worker.js'))
+    this.worker = worker
+    worker.on('message', (msg: { id: number; result?: any; error?: any }) => {
       const pending = this.pendingMessages.get(msg.id)
-      if (pending) {
-        this.pendingMessages.delete(msg.id)
-        if (msg.error) {
-          pending.reject(new Error(msg.error.message || 'Worker error'))
-        } else {
-          pending.resolve(msg.result)
-        }
-      }
+      if (!pending || this.worker !== worker) return
+      this.pendingMessages.delete(msg.id)
+      if (msg.error) pending.reject(new Error(msg.error.message || 'Worker 错误'))
+      else pending.resolve(msg.result)
     })
-
-    this.worker.on('error', (err) => {
-      console.error('[Translation] Worker 错误:', err)
-      this.status = 'error'
-      this.errorMessage = err.message
+    // 主动回收后旧实例的退出事件不能改写新引擎状态。
+    worker.on('error', (error) => {
+      if (this.worker === worker) this.failWorker(error)
     })
-
-    this.worker.on('exit', (code) => {
-      if (code !== 0) {
-        console.error(`[Translation] Worker 异常退出 (code: ${code})`)
-      }
-      this.worker = null
+    worker.on('exit', (code) => {
+      if (this.worker === worker) this.failWorker(new Error(`翻译线程意外退出 (${code})`))
     })
-
     // 初始化 WASM 模块
     await this.sendWorkerMessage('initialize', [{ cacheSize: 0 }])
   }
@@ -322,33 +374,60 @@ class TranslationManager {
     return patchedContent
   }
 
-  private async loadModel(): Promise<void> {
-    const modelBuffer = fs.readFileSync(
-      path.join(this.translationDir, 'model.enzh.intgemm.alphas.bin')
-    )
-    const lexBuffer = fs.readFileSync(path.join(this.translationDir, 'lex.50.50.enzh.s2t.bin'))
-    const srcVocabBuffer = fs.readFileSync(path.join(this.translationDir, 'srcvocab.enzh.spm'))
-    const trgVocabBuffer = fs.readFileSync(path.join(this.translationDir, 'trgvocab.enzh.spm'))
-
-    // 将 Node.js Buffer 转为 ArrayBuffer
-    const toArrayBuffer = (buf: Buffer): ArrayBuffer => {
-      const ab = new ArrayBuffer(buf.byteLength)
-      const view = new Uint8Array(ab)
-      view.set(buf)
-      return ab
+  /**
+   * 读取可独占转移的文件缓冲，遇到共享池或不可转移的内存时仅复制有效范围。
+   * @param name 模型目录内的资源文件名。
+   * @returns 可放入 Worker 转移列表的完整 ArrayBuffer。
+   * @throws 资源读取失败时抛出文件系统错误。
+   */
+  private readModelBuffer(name: string): ArrayBuffer {
+    const bytes = fs.readFileSync(path.join(this.translationDir, name))
+    const backing = bytes.buffer
+    if (
+      backing instanceof ArrayBuffer &&
+      bytes.byteOffset === 0 &&
+      bytes.byteLength === backing.byteLength &&
+      !isMarkedAsUntransferable(backing)
+    ) {
+      return backing
     }
-
-    await this.sendWorkerMessage('loadTranslationModel', [
-      { from: 'en', to: 'zh' },
-      {
-        model: toArrayBuffer(modelBuffer),
-        shortlist: toArrayBuffer(lexBuffer),
-        vocabs: [toArrayBuffer(srcVocabBuffer), toArrayBuffer(trgVocabBuffer)]
-      }
-    ])
+    return Uint8Array.from(bytes).buffer
   }
 
-  private sendWorkerMessage(name: string, args: any[]): Promise<any> {
+  /**
+   * 将模型、词表和词典一次移交给 Worker，主线程不保留副本。
+   * @returns Worker 完成模型加载的 Promise。
+   * @throws 文件读取或模型加载失败时拒绝。
+   */
+  private async loadModel(): Promise<void> {
+    const model = this.readModelBuffer('model.enzh.intgemm.alphas.bin')
+    const shortlist = this.readModelBuffer('lex.50.50.enzh.s2t.bin')
+    const vocabs = ['srcvocab.enzh.spm', 'trgvocab.enzh.spm'].map((name) =>
+      this.readModelBuffer(name)
+    )
+    await this.sendWorkerMessage(
+      'loadTranslationModel',
+      [
+        { from: 'en', to: 'zh' },
+        { model, shortlist, vocabs }
+      ],
+      [model, shortlist, ...vocabs]
+    )
+  }
+
+  /**
+   * 跟踪请求直至收到回复、线程退出或超时。
+   * @param name Worker 协议方法名。
+   * @param args 方法参数。
+   * @param transferList 放弃主线程所有权的缓冲区。
+   * @returns Worker 回复的结果。
+   * @throws 发送失败、超时或线程报告错误时拒绝。
+   */
+  private sendWorkerMessage(
+    name: string,
+    args: any[],
+    transferList: ArrayBuffer[] = []
+  ): Promise<any> {
     return new Promise((resolve, reject) => {
       if (!this.worker) {
         reject(new Error('Worker 未初始化'))
@@ -376,13 +455,41 @@ class TranslationManager {
         }
       })
 
-      this.worker.postMessage({ id, name, args })
+      // 同步序列化失败时同样撤销定时器和待处理请求。
+      try {
+        this.worker.postMessage({ id, name, args }, transferList)
+      } catch (error) {
+        clearTimeout(timeout)
+        this.pendingMessages.delete(id)
+        reject(error)
+      }
     })
   }
 
+  /**
+   * 回收发生异常的引擎，并保留可展示的失败原因。
+   * @param error 初始化或线程运行期间的异常。
+   * @returns 无返回值。
+   */
+  private failWorker(error: unknown): void {
+    this.destroyWorker()
+    this.status = 'error'
+    this.errorMessage = error instanceof Error ? error.message : String(error)
+    console.error('[Translation]', this.errorMessage)
+  }
+
+  /**
+   * 使旧初始化失效并结清待处理请求，保留用户开关和磁盘文件。
+   * @returns 无返回值。
+   */
   private destroyWorker(): void {
+    this.cancelIdleTimer()
+    this.generation++
+    this.initialization = null
+    this.status = 'idle'
+    this.errorMessage = ''
     if (this.worker) {
-      this.worker.terminate()
+      void this.worker.terminate()
       this.worker = null
     }
     // 拒绝所有待处理的消息
@@ -392,12 +499,17 @@ class TranslationManager {
     this.pendingMessages.clear()
   }
 
+  /**
+   * 注册引擎查询及显式预热接口，预热也遵循相同的空闲回收期限。
+   * @returns 无返回值。
+   */
   private setupIPC(): void {
     ipcMain.handle('translation:get-status', () => this.getStatus())
 
     ipcMain.handle('translation:download-and-init', async () => {
       try {
-        await this.initializeTranslator()
+        await this.ensureReady()
+        this.scheduleIdleRelease()
         return { success: true }
       } catch (error) {
         return {

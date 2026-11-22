@@ -1,4 +1,5 @@
-import { BrowserWindow, ipcMain, type IpcMainInvokeEvent } from 'electron'
+import { MainWindowClient, type MainWindowSource } from '../../common/mainWindowClient'
+import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 import type { PluginManager } from '../../managers/pluginManager'
 import databaseAPI from '../shared/database'
 import {
@@ -30,17 +31,16 @@ const PERMISSIONS_CHANGED_CHANNEL = 'internal-api-permissions-changed'
  * 另一侧面向设置插件：审批申请、维护按通道授权名单。
  * 新申请写入后会立即触发授权弹窗供用户当场处理。
  */
-class PluginInternalApiPermissionsAPI {
+class PluginInternalApiPermissionsAPI extends MainWindowClient {
   private pluginManager: PluginManager | null = null
-  private mainWindow: BrowserWindow | null = null
 
   /**
    * 初始化模块并注册 IPC 通道。
-   * @param mainWindow 主窗口实例，用于权限变化时通知界面刷新
+   * @param mainWindow 主窗口实例或当前宿主提供器。
    * @param pluginManager 插件管理器实例，用于识别调用插件身份
    * @returns 无返回值
    */
-  public init(mainWindow: BrowserWindow, pluginManager: PluginManager): void {
+  public init(mainWindow: MainWindowSource, pluginManager: PluginManager): void {
     this.mainWindow = mainWindow
     this.pluginManager = pluginManager
     // 授权弹窗的动作回调复用本模块的审批逻辑，保证弹窗与设置页行为一致。

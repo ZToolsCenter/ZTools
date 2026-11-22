@@ -2,9 +2,10 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useToast } from '@/components'
 import type { PluginUninstallOptions, TabId } from '@/components'
-import { compareVersions, upgradeInstalledPluginFromMarket, weightedSearch } from '@/utils'
+import { compareVersions, weightedSearch } from '@/utils'
 import { PluginDetail, PluginCard, CategoryCard, CategoryDetail, RefreshButton } from './components'
-import type { Plugin, CategoryInfo, CategoryLayoutSection, PluginDownloadState } from './components'
+import type { Plugin, CategoryInfo, CategoryLayoutSection } from './components'
+import { useMarketPluginActions } from '@/composables/useMarketPluginActions'
 import { useJumpFunction, useZtoolsSubInput } from '@/composables'
 import { PluginMarketSettingJumpFunction } from '@/views/PluginMarketSetting/PluginMarketSetting'
 import { getMarketCategoryIcon } from './marketAssets'
@@ -71,11 +72,15 @@ const storefrontSections = ref<StorefrontSection[]>([])
 const storefrontCategories = ref<Record<string, CategoryInfo>>({})
 const categoryLayouts = ref<Record<string, CategoryLayoutSection[]>>({})
 const isLoading = ref(false)
-const installingPlugin = ref<string | null>(null)
-const isCancellingUpgrade = ref(false)
-const downloadStates = ref<Record<string, PluginDownloadState | undefined>>({})
+const {
+  installingPlugin,
+  downloadStates,
+  upgradePlugin,
+  installPlugin,
+  cancelDownload,
+  openPlugin: handleOpenPlugin
+} = useMarketPluginActions()
 const bannerActiveIndexes = ref<Record<string, number>>({})
-let stopDownloadProgressListener: (() => void) | undefined
 let bannerTimer: ReturnType<typeof window.setInterval> | undefined
 
 const { value: searchQuery, setSubInput } = useZtoolsSubInput('', '搜索插件市场...')
@@ -284,28 +289,6 @@ function closeCategoryDetail(): void {
   selectedCategory.value = null
 }
 
-async function handleOpenPlugin(plugin: Plugin): Promise<void> {
-  if (!plugin.path) {
-    error('无法打开插件: 路径未知')
-    return
-  }
-  try {
-    const result = await window.ztools.internal.launch({
-      path: plugin.path,
-      type: 'plugin',
-      name: plugin.title || plugin.name,
-      param: {}
-    })
-
-    if (result && !result.success) {
-      error(`无法打开插件: ${result.error || '未知错误'}`)
-    }
-  } catch (err: unknown) {
-    console.error('打开插件失败:', err)
-    error(`打开插件失败: ${err instanceof Error ? err.message : '未知错误'}`)
-  }
-}
-
 /**
  * 在系统文件管理器中显示已安装插件的位置。
  * @param plugin 要显示目录的插件信息
@@ -341,18 +324,7 @@ async function handleUpgradePlugin(plugin: Plugin): Promise<void> {
   // 下载可取消，安装阶段保持原子发布，不允许中断。
   const currentState = downloadStates.value[plugin.name]
   if (installingPlugin.value === plugin.name && currentState?.status === 'downloading') {
-    if (isCancellingUpgrade.value) return
-    isCancellingUpgrade.value = true
-    try {
-      const result = await window.ztools.internal.cancelPluginMarketDownload(
-        currentState.taskId || plugin.name
-      )
-      if (!result.success) error(`取消下载失败: ${result.error || '未知错误'}`)
-    } catch (err: unknown) {
-      error(`取消下载失败: ${err instanceof Error ? err.message : '未知错误'}`)
-    } finally {
-      isCancellingUpgrade.value = false
-    }
+    await cancelDownload(plugin.name)
     return
   }
   if (installingPlugin.value) return
@@ -371,13 +343,8 @@ async function handleUpgradePlugin(plugin: Plugin): Promise<void> {
   // 确认期间可能启动了其他安装，避免重复创建任务。
   if (!confirmUpgrade || installingPlugin.value) return
 
-  installingPlugin.value = plugin.name
-  setDownloadState(plugin.name, { status: 'downloading', progress: null })
   try {
-    const upgradeResult = await upgradeInstalledPluginFromMarket(
-      { name: plugin.name, path: plugin.path },
-      plugin
-    )
+    const upgradeResult = await upgradePlugin({ name: plugin.name, path: plugin.path }, plugin)
     if (upgradeResult.success) {
       plugin.installed = true
       plugin.localVersion = plugin.version
@@ -392,92 +359,28 @@ async function handleUpgradePlugin(plugin: Plugin): Promise<void> {
     console.error('升级出错:', err)
     error(`升级出错: ${err instanceof Error ? err.message : '未知错误'}`)
     await fetchPlugins()
-  } finally {
-    // 安装流程结束后恢复升级箭头，取消不改变已安装的旧版本。
-    installingPlugin.value = null
-    clearDownloadState(plugin.name)
   }
 }
 
-function setDownloadState(pluginName: string, state: PluginDownloadState): void {
-  downloadStates.value = {
-    ...downloadStates.value,
-    [pluginName]: state
-  }
-}
-
-function clearDownloadState(pluginName: string, taskId?: string): void {
-  const currentState = downloadStates.value[pluginName]
-  if (taskId && currentState?.taskId && currentState.taskId !== taskId) return
-
-  const nextStates = { ...downloadStates.value }
-  delete nextStates[pluginName]
-  downloadStates.value = nextStates
-}
-
-function handleDownloadProgress(payload: PluginDownloadState & { pluginName: string }): void {
-  if (!payload.pluginName) return
-
-  setDownloadState(payload.pluginName, {
-    taskId: payload.taskId,
-    status: payload.status,
-    progress: payload.progress,
-    receivedBytes: payload.receivedBytes,
-    totalBytes: payload.totalBytes,
-    error: payload.error
-  })
-
-  if (
-    payload.status === 'success' ||
-    payload.status === 'error' ||
-    payload.status === 'cancelled'
-  ) {
-    window.setTimeout(() => clearDownloadState(payload.pluginName, payload.taskId), 300)
-  }
-}
-
+/**
+ * 从市场卡片或详情下载插件，重复点击下载中的按钮可取消。
+ * @param plugin 用户操作的市场条目。
+ * @returns 下载或取消请求结束的 Promise。
+ */
 async function downloadPlugin(plugin: Plugin): Promise<void> {
-  const currentState = downloadStates.value[plugin.name]
-  if (currentState?.status === 'downloading') {
-    const cancelResult = await window.ztools.internal.cancelPluginMarketDownload(
-      currentState.taskId || plugin.name
-    )
-    if (!cancelResult.success) {
-      error(`取消下载失败: ${cancelResult.error || '未知错误'}`)
-    }
+  if (downloadStates.value[plugin.name]?.status === 'downloading') {
+    await cancelDownload(plugin.name)
     return
   }
-
-  if (installingPlugin.value) return
-
-  installingPlugin.value = plugin.name
-  setDownloadState(plugin.name, {
-    status: 'downloading',
-    progress: null
-  })
-
   try {
-    const result = await window.ztools.internal.installPluginFromMarket(
-      JSON.parse(JSON.stringify(plugin))
-    )
-    if (result.success) {
-      plugin.installed = true
-      plugin.localVersion = plugin.version
-      if (result.plugin && result.plugin.path) {
-        plugin.path = result.plugin.path
-      }
-    } else if (result.cancelled) {
-      clearDownloadState(plugin.name)
-    } else {
-      console.error('插件安装失败:', result.error)
-      error(`安装失败: ${result.error}`)
-    }
-  } catch (err: unknown) {
-    console.error('安装出错:', err)
-    error(`安装出错: ${err instanceof Error ? err.message : '未知错误'}`)
-  } finally {
-    installingPlugin.value = null
-    clearDownloadState(plugin.name)
+    const result = await installPlugin(plugin)
+    if (!result) return
+    // 安装成功后使用宿主正式注册的路径切换为打开按钮。
+    plugin.installed = true
+    plugin.localVersion = plugin.version
+    if (result.plugin?.path) plugin.path = result.plugin.path
+  } catch (err) {
+    error(err instanceof Error ? err.message : '安装失败')
   }
 }
 
@@ -605,8 +508,6 @@ useJumpFunction<PluginMarketSettingJumpFunction>((state) => {
 onMounted(() => {
   fetchPlugins()
   bannerTimer = window.setInterval(rotateBanners, 5000)
-  stopDownloadProgressListener =
-    window.ztools.internal.onPluginMarketDownloadProgress(handleDownloadProgress)
   window.addEventListener('keydown', handleKeydown, true)
 })
 
@@ -614,7 +515,6 @@ onUnmounted(() => {
   if (bannerTimer) {
     window.clearInterval(bannerTimer)
   }
-  stopDownloadProgressListener?.()
   window.removeEventListener('keydown', handleKeydown, true)
 })
 </script>

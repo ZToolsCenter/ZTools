@@ -535,6 +535,15 @@ async function handleKeydown(event: KeyboardEvent): Promise<void> {
 
 // 初始化
 onMounted(async () => {
+  // 在首次同步空输入前取回休眠快照，沿用原有的自动清空时间判断。
+  const snapshot = await window.ztools.takeSleepingSearch()
+  if (snapshot) {
+    searchQuery.value = snapshot.searchQuery
+    pastedImageData.value = snapshot.pastedImage
+    pastedTextData.value = snapshot.pastedText
+    pastedFilesData.value = snapshot.pastedFiles
+    windowStore.lastShowTime = snapshot.lastShownAt
+  }
   syncLaunchContext()
 
   // 从 store 加载设置和应用数据
@@ -970,6 +979,7 @@ onMounted(async () => {
 
   // 全局键盘事件监听
   window.addEventListener('keydown', handleKeydown)
+  window.ztools.mainSearchReady()
 })
 
 // 清理

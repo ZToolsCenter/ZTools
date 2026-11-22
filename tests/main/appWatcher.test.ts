@@ -89,7 +89,7 @@ afterEach(() => {
 
 describe('AppWatcher 双 watcher 接线', () => {
   it('启动递归（depth:5）与扁平（depth:0）两个 watcher', () => {
-    appWatcher.init({} as never)
+    appWatcher.init()
 
     const watchMock = vi.mocked(chokidar.watch)
     expect(watchMock).toHaveBeenCalledTimes(2)
@@ -106,14 +106,14 @@ describe('AppWatcher 双 watcher 接线', () => {
   it('扁平根路径为空时（非 win32，如 darwin）不创建扁平 watcher', () => {
     // getFlatRootWatchPaths 仅 win32 返回非空；其余平台为 []，命中 startWatching 的 length>0 守卫
     Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
-    appWatcher.init({} as never)
+    appWatcher.init()
     const watchMock = vi.mocked(chokidar.watch)
     // 仅创建递归 watcher；扁平 watcher 因路径为空而跳过
     expect(watchMock).toHaveBeenCalledTimes(1)
   })
 
   it('.lnk add/unlink 事件路由到防抖 notifyChange → refreshAppsCache', () => {
-    appWatcher.init({} as never)
+    appWatcher.init()
 
     const watchMock = vi.mocked(chokidar.watch)
     const flatWatcher = watchMock.mock.results[1].value as {
@@ -137,7 +137,7 @@ describe('AppWatcher 双 watcher 接线', () => {
   })
 
   it('UWP 包变化完成事件经过防抖后刷新应用缓存', () => {
-    appWatcher.init({} as never)
+    appWatcher.init()
 
     expect(uwpMonitorMock.start).toHaveBeenCalledTimes(1)
     expect(appsAPI.refreshAppsCacheIfUwpPackagesChanged).toHaveBeenCalledTimes(1)
@@ -159,7 +159,7 @@ describe('AppWatcher 双 watcher 接线', () => {
   })
 
   it('同一防抖窗口内快捷方式变化优先于 UWP 独立刷新', () => {
-    appWatcher.init({} as never)
+    appWatcher.init()
     const watchMock = vi.mocked(chokidar.watch)
     const flatWatcher = watchMock.mock.results[1].value as {
       __emit: (event: string, ...args: unknown[]) => void
@@ -177,7 +177,7 @@ describe('AppWatcher 双 watcher 接线', () => {
   })
 
   it('非 .lnk 文件事件不触发刷新', () => {
-    appWatcher.init({} as never)
+    appWatcher.init()
     const watchMock = vi.mocked(chokidar.watch)
     const flatWatcher = watchMock.mock.results[1].value as {
       __emit: (event: string, ...args: unknown[]) => void
@@ -189,7 +189,7 @@ describe('AppWatcher 双 watcher 接线', () => {
   })
 
   it('stop 关闭两个 watcher', () => {
-    appWatcher.init({} as never)
+    appWatcher.init()
     const watchMock = vi.mocked(chokidar.watch)
     const recursiveWatcher = watchMock.mock.results[0].value as { close: ReturnType<typeof vi.fn> }
     const flatWatcher = watchMock.mock.results[1].value as { close: ReturnType<typeof vi.fn> }

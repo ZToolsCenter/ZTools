@@ -1,3 +1,4 @@
+import { MainWindowClient, type MainWindowSource } from '../../common/mainWindowClient'
 import { ipcMain, Notification } from 'electron'
 import type { PluginManager } from '../../managers/pluginManager'
 import windowManager from '../../managers/windowManager'
@@ -7,11 +8,16 @@ import { pluginFeatureAPI } from './feature'
 /**
  * 插件跳转API - 插件专用
  */
-export class PluginRedirectAPI {
-  private mainWindow: Electron.BrowserWindow | null = null
+export class PluginRedirectAPI extends MainWindowClient {
   private pluginManager: PluginManager | null = null
 
-  public init(mainWindow: Electron.BrowserWindow, pluginManager: PluginManager): void {
+  /**
+   * 绑定主窗口来源，初始化本模块的宿主服务。
+   * @param mainWindow 主窗口实例或当前宿主提供器。
+   * @param pluginManager 管理插件视图与生命周期的实例。
+   * @returns 无返回值。
+   */
+  public init(mainWindow: MainWindowSource, pluginManager: PluginManager): void {
     this.mainWindow = mainWindow
     this.pluginManager = pluginManager
     this.setupIPC()
@@ -35,7 +41,7 @@ export class PluginRedirectAPI {
   private redirectToSettingPage(router: string, name: string, payload?: string): boolean {
     try {
       this.toSearchPage()
-      this.mainWindow?.webContents.send('ipc-launch', {
+      this.sendToSearch('ipc-launch', {
         path: this.getSettingPluginPath(),
         type: 'plugin',
         featureCode: `ui.router?router=${router}`,
@@ -224,7 +230,21 @@ export class PluginRedirectAPI {
     this.toSearchPage()
 
     // 发送 ipc-launch 到渲染进程
-    this.mainWindow?.webContents.send('ipc-launch', launchOptions)
+    this.sendToSearch('ipc-launch', launchOptions)
+  }
+
+  /**
+   * 将跳转消息投递到就绪的宿主页，允许常驻插件在休眠期间发起跳转。
+   * @param channel 宿主页监听的跳转事件。
+   * @param data 本次跳转参数。
+   * @returns 无返回值。
+   */
+  private sendToSearch(channel: string, data: unknown): void {
+    if (windowManager.isMainWindowSleeping()) {
+      void windowManager.ensureMainWindowReady().then((win) => win?.webContents.send(channel, data))
+    } else {
+      this.mainWindow?.webContents.send(channel, data)
+    }
   }
 
   private toSearchPage(): void {
@@ -243,7 +263,7 @@ export class PluginRedirectAPI {
     this.toSearchPage()
 
     // 然后再发送跳转搜索的事件
-    this.mainWindow?.webContents.send('redirect-search', {
+    this.sendToSearch('redirect-search', {
       cmdName,
       payload
     })

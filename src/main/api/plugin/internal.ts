@@ -1,3 +1,4 @@
+import { MainWindowClient, type MainWindowSource } from '../../common/mainWindowClient'
 import { app, dialog, IpcMainInvokeEvent, ipcMain } from 'electron'
 import type { PluginManager } from '../../managers/pluginManager'
 import windowManager from '../../managers/windowManager.js'
@@ -34,6 +35,7 @@ import { normalizeSearchWallpaperConfig, type SearchWallpaperConfig } from '@sha
 import { registerInternalApiChannel } from '../../core/internalPlugins'
 import { getScheduledTaskService } from '../../core/scheduledTasks/runtime'
 import type { ScheduledTaskDraft } from '@shared/scheduledTasks'
+import { getMarketInstallHistory } from '../../core/storage/marketInstallHistory'
 
 /**
  * 权限错误类
@@ -81,16 +83,16 @@ export function requireInternalPlugin(
  * 提供与主渲染进程相同的 API，但仅限内置插件调用
  * 采用转发策略：将内置插件的 API 调用转发到已有的 renderer API
  */
-export class InternalPluginAPI {
+export class InternalPluginAPI extends MainWindowClient {
   /** 当前用于鉴权和插件查询的插件管理器。 */
   private pluginManager: PluginManager | null = null
   /** 当前主窗口实例，供部分内部能力复用。 */
-  private mainWindow: Electron.BrowserWindow | null = null
 
   /**
    * 初始化内置插件专用 API，并注册对应的 IPC 通道。
+   * @returns 无返回值。
    */
-  public init(mainWindow: Electron.BrowserWindow, pluginManager: PluginManager): void {
+  public init(mainWindow: MainWindowSource, pluginManager: PluginManager): void {
     this.mainWindow = mainWindow
     this.pluginManager = pluginManager
     this.setupIPC()
@@ -373,6 +375,11 @@ export class InternalPluginAPI {
     this.handleInternal('internal:kill-plugin', async (event, pluginPath: string) => {
       this.requireApi(event, 'internal:kill-plugin')
       return pluginsAPI.killPlugin(pluginPath)
+    })
+
+    this.handleInternal('internal:get-market-install-history', (event) => {
+      this.requireApi(event, 'internal:get-market-install-history')
+      return getMarketInstallHistory()
     })
 
     this.handleInternal('internal:fetch-plugin-market', async (event) => {

@@ -1,3 +1,4 @@
+import { MainWindowClient, type MainWindowSource } from '../../common/mainWindowClient'
 import { ipcMain } from 'electron'
 import type { PluginManager } from '../../managers/pluginManager'
 import windowManager from '../../managers/windowManager'
@@ -6,11 +7,16 @@ import { getPluginInstanceContext } from '../../core/commands/pluginLaunchContex
 /**
  * 插件生命周期API - 插件专用
  */
-export class PluginLifecycleAPI {
+export class PluginLifecycleAPI extends MainWindowClient {
   private pluginManager: PluginManager | null = null
-  private mainWindow: Electron.BrowserWindow | null = null
 
-  public init(mainWindow: Electron.BrowserWindow, pluginManager: PluginManager): void {
+  /**
+   * 绑定主窗口来源，初始化本模块的宿主服务。
+   * @param mainWindow 主窗口实例或当前宿主提供器。
+   * @param pluginManager 管理插件视图与生命周期的实例。
+   * @returns 无返回值。
+   */
+  public init(mainWindow: MainWindowSource, pluginManager: PluginManager): void {
     this.pluginManager = pluginManager
     this.mainWindow = mainWindow
     this.setupIPC()

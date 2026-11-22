@@ -1,3 +1,4 @@
+import { MainWindowClient, type MainWindowSource } from '../../common/mainWindowClient'
 import { app, ipcMain, shell } from 'electron'
 import { promises as fs } from 'fs'
 import path from 'path'
@@ -27,11 +28,15 @@ const LOCAL_SHORTCUTS_KEY = 'local-shortcuts'
 /**
  * 本地启动 API - 主程序专用
  */
-export class LocalShortcutsAPI {
-  private mainWindow: Electron.BrowserWindow | null = null
+export class LocalShortcutsAPI extends MainWindowClient {
   private commandsCacheInvalidator: (() => void) | null = null
 
-  public init(mainWindow: Electron.BrowserWindow): void {
+  /**
+   * 绑定主窗口来源，初始化本模块的宿主服务。
+   * @param mainWindow 主窗口实例或当前宿主提供器。
+   * @returns 无返回值。
+   */
+  public init(mainWindow: MainWindowSource): void {
     this.mainWindow = mainWindow
     this.setupIPC()
   }
@@ -95,10 +100,6 @@ export class LocalShortcutsAPI {
     type: 'file' | 'folder'
   ): Promise<{ success: boolean; error?: string }> {
     try {
-      if (!this.mainWindow) {
-        return { success: false, error: '主窗口未初始化' }
-      }
-
       // 根据类型设置对话框属性
       let properties: Array<'openFile' | 'openDirectory'>
       if (type === 'folder') {

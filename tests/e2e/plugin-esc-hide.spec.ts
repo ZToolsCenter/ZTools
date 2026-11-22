@@ -339,11 +339,29 @@ test('插件保留在主窗口时，失焦唤醒会恢复顶部输入或插件�
     await expect.poll(() => readKeyboardTarget(electronApp!)).toBe('host')
     await input.fill('保留插件输入')
     await expect(input).toBeFocused()
+    // 焦点顺序优先输入，视觉上插件标签仍位于输入框左侧。
+    const tagRight = await page
+      .locator('.plugin-tag')
+      .evaluate((tag) => tag.getBoundingClientRect().right)
+    expect(tagRight).toBeLessThan(
+      await input.evaluate((element) => element.getBoundingClientRect().left)
+    )
 
+    // 记录过渡阶段，防止测试只看到恢复完成后的正确焦点。
+    const wakeFocusEvents = await page.evaluateHandle(() => {
+      const events: string[] = []
+      document.addEventListener('focusin', ({ target }) => {
+        if (target instanceof HTMLElement && target.matches('.plugin-tag-close, .search-input')) {
+          events.push(target.className)
+        }
+      })
+      return events
+    })
     await blurAndWakeMainWindow(electronApp)
     await expect.poll(() => readKeyboardTarget(electronApp!)).toBe('host')
     await expect(input).toBeFocused()
     await expect(input).toHaveValue('保留插件输入')
+    expect(await wakeFocusEvents.jsonValue()).not.toContain('plugin-tag-close')
 
     // 即使顶部输入框仍可见，也不能覆盖用户最后选择的插件正文焦点。
     expect(await executeInSettings(electronApp, 'window.ztools.subInputBlur()')).toBe(true)
@@ -351,6 +369,14 @@ test('插件保留在主窗口时，失焦唤醒会恢复顶部输入或插件�
     await blurAndWakeMainWindow(electronApp)
     await expect.poll(() => readKeyboardTarget(electronApp!)).toBe('plugin')
     await expect(input).toHaveValue('保留插件输入')
+
+    // 关闭按钮仍能获取键盘焦点，并可用 Enter 激活。
+    expect(await executeInSettings(electronApp, 'window.ztools.subInputFocus()')).toBe(true)
+    await expect(input).toBeFocused()
+    const closeButton = page.getByRole('button', { name: '返回搜索' })
+    await expect(closeButton).toHaveJSProperty('tabIndex', 0)
+    await closeButton.press('Enter')
+    await expect(page.locator('.plugin-tag')).toHaveCount(0)
   } finally {
     await electronApp?.close()
     await fs.rm(dataRoot, { recursive: true, force: true })

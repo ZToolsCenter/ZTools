@@ -133,6 +133,8 @@ const api = {
   }) => ipcRenderer.invoke('launch', options),
   launchAsAdmin: (appPath: string, name?: string) =>
     ipcRenderer.invoke('launch-as-admin', appPath, name),
+  takeSleepingSearch: () => ipcRenderer.invoke('take-sleeping-search'),
+  mainSearchReady: () => ipcRenderer.send('main-search-ready'),
   hideWindow: () => ipcRenderer.send('hide-window'),
   resizeWindow: (height: number) => ipcRenderer.send('resize-window', height),
   updateLaunchContext: (context: {
@@ -690,6 +692,8 @@ declare global {
         confirmDialog?: any
         launchSource?: 'search' | 'global-shortcut' | 'super-panel' | 'scheduled-task'
       }) => Promise<void>
+      takeSleepingSearch: () => Promise<import('@shared/mainWindowSleep').SleepingSearch | null>
+      mainSearchReady: () => void
       hideWindow: () => void
       resizeWindow: (height: number) => void
       onUpdateCompactMainWindowHeader: (callback: (enabled: boolean) => void) => () => void

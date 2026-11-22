@@ -5,6 +5,7 @@ import { useAccountProfile } from '@/composables'
 import { notifyAccountChanged } from '@/composables/useZToolsAccount'
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import MyPlugins from './MyPlugins.vue'
 
 const router = useRouter()
 const { success, error, warning, confirm } = useToast()
@@ -16,6 +17,7 @@ const {
 } = useAccountProfile()
 
 const loadingStats = ref(false)
+const showMyPlugins = ref(false)
 const editingNickname = ref(false)
 const nicknameInput = ref('')
 const updatingNickname = ref(false)
@@ -322,7 +324,12 @@ function formatBytes(value?: number): string {
 
 <template>
   <div class="content-panel">
-    <div v-if="loadingProfile" class="loading-state">加载中...</div>
+    <MyPlugins
+      v-if="showMyPlugins && accountProfile.loggedIn"
+      :key="username"
+      @back="showMyPlugins = false"
+    />
+    <div v-else-if="loadingProfile" class="loading-state">加载中...</div>
     <div v-else class="account-page">
       <section class="profile-overview">
         <button class="avatar-button" type="button" @click="changeAvatar">
@@ -374,6 +381,11 @@ function formatBytes(value?: number): string {
           </div>
         </div>
       </section>
+
+      <button class="plugins-entry info-item" type="button" @click="showMyPlugins = true">
+        <span>我的插件</span>
+        <span aria-hidden="true">›</span>
+      </button>
 
       <section class="security-section" aria-label="账号安全">
         <div class="security-row">
@@ -495,11 +507,30 @@ function formatBytes(value?: number): string {
 
 <style scoped>
 .content-panel {
+  position: relative;
   height: 100%;
   overflow-x: hidden;
   overflow-y: auto;
   padding: 20px;
   background: var(--bg-color);
+}
+
+.content-panel:has(.detail-panel) {
+  overflow: hidden;
+}
+
+.plugins-entry {
+  width: 100%;
+  background: transparent;
+  color: var(--text-color);
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.plugins-entry:hover {
+  color: var(--primary-color);
 }
 
 .account-page {

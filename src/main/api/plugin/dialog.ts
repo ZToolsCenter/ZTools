@@ -1,3 +1,4 @@
+import { MainWindowClient, type MainWindowSource } from '../../common/mainWindowClient'
 import { ipcMain, dialog, app } from 'electron'
 import fs from 'fs'
 import type { PluginManager } from '../../managers/pluginManager'
@@ -9,17 +10,16 @@ import windowManager from '../../managers/windowManager'
 /**
  * 对话框API - 插件专用
  */
-export class PluginDialogAPI {
-  private mainWindow: Electron.BrowserWindow | null = null
+export class PluginDialogAPI extends MainWindowClient {
   private pluginManager: PluginManager | null = null
 
   /**
    * 初始化对话框 API 并注册 IPC 处理器。
-   * @param mainWindow 主窗口
+   * @param mainWindow 主窗口实例或当前宿主提供器。
    * @param pluginManager 插件运行管理器（用于解析发起调用的插件名）
    * @returns 无返回值
    */
-  public init(mainWindow: Electron.BrowserWindow, pluginManager: PluginManager): void {
+  public init(mainWindow: MainWindowSource, pluginManager: PluginManager): void {
     this.mainWindow = mainWindow
     this.pluginManager = pluginManager
     this.setupIPC()

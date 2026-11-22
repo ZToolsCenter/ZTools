@@ -18,6 +18,10 @@ import LmdbDatabase from '../../src/main/core/lmdb/index'
 import { SyncCheckpointStore } from '../../src/main/core/sync/syncCheckpointStore'
 import { SyncClient, SYNC_PREFIXES } from '../../src/main/core/sync/syncClient'
 import { classifySyncError, SyncTaskStore } from '../../src/main/core/sync/syncTaskStore'
+import {
+  getMarketInstallHistory,
+  saveFirstMarketInstall
+} from '../../src/main/core/storage/marketInstallHistory'
 
 vi.mock('electron', () => ({
   app: { on: vi.fn() }
@@ -1938,5 +1942,58 @@ describe('同步系统集成测试（真实 LMDB）', () => {
       db.close()
       db2.close()
     })
+  })
+
+  it('两台离线设备同步我的插件后均保留首次安装时间', async () => {
+    const earlier = {
+      name: 'history-sync',
+      title: '历史同步测试',
+      installedOn: 'win32',
+      installedAt: '2025-01-01T00:00:00Z'
+    }
+    const later = { ...earlier, installedOn: 'darwin', installedAt: '2026-01-01T00:00:00Z' }
+    const legacy = { ...later, name: 'history-legacy', logo: 'https://example.test/icon.png' }
+    const a = makeTempDb()
+    const b = makeTempDb()
+    const clientA = new SyncClient(a)
+    const clientB = new SyncClient(b)
+    try {
+      // 让较晚安装的设备先连云端，验证结果不依赖推送顺序。
+      saveFirstMarketInstall(a, later)
+      saveFirstMarketInstall(b, earlier)
+      // 旧格式的记录也应完整出现在另一台设备上，且升级时沿用已有时间。
+      a.put({ _id: 'ZTOOLS/market-install-history/' + legacy.name, data: legacy })
+      saveFirstMarketInstall(a, { ...legacy, installedAt: new Date().toISOString() })
+      const config = {
+        enabled: true,
+        serverUrl: WS_URL,
+        username: 'lmdb-test-user',
+        token,
+        syncInterval: 30,
+        lastSyncTime: 0
+      }
+      clientA.start({ ...config, deviceId: 'history-mac' })
+      await waitForSyncClientState(clientA, 'live')
+      clientB.start({ ...config, deviceId: 'history-win' })
+      await waitForSyncClientState(clientB, 'live')
+      await waitUntil(() =>
+        getMarketInstallHistory(a).some(
+          (record) => record.name === earlier.name && record.installedAt === earlier.installedAt
+        )
+      )
+      expect(getMarketInstallHistory(b).filter((r) => r.name === earlier.name)).toEqual([earlier])
+      expect(getMarketInstallHistory(b)).toContainEqual(legacy)
+
+      // 已知首次安装后再更新，不应产生新的同步变更。
+      const seq = a.getLastSeq()
+      saveFirstMarketInstall(a, { ...later, installedAt: new Date().toISOString() })
+      expect(a.getLastSeq()).toBe(seq)
+      expect(getMarketInstallHistory(a).filter((r) => r.name === earlier.name)).toEqual([earlier])
+    } finally {
+      clientA.stop()
+      clientB.stop()
+      a.close()
+      b.close()
+    }
   })
 })

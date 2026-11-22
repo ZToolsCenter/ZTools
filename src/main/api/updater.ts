@@ -1,3 +1,4 @@
+import { MainWindowClient, type MainWindowSource } from '../common/mainWindowClient'
 import { app, BrowserWindow, dialog, ipcMain, screen, shell, type WebContents } from 'electron'
 import { is } from '@electron-toolkit/utils'
 import { getPreloadPath, getRendererPath } from '../utils/appBundlePath'
@@ -11,8 +12,7 @@ import { fetchLatestServerUpdate, resolvePlatformUpdateInfo } from './serverUpda
 
 const AUTO_CHECK_INTERVAL_MS = 30 * 60 * 1000
 
-export class UpdaterAPI {
-  private mainWindow: BrowserWindow | null = null
+export class UpdaterAPI extends MainWindowClient {
   private availableUpdateInfo: PlatformUpdateInfo | null = null
   private downloadedUpdateInfo: PlatformUpdateInfo | null = null
   private updateWindow: BrowserWindow | null = null
@@ -25,10 +25,10 @@ export class UpdaterAPI {
 
   /**
    * 初始化平台更新服务并注册更新窗口使用的 IPC。
-   * @param mainWindow 接收更新状态事件的主窗口。
+   * @param mainWindow 主窗口实例或当前宿主提供器。
    * @returns 无返回值。
    */
-  public init(mainWindow: BrowserWindow): void {
+  public init(mainWindow: MainWindowSource): void {
     this.mainWindow = mainWindow
     this.platformUpdater = createPlatformUpdater({
       onDownloadStart: (info) => this.sendUpdateEvent('update-download-start', info),

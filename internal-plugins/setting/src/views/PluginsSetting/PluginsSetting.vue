@@ -3,12 +3,12 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useToast, AdaptiveIcon } from '@/components'
 import type { PluginUninstallOptions } from '@/components'
 import { PluginDetail, NpmInstallPanel } from './components'
-import { compareVersions, upgradeInstalledPluginFromMarket, weightedSearch } from '@/utils'
+import { compareVersions, weightedSearch } from '@/utils'
 import { useJumpFunction, useZtoolsSubInput } from '@/composables'
 import { jumpFunctionPluginMarketSetting } from '@/views/PluginMarketSetting/PluginMarketSetting'
 import { useRouter } from 'vue-router'
 import PluginUpgradeButton from '@/components/common/PluginUpgradeButton.vue'
-import type { PluginDownloadState } from '@/components/common/PluginDetail/types'
+import { useMarketPluginActions } from '@/composables/useMarketPluginActions'
 import type { UpgradeResult } from '@/utils/pluginUpgrade'
 
 // const emit = defineEmits<{
@@ -33,10 +33,14 @@ const isCheckingMarketUpdates = ref(false)
 const isUpgradingAll = ref(false)
 // 单个插件升级期间串行处理升级请求，避免与批量更新重复安装。
 const upgradingPluginPath = ref<string | null>(null)
-const upgradingPluginName = ref<string | null>(null)
-const upgradeDownloadState = ref<PluginDownloadState>()
-const isCancellingUpgrade = ref(false)
-let stopDownloadProgressListener: (() => void) | undefined
+const {
+  installingPlugin,
+  downloadStates,
+  cancelling: isCancellingUpgrade,
+  cancelDownload,
+  upgradePlugin,
+  openPlugin
+} = useMarketPluginActions()
 // “全部更新”当前完成数（用于进度展示）
 const upgradeProgressDone = ref(0)
 // “全部更新”总任务数（用于进度展示）
@@ -241,34 +245,9 @@ async function checkMarketUpdates(): Promise<void> {
  * @returns 升级结果及失败原因。
  */
 async function upgradePluginToLatest(plugin: any): Promise<UpgradeResult> {
-  // 单个与批量升级共用当前任务标识，防止其他下载事件覆盖此行进度。
+  // 路径用于定位具体行；进度和取消统一由共享市场任务处理。
   upgradingPluginPath.value = plugin.path
-  upgradingPluginName.value = plugin.name
-  upgradeDownloadState.value = { status: 'downloading', progress: null }
-  try {
-    return await upgradeInstalledPluginFromMarket(
-      { name: plugin.name, path: plugin.path },
-      plugin.marketPlugin
-    )
-  } finally {
-    upgradingPluginName.value = null
-    upgradeDownloadState.value = undefined
-  }
-}
-
-/**
- * 将主进程下载与安装进度同步到当前升级按钮。
- * @param payload 市场安装流程发布的进度事件。
- * @returns 无返回值。
- */
-function handleUpgradeDownloadProgress(
-  payload: PluginDownloadState & { pluginName: string }
-): void {
-  // 仅接收当前任务的事件，避免已完成任务的迟到事件改变新任务进度。
-  if (payload.pluginName !== upgradingPluginName.value) return
-  if (upgradeDownloadState.value?.taskId && upgradeDownloadState.value.taskId !== payload.taskId)
-    return
-  upgradeDownloadState.value = payload
+  return upgradePlugin({ name: plugin.name, path: plugin.path }, plugin.marketPlugin)
 }
 
 /**
@@ -280,25 +259,15 @@ async function handleUpgradePlugin(plugin: any): Promise<void> {
   // 当前行再次点击用于取消下载；安装阶段不允许中断资源发布。
   if (
     upgradingPluginPath.value === plugin.path &&
-    upgradeDownloadState.value?.status === 'downloading'
+    downloadStates.value[plugin.name]?.status === 'downloading'
   ) {
-    if (isCancellingUpgrade.value) return
-    isCancellingUpgrade.value = true
-    try {
-      const result = await window.ztools.internal.cancelPluginMarketDownload(
-        upgradeDownloadState.value.taskId || plugin.name
-      )
-      if (!result.success) error(`取消下载失败: ${result.error || '未知错误'}`)
-    } catch (err: any) {
-      error(`取消下载失败: ${err.message || '未知错误'}`)
-    } finally {
-      isCancellingUpgrade.value = false
-    }
+    await cancelDownload(plugin.name)
     return
   }
   // 只允许有效的市场升级，并阻止重复点击或与批量更新并发。
   if (
     upgradingPluginPath.value ||
+    installingPlugin.value ||
     isUpgradingAll.value ||
     !plugin.hasUpdate ||
     !plugin.marketPlugin
@@ -336,7 +305,13 @@ async function handleUpgradePlugin(plugin: any): Promise<void> {
 async function handleUpgradeAllPlugins(): Promise<void> {
   const targets = upgradablePlugins.value
   // 单个升级未结束时不能再次覆盖安装同一批插件。
-  if (isUpgradingAll.value || upgradingPluginPath.value || targets.length === 0) return
+  if (
+    isUpgradingAll.value ||
+    upgradingPluginPath.value ||
+    installingPlugin.value ||
+    targets.length === 0
+  )
+    return
 
   const confirmed = await confirm({
     title: '全部更新插件',
@@ -346,7 +321,8 @@ async function handleUpgradeAllPlugins(): Promise<void> {
     cancelText: '取消'
   })
   // 确认框等待期间可能已触发单个升级，需要再次校验互斥状态。
-  if (!confirmed || isUpgradingAll.value || upgradingPluginPath.value) return
+  if (!confirmed || isUpgradingAll.value || upgradingPluginPath.value || installingPlugin.value)
+    return
 
   isUpgradingAll.value = true
   upgradeProgressDone.value = 0
@@ -556,29 +532,18 @@ async function handleKillAllPlugins(): Promise<void> {
   }
 }
 
-// 打开插件
+/**
+ * 检查插件启用状态并从插件中心启动本机插件。
+ * @param plugin 当前插件中心选中的本机插件。
+ * @returns 启动请求结束的 Promise。
+ */
 async function handleOpenPlugin(plugin: any): Promise<void> {
+  // 禁用项仍显示在列表中，需要先提示用户启用。
   if (isPluginDisabled(plugin.path)) {
     warning('插件已禁用，请先在设置中启用')
     return
   }
-
-  try {
-    const result = await window.ztools.internal.launch({
-      path: plugin.path,
-      type: 'plugin',
-      name: plugin.title || plugin.name, // 传递插件名称
-      param: {}
-    })
-
-    // 检查返回结果
-    if (result && !result.success) {
-      error(`无法打开插件: ${result.error || '未知错误'}`)
-    }
-  } catch (err: any) {
-    console.error('打开插件失败:', err)
-    error(`打开插件失败: ${err.message || '未知错误'}`)
-  }
+  await openPlugin(plugin)
 }
 
 // 打开插件目录
@@ -675,14 +640,10 @@ function handleClickOutside(e: MouseEvent): void {
 }
 
 /**
- * 初始化列表、进度订阅和页面交互监听。
+ * 初始化插件列表和页面交互监听。
  * @returns 初始化完成后结束的 Promise。
  */
 onMounted(async () => {
-  // 在加载列表之前订阅，确保首次升级不会漏掉下载起始事件。
-  stopDownloadProgressListener = window.ztools.internal.onPluginMarketDownloadProgress(
-    handleUpgradeDownloadProgress
-  )
   try {
     const data = await window.ztools.internal.dbGet(PINNED_PLUGINS_KEY)
     pinnedPluginPaths.value = Array.isArray(data) ? data : []
@@ -704,11 +665,10 @@ useJumpFunction((state) => {
 })
 
 /**
- * 离开页面时释放进度订阅和交互监听。
+ * 离开页面时释放键盘和点击监听。
  * @returns 无返回值。
  */
 onUnmounted(() => {
-  stopDownloadProgressListener?.()
   window.removeEventListener('keydown', handleKeydown, true)
   window.removeEventListener('click', handleClickOutside)
 })
@@ -869,6 +829,7 @@ async function handleInstallFromNpm(data: {
                   :disabled="
                     isUpgradingAll ||
                     !!upgradingPluginPath ||
+                    !!installingPlugin ||
                     isCheckingMarketUpdates ||
                     upgradablePluginsCount === 0
                   "
@@ -952,12 +913,12 @@ async function handleInstallFromNpm(data: {
                 :disabled="
                   upgradingPluginPath === plugin.path
                     ? isCancellingUpgrade
-                    : isUpgradingAll || !!upgradingPluginPath
+                    : isUpgradingAll || !!upgradingPluginPath || !!installingPlugin
                 "
                 :version="plugin.latestVersion"
                 :loading="upgradingPluginPath === plugin.path"
                 :download-state="
-                  upgradingPluginPath === plugin.path ? upgradeDownloadState : undefined
+                  upgradingPluginPath === plugin.path ? downloadStates[plugin.name] : undefined
                 "
                 @click.stop="handleUpgradePlugin(plugin)"
               />

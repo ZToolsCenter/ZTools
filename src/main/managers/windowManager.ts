@@ -33,6 +33,9 @@ import {
   resolveMainWindowHeaderHeight
 } from '../../shared/mainWindowLayout'
 
+import type { SleepingSearch } from '../../shared/mainWindowSleep'
+import { HiddenWindowSleep } from '../common/hiddenWindowSleep'
+
 // 窗口材质类型
 type WindowMaterial = 'mica' | 'acrylic' | 'none'
 const WINDOW_BLUR_DRAG_INPUT_CONSUMER = 'window-blur-drag'
@@ -64,6 +67,19 @@ interface AppShortcutLaunchContext {
  */
 class WindowManager {
   private mainWindow: BrowserWindow | null = null
+  private readonly sleep = new HiddenWindowSleep(() => this.destroyHiddenMainWindow())
+  /**
+   * 子窗口关闭后的下一轮事件循环中再检查父子关系。
+   * @returns 无返回值。
+   */
+  private readonly onSleepChildClosed = (): void => {
+    setImmediate(() => this.scheduleMainWindowSleep())
+  }
+  private sleeping = false
+  private restoring: Promise<BrowserWindow | null> | null = null
+  private wakeRequest = 0
+  private lastShownAt = Date.now()
+  private savedSearch: SleepingSearch | null = null
   private tray: Tray | null = null
   private trayMenu: Menu | null = null // 托盘菜单
   private currentShortcut = 'Option+Z' // 当前注册的快捷键
@@ -138,7 +154,8 @@ class WindowManager {
   }
 
   /**
-   * 通知渲染进程返回搜索页面
+   * 通知渲染进程返回搜索页面。
+   * @returns 无返回值。
    */
   public notifyBackToSearch(): void {
     this.mainWindow?.webContents.send('back-to-search')
@@ -350,6 +367,115 @@ class WindowManager {
   }
 
   /**
+   * 判断最后一个窗口消失是否由后台休眠触发。
+   * @returns 主进程应继续驻留时为 true。
+   */
+  public isMainWindowSleeping(): boolean {
+    return this.sleeping
+  }
+
+  /**
+   * 读取休眠前的搜索状态，恢复原有自动清空语义。
+   * @returns 休眠快照，普通启动时为 null。
+   */
+  public takeSleepingSearch(): SleepingSearch | null {
+    return this.savedSearch
+  }
+
+  /**
+   * 根据实际隐藏时长和最近保存的设置调整回收时间。
+   * @returns 无返回值。
+   */
+  public scheduleMainWindowSleep(): void {
+    this.sleep.refresh()
+  }
+
+  /**
+   * 达到隐藏期限后，在插件和子窗口已释放宿主时销毁搜索窗口。
+   * @returns 无返回值。
+   */
+  private destroyHiddenMainWindow(): void {
+    const win = this.mainWindow
+    if (!win || win.isDestroyed() || win.isVisible() || this.restoring || this.isQuitting) return
+    // 插件占位、已挂载插件和子窗口仍依附宿主，等其释放再回收。
+    if (pluginManager.getCurrentPluginPath()) return
+    const children = win.getChildWindows()
+    if (children.length) {
+      // 原生子窗口必须继续拥有父窗口；关闭后重新检查仍然有效的配置和隐藏时长。
+      for (const child of children) {
+        if (child.listeners('closed').includes(this.onSleepChildClosed)) continue
+        child.once('closed', this.onSleepChildClosed)
+      }
+      return
+    }
+    this.cancelAutoBackToSearchTimer()
+    this.savedSearch = { ...this.appShortcutLaunchContext, lastShownAt: this.lastShownAt }
+    this.sleeping = true
+    this.mainWindow = null
+    this.sleep.reset()
+    win.destroy()
+  }
+
+  /**
+   * 按需重建休眠的宿主；并发唤醒等待同一个页面装好事件监听。
+   * @returns 可接收搜索和插件指令的宿主；退出或加载失败时为 null。
+   */
+  public ensureMainWindowReady(): Promise<BrowserWindow | null> {
+    if (this.restoring) return this.restoring
+    if (this.isQuitting) return Promise.resolve(null)
+    if (!this.sleeping) return Promise.resolve(this.mainWindow)
+
+    let win: BrowserWindow
+    try {
+      win = this.createWindow()
+      api.bindRecreatedMainWindow(win)
+    } catch (error) {
+      // 回滚部分创建的宿主，保留休眠状态供下一次唤醒重试。
+      const incomplete = this.mainWindow
+      this.mainWindow = null
+      if (incomplete && !incomplete.isDestroyed()) incomplete.destroy()
+      console.error('[Window] 重建搜索窗口失败:', error)
+      return Promise.resolve(null)
+    }
+    // ready-to-show 可能早于 Vue 完成异步初始化，等待宿主页专属的就绪通知。
+    this.restoring = new Promise<BrowserWindow | null>((resolve) => {
+      /**
+       * 释放只属于本次恢复的监听和定时器，交付就绪窗口或回滚失败实例。
+       * @param ready 宿主页是否已安装完事件监听。
+       * @returns 无返回值。
+       */
+      const finish = (ready: boolean): void => {
+        clearTimeout(timeout)
+        win.removeListener('closed', failed)
+        if (!win.isDestroyed()) {
+          win.webContents.ipc.removeListener('main-search-ready', loaded)
+          win.webContents.removeListener('render-process-gone', failed)
+        }
+        this.restoring = null
+        this.sleeping = !ready
+        // 等页面恢复完成再释放快照，加载失败时允许重新读取。
+        if (ready) this.savedSearch = null
+        if (ready && !win.isVisible()) {
+          // 调用方可能只要求一个隐藏宿主，或在加载期间取消了唤醒。
+          this.sleep.hide()
+        }
+        if (!ready && this.mainWindow === win) {
+          this.mainWindow = null
+          if (!win.isDestroyed()) win.destroy()
+        }
+        resolve(ready ? win : null)
+      }
+      const loaded = (): void => finish(true)
+      const failed = (): void => finish(false)
+      const timeout = setTimeout(failed, 30000)
+      win.webContents.ipc.once('main-search-ready', loaded)
+      win.webContents.once('render-process-gone', failed)
+      win.once('closed', failed)
+    })
+    return this.restoring
+  }
+
+  /**
    * 创建主窗口
    *
    * @returns 创建完成的主窗口实例。
@@ -426,6 +552,25 @@ class WindowManager {
     if (platform.isWindows) {
       this.applyWindowMaterialFromSettings()
     }
+
+    // 生命周期以原生可见性为准，覆盖快捷键、失焦、插件和直接 hide()。
+    const host = this.mainWindow
+    host.on('hide', () => {
+      if (this.isPreparingMacSpace || this.mainWindow !== host) return
+      this.sleep.hide()
+    })
+    host.on('show', () => {
+      if (this.isPreparingMacSpace) return
+      this.sleep.reset()
+      this.lastShownAt = Date.now()
+    })
+    host.once('ready-to-show', () => {
+      if (host.isDestroyed() || host.isVisible() || this.restoring) return
+      this.sleep.hide()
+    })
+    // 每次重建都重新应用原窗口的透明度。
+    if (this.sleeping && settings?.opacity !== undefined)
+      host.setOpacity(Math.min(1, Math.max(0.3, settings.opacity)))
 
     // 禁用缩放功能
     this.mainWindow.webContents.setZoomFactor(1.0) // 重置缩放为 100%
@@ -832,10 +977,14 @@ class WindowManager {
   }
 
   /**
-   * 切换窗口显示/隐藏
+   * 切换窗口可见性，休眠时按需唤醒。
+   * @returns 无返回值。
    */
   private toggleWindow(): void {
-    if (!this.mainWindow) return
+    if (!this.mainWindow || this.restoring) {
+      this.showWindow()
+      return
+    }
 
     const isFocused = this.mainWindow.isFocused()
     const isVisible = this.mainWindow.isVisible()
@@ -866,8 +1015,15 @@ class WindowManager {
     }
   }
 
+  /**
+   * 按双击修饰键切换窗口，必要时先恢复搜索页。
+   * @returns 无返回值。
+   */
   private toggleWindowFromDoubleTap(): void {
-    if (!this.mainWindow) return
+    if (!this.mainWindow) {
+      this.showWindow()
+      return
+    }
 
     const willShow = !(this.mainWindow.isFocused() && this.mainWindow.isVisible())
     if (willShow) {
@@ -1070,9 +1226,19 @@ class WindowManager {
   }
 
   /**
-   * 显示窗口
+   * 恢复并显示主搜索窗口。
+   * @returns 无返回值。
    */
   public showWindow(): void {
+    // 多次呼出共用加载结果，重建期间的隐藏请求可以取消显示。
+    if (this.isQuitting) return
+    const request = ++this.wakeRequest
+    if (this.sleeping || this.restoring) {
+      void this.ensureMainWindowReady().then((win) => {
+        if (win && request === this.wakeRequest) this.showWindow()
+      })
+      return
+    }
     if (!this.mainWindow) return
 
     // 开始恢复焦点流程，防止 focus 事件监听器修改 lastFocusTarget
@@ -1114,6 +1280,7 @@ class WindowManager {
   public hideWindow(_restoreFocus: boolean = true): void {
     console.log('[Window] 隐藏窗口', _restoreFocus)
 
+    this.wakeRequest++
     const wasMainWindowVisible = this.mainWindow?.isVisible() === true
 
     // 只有主窗口实际显示过，才记录并恢复其隐藏前的焦点状态。
@@ -1508,9 +1675,11 @@ class WindowManager {
   }
 
   /**
-   * 显示设置页面
+   * 恢复宿主并显示设置页面。
+   * @returns 完成设置页调度后结束的 Promise。
    */
   public async showSettings(): Promise<void> {
+    if (this.sleeping) await this.ensureMainWindowReady()
     if (!this.mainWindow) return
 
     // 如果当前有插件在显示，先隐藏插件
@@ -1569,6 +1738,7 @@ class WindowManager {
     pluginName: string
   ): Promise<{ success: boolean; error?: string }> {
     const normalizedName = pluginName.trim()
+    if (this.sleeping) await this.ensureMainWindowReady()
     if (!this.mainWindow || !normalizedName) {
       return { success: false, error: '无效的插件名称' }
     }
@@ -1635,8 +1805,10 @@ class WindowManager {
    * 打开插件安装页面（用于 .zpx 文件关联双击打开）
    * 流程：激活应用 → 启动设置插件 → 导航到 PluginInstaller 页面 → 传入文件路径
    * @param zpxPath .zpx 文件路径
+   * @returns 安装页面启动完成后结束的 Promise。
    */
   public async openPluginInstaller(zpxPath: string): Promise<void> {
+    if (this.sleeping) await this.ensureMainWindowReady()
     if (!this.mainWindow) return
 
     console.log('[Window] 打开插件安装页面:', zpxPath)
