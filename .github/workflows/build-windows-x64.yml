@@ -1,0 +1,63 @@
+name: Build Windows x64
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Package Windows x64
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out git repository
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 10.33.0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      - name: Install plugin dependencies
+        working-directory: internal-plugins/setting
+        run: pnpm install --frozen-lockfile --ignore-workspace
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build and package
+        run: pnpm run build:win
+
+      - name: Verify release packages
+        shell: pwsh
+        run: |
+          if (-not (Test-Path 'dist/*-win-x64-setup.exe' -PathType Leaf)) {
+            throw 'Windows x64 installer is missing'
+          }
+          if (-not (Test-Path 'dist/*-win-x64.zip' -PathType Leaf)) {
+            throw 'Windows x64 portable package is missing'
+          }
+
+      - name: Upload Windows x64 packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: ztools-windows-x64
+          path: |
+            dist/*-win-x64-setup.exe
+            dist/*-win-x64.zip
+            dist/*-win-x64*.blockmap
+            dist/latest.yml
+          if-no-files-found: error
