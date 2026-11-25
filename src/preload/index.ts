@@ -3,6 +3,39 @@ import type { SearchWallpaperConfig } from '@shared/searchWallpaper'
 import type { AiRequestStatusChange } from '@shared/aiRequestStatus'
 import type { CommandServiceClient, PanelSearchSnapshot } from '@shared/commandService'
 import type { PluginMainWindowLaunchState } from '@shared/pluginLaunch'
+import type { MacWindowBackground } from '@shared/macWindowBackground'
+
+/**
+ * 为宿主文档应用两种主题各自设定的 macOS RGBA 背景色。
+ * @param background 主进程校验后的浅色和深色配置
+ * @returns 无返回值
+ */
+function applyMacWindowBackground(background: MacWindowBackground): void {
+  const { style } = document.documentElement
+  style.setProperty('--mac-window-background-light', background.light)
+  style.setProperty('--mac-window-background-dark', background.dark)
+}
+
+if (process.platform === 'darwin' && process.isMainFrame) {
+  window.addEventListener(
+    'DOMContentLoaded',
+    () => {
+      // 先订阅实时更新，避免延迟返回的初始化配置覆盖刚保存的颜色。
+      let updated = false
+      ipcRenderer.on('update-mac-window-background', (_event, background) => {
+        updated = true
+        applyMacWindowBackground(background)
+      })
+      void ipcRenderer
+        .invoke('get-mac-window-background')
+        .then((background) => {
+          if (!updated) applyMacWindowBackground(background)
+        })
+        .catch((error) => console.error('读取 macOS 窗口背景色失败:', error))
+    },
+    { once: true }
+  )
+}
 
 const commands: CommandServiceClient = {
   /**

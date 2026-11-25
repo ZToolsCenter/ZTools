@@ -91,6 +91,37 @@ test('可以启动主窗口、打开内置设置插件并截图', async ({}, tes
       body: settingsPluginScreenshot,
       contentType: 'image/png'
     })
+
+    // 从真实设置菜单打开关于页，确认标签与主进程实际运行的 Electron 版本一致。
+    const { settingsContentsId, runtimeElectronVersion } = await electronApp.evaluate(
+      async ({ webContents }) => {
+        const pluginContents = webContents
+          .getAllWebContents()
+          .find((contents) => contents.getURL().startsWith('http://127.0.0.1:15177'))
+        if (!pluginContents) throw new Error('未找到设置插件 WebContentsView')
+        await pluginContents.executeJavaScript(`
+          Array.from(document.querySelectorAll('.menu-item'))
+            .find((item) => item.textContent.trim() === '关于').click()
+        `)
+        return {
+          settingsContentsId: pluginContents.id,
+          runtimeElectronVersion: process.versions.electron
+        }
+      }
+    )
+    await expect
+      .poll(() =>
+        electronApp!.evaluate(
+          ({ webContents }, id) =>
+            webContents
+              .fromId(id)
+              ?.executeJavaScript(
+                "document.querySelector('.about-techs .tech-tag')?.textContent.trim()"
+              ),
+          settingsContentsId
+        )
+      )
+      .toBe(`Electron ${runtimeElectronVersion}`)
   } finally {
     // 无论断言是否成功，都关闭测试实例并清理明确创建的临时数据目录。
     await electronApp?.close()

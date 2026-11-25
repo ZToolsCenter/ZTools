@@ -1,5 +1,5 @@
 import { platform } from '@electron-toolkit/utils'
-import { app, BrowserWindow, session, webContents } from 'electron'
+import { app, BrowserWindow, ipcMain, session, webContents } from 'electron'
 import log from 'electron-log'
 import path from 'path'
 import lmdbInstance, { storageManager } from './core/lmdb/lmdbInstance'
@@ -27,6 +27,7 @@ import { loadInternalPlugins } from './core/internalPluginLoader'
 import pluginManager from './managers/pluginManager'
 import windowManager from './managers/windowManager'
 import superPanelManager from './core/superPanelManager'
+import { normalizeMacWindowBackground, type MacWindowBackground } from '@shared/macWindowBackground'
 
 const isE2ETest = process.env.ZTOOLS_E2E === '1'
 
@@ -34,9 +35,66 @@ const isE2ETest = process.env.ZTOOLS_E2E === '1'
 let pendingZpxFile: string | null = null
 let applicationInitialized = false
 
+/**
+ * 读取宿主窗口使用的 macOS 背景叠加色。
+ * @returns 当前设备的浅色和深色背景配置
+ */
+function readMacWindowBackground(): MacWindowBackground {
+  return normalizeMacWindowBackground(api.dbGet('settings-general')?.macWindowBackground)
+}
+
+/**
+ * 将 macOS 背景叠加色发送给当前打开的宿主窗口。
+ * @param background 当前需要显示的两套主题色值
+ * @returns 无返回值
+ */
+function broadcastMacWindowBackground(background: MacWindowBackground): void {
+  // 宿主窗口共用默认会话，插件页面的背景由插件自身控制。
+  for (const window of BrowserWindow.getAllWindows()) {
+    const contents = window.webContents
+    if (!contents.isDestroyed() && contents.session === session.defaultSession) {
+      contents.send('update-mac-window-background', background)
+    }
+  }
+}
+
+/**
+ * 预览、保存或取消预览指定主题的 macOS 背景叠加色。
+ * @param mode 要更新的主题
+ * @param color 新 RGBA 色值，传入 null 时恢复已保存的背景
+ * @param preview 是否仅更新窗口预览
+ * @returns 无返回值
+ * @throws 保存设备设置失败时抛出错误
+ */
+export function updateMacWindowBackground(
+  mode: keyof MacWindowBackground,
+  color: string | null,
+  preview: boolean
+): void {
+  if (!platform.isMacOS || (mode !== 'light' && mode !== 'dark')) return
+
+  // 每次以设备配置为基准，只更新当前主题，保留另一主题及其他设置。
+  const settings = api.dbGet('settings-general') ?? {}
+  const saved = normalizeMacWindowBackground(settings.macWindowBackground)
+  const background =
+    color === null ? saved : normalizeMacWindowBackground({ ...saved, [mode]: color })
+  if (preview || color === null) {
+    broadcastMacWindowBackground(background)
+    return
+  }
+
+  // 只在编辑完成时持久化，由设备变更监听通知窗口。
+  const result = api.dbPut('settings-general', { ...settings, macWindowBackground: background })
+  if (!result?.ok) {
+    broadcastMacWindowBackground(saved)
+    throw new Error(result?.message || result?.error || '窗口背景色保存失败')
+  }
+}
+
 // macOS 在 ready 事件前隐藏 Dock 图标，避免应用启动期间短暂显示。
 if (platform.isMacOS) {
   app.dock?.hide()
+  ipcMain.handle('get-mac-window-background', readMacWindowBackground)
 }
 
 app.on('second-instance', (_event, argv) => {
@@ -159,6 +217,7 @@ app.whenReady().then(async () => {
       if (docId !== 'ZTOOLS/settings-general') return
       windowManager.scheduleMainWindowSleep()
       superPanelManager.refreshSleepSettings()
+      if (platform.isMacOS) broadcastMacWindowBackground(readMacWindowBackground())
     })
     pluginManager.init(
       () => windowManager.getMainWindow(),

@@ -6,6 +6,7 @@ import { GITHUB_LATEST_RELEASE_URL, GITHUB_REPOSITORY_URL } from '@shared/update
 const { info, error, confirm } = useToast()
 
 const appVersion = ref('')
+const electronVersion = ref('')
 const isCheckingUpdate = ref(false)
 const autoCheckUpdate = ref(true)
 const receiveBetaUpdates = ref(false)
@@ -16,6 +17,7 @@ const showBetaUpdateOption = computed(
 )
 
 onMounted(async () => {
+  void loadElectronVersion()
   await getAppVersion()
   await loadAutoCheckSetting()
   window.addEventListener('click', closeUpdateOptions)
@@ -33,6 +35,20 @@ async function getAppVersion(): Promise<void> {
   } catch (err) {
     console.error('获取版本失败:', err)
     appVersion.value = '未知'
+  }
+}
+
+/**
+ * 读取当前宿主的 Electron 版本，用于关于页的技术标签。
+ * @returns 版本读取结束后的 Promise。
+ */
+async function loadElectronVersion(): Promise<void> {
+  try {
+    // 使用主进程报告的运行时版本，兼容不同平台和构建配置。
+    const versions = await window.ztools.internal.getSystemVersions()
+    electronVersion.value = versions.electron ?? ''
+  } catch (err) {
+    console.error('获取 Electron 版本失败:', err)
   }
 }
 
@@ -342,7 +358,9 @@ async function handleReceiveBetaUpdatesChange(): Promise<void> {
 
       <!-- 核心技术 -->
       <div class="about-techs">
-        <span class="tech-tag">Electron 41</span>
+        <span class="tech-tag">{{
+          electronVersion ? `Electron ${electronVersion}` : 'Electron'
+        }}</span>
         <span class="tech-tag">Vue 3</span>
         <span class="tech-tag">TypeScript</span>
         <span class="tech-tag">LMDB</span>

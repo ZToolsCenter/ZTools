@@ -1257,6 +1257,15 @@ window.ztools = {
     // ==================== 系统设置 API ====================
     setWindowOpacity: async (opacity) =>
       await electron.ipcRenderer.invoke('internal:set-window-opacity', opacity),
+    /**
+     * 预览或保存指定主题的 macOS 窗口背景色。
+     * @param {'light' | 'dark'} mode 要更新的主题
+     * @param {string | null} color RGBA 色值，传入 null 时恢复已保存的颜色
+     * @param {boolean} preview 是否仅更新窗口预览
+     * @returns {Promise<void>} 主进程完成更新后结束的 Promise
+     */
+    updateMacWindowBackground: (mode, color, preview) =>
+      electron.ipcRenderer.invoke('internal:update-mac-window-background', mode, color, preview),
     setWindowDefaultHeight: async (height) =>
       await electron.ipcRenderer.invoke('internal:set-window-default-height', height),
     /**

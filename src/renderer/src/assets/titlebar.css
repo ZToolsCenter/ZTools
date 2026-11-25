@@ -5,7 +5,7 @@
   --win-close-hover: #e81123;
 
   /* 亮色模式颜色 */
-  --titlebar-bg: #f4f4f4ab;
+  --titlebar-bg: var(--mac-window-background-light, #f4f4f45c);
   --titlebar-text: #333333;
   --titlebar-icon: #616161;
   --titlebar-icon-hover: #333333;
@@ -42,7 +42,7 @@
 @media (prefers-color-scheme: dark) {
   :root {
     --win-button-hover: rgba(255, 255, 255, 0.1);
-    --titlebar-bg: #303133ab;
+    --titlebar-bg: var(--mac-window-background-dark, #3031335c);
     --titlebar-text: #f3f4f6;
     --titlebar-icon: #bfc0c3;
     --titlebar-icon-hover: #f3f4f6;

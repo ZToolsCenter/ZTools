@@ -26,6 +26,11 @@ import {
   DEFAULT_MAIN_WINDOW_SLEEP_SECONDS,
   normalizeMainWindowSleepSeconds
 } from '@shared/mainWindowSleep'
+import {
+  DEFAULT_MAC_WINDOW_BACKGROUND,
+  normalizeMacWindowBackground,
+  type MacWindowBackground
+} from '@shared/macWindowBackground'
 
 const { success, error, info } = useToast()
 
@@ -302,6 +307,12 @@ const proxyUrl = ref('')
 
 // 窗口材质设置
 const windowMaterial = ref<'mica' | 'acrylic' | 'none'>('none')
+const macWindowBackground = ref({ ...DEFAULT_MAC_WINDOW_BACKGROUND })
+const macWindowBackgroundOptions = [
+  { mode: 'light', label: '明亮模式窗口背景色' },
+  { mode: 'dark', label: '暗黑模式窗口背景色' }
+] as const
+let previewedMacWindowBackgroundMode: keyof MacWindowBackground | null = null
 
 // 亚克力材质背景色透明度
 const acrylicLightOpacity = ref(78) // 明亮模式默认 78%
@@ -1055,6 +1066,68 @@ async function handleCustomColorChange(event: Event): Promise<void> {
   }
 }
 
+/**
+ * 读取指定主题的背景 Alpha 字节，供透明度控件使用。
+ * @param mode 正在编辑的主题
+ * @returns 0 至 255 的不透明度字节
+ */
+function getMacWindowBackgroundAlpha(mode: keyof MacWindowBackground): number {
+  return Number.parseInt(macWindowBackground.value[mode].slice(7), 16)
+}
+
+/**
+ * 组合色盘和不透明度滑块的 RGBA 色值，并实时预览。
+ * @param mode 正在编辑的主题
+ * @param event RGB 色盘或不透明度滑块的输入事件
+ * @returns 无返回值
+ */
+function updateMacWindowBackground(mode: keyof MacWindowBackground, event: Event): void {
+  const field = event.target as HTMLInputElement
+  const current = macWindowBackground.value[mode]
+
+  // 修改一个通道时沿用同一主题的其余通道。
+  macWindowBackground.value[mode] =
+    field.type === 'color'
+      ? field.value + current.slice(7)
+      : current.slice(0, 7) + field.valueAsNumber.toString(16).padStart(2, '0')
+
+  // 输入事件只更新窗口，等控件确认后再保存设备配置。
+  previewedMacWindowBackgroundMode = mode
+  void window.ztools.internal
+    .updateMacWindowBackground(mode, macWindowBackground.value[mode], true)
+    .catch((error) => console.error('预览窗口背景色失败:', error))
+}
+
+/**
+ * 保存指定主题的窗口背景色和不透明度。
+ * @param mode 已确认编辑的主题
+ * @returns 设置保存完成后结束的 Promise
+ */
+async function saveMacWindowBackground(mode: keyof MacWindowBackground): Promise<void> {
+  // 结束此次预览，后续输入可以开始新的预览。
+  previewedMacWindowBackgroundMode = null
+  try {
+    await window.ztools.internal.updateMacWindowBackground(
+      mode,
+      macWindowBackground.value[mode],
+      false
+    )
+  } catch (error) {
+    console.error('保存窗口背景色失败:', error)
+  }
+}
+
+/**
+ * 恢复指定主题的默认窗口背景色和不透明度。
+ * @param mode 要重置的主题
+ * @returns 设置保存完成后结束的 Promise
+ */
+async function resetMacWindowBackground(mode: keyof MacWindowBackground): Promise<void> {
+  // 按行恢复默认的完整 RGBA 色值。
+  macWindowBackground.value[mode] = DEFAULT_MAC_WINDOW_BACKGROUND[mode]
+  await saveMacWindowBackground(mode)
+}
+
 // 处理托盘图标显示变化
 async function handleTrayIconChange(): Promise<void> {
   try {
@@ -1359,6 +1432,7 @@ async function loadSettings(): Promise<void> {
       superPanelTranslateEnabled.value = data.superPanelTranslateEnabled ?? false
       // 窗口材质由主进程启动时保证一定有值，无需兜底
       windowMaterial.value = data.windowMaterial
+      macWindowBackground.value = normalizeMacWindowBackground(data.macWindowBackground)
       acrylicLightOpacity.value = data.acrylicLightOpacity ?? 78
       acrylicDarkOpacity.value = data.acrylicDarkOpacity ?? 50
       searchWallpaper.value = normalizeSearchWallpaperConfig(data.searchWallpaper)
@@ -1488,6 +1562,13 @@ onMounted(() => {
 
 onUnmounted(() => {
   document.removeEventListener('click', handleQuickActionsClickOutside)
+
+  // 离开设置时取消尚未确认的窗口预览。
+  if (previewedMacWindowBackgroundMode) {
+    void window.ztools.internal
+      .updateMacWindowBackground(previewedMacWindowBackgroundMode, null, true)
+      .catch((error) => console.error('取消窗口背景色预览失败:', error))
+  }
 })
 </script>
 
@@ -1697,6 +1778,50 @@ onUnmounted(() => {
           />
         </div>
       </div>
+
+      <template v-if="platform === 'darwin'">
+        <div v-for="{ mode, label } in macWindowBackgroundOptions" :key="mode" class="setting-item">
+          <label class="setting-label" :for="`mac-window-background-${mode}`">
+            <span>{{ label }}</span>
+          </label>
+          <div class="setting-control mac-background-color-control">
+            <span aria-hidden="true">{{ macWindowBackground[mode] }}</span>
+            <input
+              :id="`mac-window-background-${mode}`"
+              :value="macWindowBackground[mode].slice(0, 7)"
+              :style="{ '--mac-background-alpha': getMacWindowBackgroundAlpha(mode) / 255 }"
+              type="color"
+              @input="updateMacWindowBackground(mode, $event)"
+              @change="saveMacWindowBackground(mode)"
+            />
+            <label class="mac-background-opacity">
+              <span>不透明度</span>
+              <input
+                :id="`mac-window-background-${mode}-alpha`"
+                :value="getMacWindowBackgroundAlpha(mode)"
+                :aria-label="`${label}不透明度`"
+                type="range"
+                min="0"
+                max="255"
+                @input="updateMacWindowBackground(mode, $event)"
+                @change="saveMacWindowBackground(mode)"
+              />
+              <span aria-hidden="true">
+                {{ Math.round(getMacWindowBackgroundAlpha(mode) / 2.55) }}%
+              </span>
+            </label>
+            <button
+              type="button"
+              class="icon-btn mac-background-reset"
+              title="恢复默认背景色"
+              :aria-label="`恢复${label}默认值`"
+              @click="resetMacWindowBackground(mode)"
+            >
+              <span class="i-z-reset font-size-20px" aria-hidden="true" />
+            </button>
+          </div>
+        </div>
+      </template>
 
       <div v-if="platform === 'win32'" class="setting-item">
         <div class="setting-label">
@@ -2648,6 +2773,47 @@ onUnmounted(() => {
 
 .wallpaper-setting-item {
   align-items: flex-start;
+}
+
+.mac-background-color-control {
+  gap: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.mac-background-color-control input[type='color'] {
+  width: 40px;
+  height: 28px;
+  padding: 2px;
+  border: 1px solid var(--control-border);
+  border-radius: 5px;
+  background: var(--control-bg);
+  cursor: pointer;
+}
+
+.mac-background-color-control input[type='color']::-webkit-color-swatch {
+  opacity: var(--mac-background-alpha);
+}
+
+.mac-background-opacity {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mac-background-opacity input {
+  width: 86px;
+  accent-color: var(--primary-color);
+  cursor: pointer;
+}
+
+.mac-background-opacity span:last-child {
+  min-width: 4ch;
+  text-align: right;
+}
+
+.mac-background-reset:hover,
+.mac-background-reset:focus-visible {
+  color: var(--primary-color);
 }
 
 .wallpaper-control {

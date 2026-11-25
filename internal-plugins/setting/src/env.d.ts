@@ -2,6 +2,7 @@
 /// <reference types="@ztools-center/ztools-api-types" />
 
 import type { SearchWallpaperConfig } from '@shared/searchWallpaper'
+import type { MacWindowBackground } from '@shared/macWindowBackground'
 import type { MarketInstallRecord } from '@shared/marketInstallHistory'
 import type {
   AiProviderInput,
@@ -374,6 +375,11 @@ declare global {
 
         // 窗口和设置
         setWindowOpacity: (opacity: number) => Promise<void>
+        updateMacWindowBackground: (
+          mode: keyof MacWindowBackground,
+          color: string | null,
+          preview: boolean
+        ) => Promise<void>
         setWindowDefaultHeight: (height: number) => Promise<void>
         setCompactMainWindowHeader: (
           enabled: boolean

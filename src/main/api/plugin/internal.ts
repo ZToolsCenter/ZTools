@@ -1,5 +1,6 @@
 import { MainWindowClient, type MainWindowSource } from '../../common/mainWindowClient'
 import { app, dialog, IpcMainInvokeEvent, ipcMain } from 'electron'
+import { updateMacWindowBackground } from '../../appMain.js'
 import type { PluginManager } from '../../managers/pluginManager'
 import windowManager from '../../managers/windowManager.js'
 import dndManager from '../../core/dndManager.js'
@@ -32,6 +33,7 @@ import {
   type CommandAliasStore
 } from '@shared/commandShared'
 import { normalizeSearchWallpaperConfig, type SearchWallpaperConfig } from '@shared/searchWallpaper'
+import type { MacWindowBackground } from '@shared/macWindowBackground'
 import { registerInternalApiChannel } from '../../core/internalPlugins'
 import { getScheduledTaskService } from '../../core/scheduledTasks/runtime'
 import type { ScheduledTaskDraft } from '@shared/scheduledTasks'
@@ -839,6 +841,15 @@ export class InternalPluginAPI extends MainWindowClient {
       this.requireApi(event, 'internal:set-window-opacity')
       return await windowAPI.setWindowOpacity(opacity)
     })
+
+    this.handleInternal(
+      'internal:update-mac-window-background',
+      (event, mode: keyof MacWindowBackground, color: string | null, preview: boolean) => {
+        // 使用内置设置通道的现有鉴权，避免普通插件修改宿主外观。
+        this.requireApi(event, 'internal:update-mac-window-background')
+        updateMacWindowBackground(mode, color, preview)
+      }
+    )
 
     this.handleInternal('internal:set-window-default-height', async (event, height: number) => {
       this.requireApi(event, 'internal:set-window-default-height')
