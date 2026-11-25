@@ -41,12 +41,6 @@ const themeOptions = [
   { label: '暗黑', value: 'dark' }
 ]
 
-const windowMaterialOptions = [
-  { label: 'Mica（云母）', value: 'mica' },
-  { label: 'Acrylic（亚克力）', value: 'acrylic' },
-  { label: '无', value: 'none' }
-]
-
 const autoPasteOptions = [
   { label: '关闭', value: 'off' },
   { label: '1秒内', value: '1s' },
@@ -305,8 +299,6 @@ const disableGpuAcceleration = ref(false)
 const proxyEnabled = ref(false)
 const proxyUrl = ref('')
 
-// 窗口材质设置
-const windowMaterial = ref<'mica' | 'acrylic' | 'none'>('none')
 const macWindowBackground = ref({ ...DEFAULT_MAC_WINDOW_BACKGROUND })
 const macWindowBackgroundOptions = [
   { mode: 'light', label: '明亮模式窗口背景色' },
@@ -315,6 +307,7 @@ const macWindowBackgroundOptions = [
 let previewedMacWindowBackgroundMode: keyof MacWindowBackground | null = null
 
 // 亚克力材质背景色透明度
+const hasAcrylicWindowMaterial = ref(false)
 const acrylicLightOpacity = ref(78) // 明亮模式默认 78%
 const acrylicDarkOpacity = ref(50) // 暗黑模式默认 50%
 
@@ -1164,19 +1157,6 @@ async function handleFloatingBallLetterChange(): Promise<void> {
   }
 }
 
-// 处理窗口材质变化
-async function handleWindowMaterialChange(): Promise<void> {
-  try {
-    await saveSettings()
-    // 调用主进程更新材质（会广播到主渲染进程）
-    await window.ztools.internal.setWindowMaterial(windowMaterial.value)
-    // 设置插件自己也需要更新 data-material 属性
-    document.documentElement.setAttribute('data-material', windowMaterial.value)
-  } catch (error) {
-    console.error('更新窗口材质失败:', error)
-  }
-}
-
 // 处理亚克力明亮模式透明度变化
 async function handleAcrylicLightOpacityChange(): Promise<void> {
   try {
@@ -1363,12 +1343,21 @@ function isValidProxyUrl(url: string): boolean {
 
 // ==================== 自定义颜色相关辅助函数 ====================
 
-// 获取平台信息（用于快捷键文案）
+/**
+ * 加载平台信息和宿主材质，用于显示平台专属设置。
+ * @returns 平台信息加载完成后结束的 Promise。
+ */
 async function getPlatformInfo(): Promise<void> {
   try {
     const pf = await window.ztools.internal.getPlatform()
     if (pf === 'darwin' || pf === 'win32' || pf === 'linux') {
       platform.value = pf
+    }
+
+    // 仅在宿主使用亚克力时显示明暗背景透明度。
+    if (pf === 'win32') {
+      hasAcrylicWindowMaterial.value =
+        (await window.ztools.internal.getWindowMaterial()) === 'acrylic'
     }
   } catch (error) {
     console.error('获取平台信息失败:', error)
@@ -1430,8 +1419,6 @@ async function loadSettings(): Promise<void> {
       wakeupBlacklist.value = data.wakeupBlacklist ?? []
       ignoreHotkeysOnFullscreen.value = data.ignoreHotkeysOnFullscreen ?? false
       superPanelTranslateEnabled.value = data.superPanelTranslateEnabled ?? false
-      // 窗口材质由主进程启动时保证一定有值，无需兜底
-      windowMaterial.value = data.windowMaterial
       macWindowBackground.value = normalizeMacWindowBackground(data.macWindowBackground)
       acrylicLightOpacity.value = data.acrylicLightOpacity ?? 78
       acrylicDarkOpacity.value = data.acrylicDarkOpacity ?? 50
@@ -1525,7 +1512,6 @@ async function saveSettings(): Promise<void> {
       primaryColor: primaryColor.value,
       customColor: customColor.value,
       showTrayIcon: showTrayIcon.value,
-      windowMaterial: windowMaterial.value,
       acrylicLightOpacity: acrylicLightOpacity.value,
       acrylicDarkOpacity: acrylicDarkOpacity.value,
       // 数据库 IPC 同样只接收可结构化克隆的普通壁纸对象。
@@ -1823,21 +1809,7 @@ onUnmounted(() => {
         </div>
       </template>
 
-      <div v-if="platform === 'win32'" class="setting-item">
-        <div class="setting-label">
-          <span>窗口材质</span>
-          <span class="setting-desc">选择窗口背景材质效果（需要 Windows 11）</span>
-        </div>
-        <div class="setting-control">
-          <Dropdown
-            v-model="windowMaterial"
-            :options="windowMaterialOptions"
-            @change="handleWindowMaterialChange"
-          />
-        </div>
-      </div>
-
-      <div v-if="platform === 'win32' && windowMaterial === 'acrylic'" class="setting-item">
+      <div v-if="hasAcrylicWindowMaterial" class="setting-item">
         <div class="setting-label">
           <span>明亮模式背景色透明度</span>
           <span class="setting-desc">调整亚克力材质在明亮模式下的白色背景叠加透明度</span>
@@ -1854,7 +1826,7 @@ onUnmounted(() => {
         </div>
       </div>
 
-      <div v-if="platform === 'win32' && windowMaterial === 'acrylic'" class="setting-item">
+      <div v-if="hasAcrylicWindowMaterial" class="setting-item">
         <div class="setting-label">
           <span>暗黑模式背景色透明度</span>
           <span class="setting-desc">调整亚克力材质在暗黑模式下的黑色背景叠加透明度</span>

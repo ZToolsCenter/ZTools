@@ -100,8 +100,7 @@ vi.mock('../../src/main/managers/windowManager', () => ({
 }))
 
 vi.mock('../../src/main/utils/windowUtils.js', () => ({
-  applyWindowMaterial: vi.fn(),
-  getDefaultWindowMaterial: vi.fn(() => 'none')
+  getWindowsWindowOptions: vi.fn(() => ({}))
 }))
 
 vi.mock('../../src/main/api/serverUpdateCatalog', () => ({

@@ -3,9 +3,6 @@ import { ipcMain, screen } from 'electron'
 import { WINDOW_WIDTH } from '../../common/constants.js'
 import windowManager from '../../managers/windowManager.js'
 
-// 窗口材质类型
-type WindowMaterial = 'mica' | 'acrylic' | 'none'
-
 /**
  * 窗口管理API - 主程序专用
  */
@@ -164,15 +161,12 @@ export class WindowAPI extends MainWindowClient {
     console.log('[WindowAPI] 设置托盘图标可见性:', visible)
   }
 
-  public setWindowMaterial(material: WindowMaterial): { success: boolean } {
-    const result = windowManager.setWindowMaterial(material)
-    console.log('[WindowAPI] 设置窗口材质:', material, '结果:', result)
-    return result
-  }
-
-  public async getWindowMaterial(): Promise<WindowMaterial> {
-    const material = await windowManager.getWindowMaterial()
-    return material
+  /**
+   * 向渲染进程提供宿主窗口在构造时使用的材质。
+   * @returns 为当前操作系统选定的背景材质。
+   */
+  public getWindowMaterial(): 'acrylic' | 'none' {
+    return windowManager.getWindowMaterial()
   }
 
   private openSettings(): void {

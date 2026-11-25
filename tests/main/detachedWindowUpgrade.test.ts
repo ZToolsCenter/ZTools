@@ -13,7 +13,7 @@ vi.mock('../../src/main/api/shared/database', () => ({
 }))
 
 vi.mock('../../src/main/utils/windowUtils', () => ({
-  applyWindowMaterial: vi.fn()
+  getWindowsWindowOptions: vi.fn(() => ({}))
 }))
 
 vi.mock('../../src/main/core/globalStyles.js', () => ({

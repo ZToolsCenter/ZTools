@@ -845,14 +845,6 @@ onMounted(async () => {
     })
   }
 
-  // 监听窗口材质更新事件
-  window.ztools.onUpdateWindowMaterial?.((material: 'mica' | 'acrylic' | 'none') => {
-    console.log('更新窗口材质:', material)
-    document.documentElement.setAttribute('data-material', material)
-    // 应用亚克力背景色叠加效果
-    applyAcrylicOverlay()
-  })
-
   // 监听亚克力透明度更新事件
   window.ztools.onUpdateAcrylicOpacity?.((data: { lightOpacity: number; darkOpacity: number }) => {
     console.log('更新亚克力透明度:', data)

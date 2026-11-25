@@ -24,8 +24,7 @@ import clipboardManager from './clipboardManager'
 
 import { WINDOW_DEFAULT_HEIGHT, WINDOW_WIDTH } from '../common/constants'
 import detachedWindowManager from '../core/detachedWindowManager'
-import superPanelManager from '../core/superPanelManager'
-import { applyWindowMaterial, getDefaultWindowMaterial } from '../utils/windowUtils'
+import { getSystemWindowMaterial, getWindowsWindowOptions } from '../utils/windowUtils'
 import pluginManager from './pluginManager'
 import { prepareMacPanelForShow } from '../utils/macPanelSpace'
 import {
@@ -36,8 +35,6 @@ import {
 import type { SleepingSearch } from '../../shared/mainWindowSleep'
 import { HiddenWindowSleep } from '../common/hiddenWindowSleep'
 
-// 窗口材质类型
-type WindowMaterial = 'mica' | 'acrylic' | 'none'
 const WINDOW_BLUR_DRAG_INPUT_CONSUMER = 'window-blur-drag'
 const DEFAULT_MODAL_DIALOG_BLUR_HIDE_RELEASE_DELAY_MS = 500
 
@@ -520,9 +517,9 @@ class WindowManager {
       windowConfig.transparent = true
       windowConfig.vibrancy = 'fullscreen-ui'
     }
-    // Windows 系统配置（不设置 transparent，让 setBackgroundMaterial 生效）
+    // Windows 材质在原生窗口创建时初始化。
     else if (platform.isWindows) {
-      windowConfig.backgroundColor = '#00000000'
+      Object.assign(windowConfig, getWindowsWindowOptions())
     }
     // Linux 系统配置
     else if (platform.isLinux) {
@@ -546,11 +543,6 @@ class WindowManager {
       this.mainWindow.setAlwaysOnTop(true, 'modal-panel', 1)
     } else {
       this.mainWindow.setAlwaysOnTop(true)
-    }
-
-    // Windows 11 根据用户配置设置背景材质
-    if (platform.isWindows) {
-      this.applyWindowMaterialFromSettings()
     }
 
     // 生命周期以原生可见性为准，覆盖快捷键、失焦、插件和直接 hide()。
@@ -1553,23 +1545,6 @@ class WindowManager {
   }
 
   /**
-   * 广播窗口材质到所有渲染进程（包括分离窗口和插件）
-   */
-  private broadcastWindowMaterial(material: WindowMaterial): void {
-    // 发送给主窗口
-    this.mainWindow?.webContents.send('update-window-material', material)
-
-    // 发送给所有分离窗口
-    detachedWindowManager.updateAllWindowsMaterial(material)
-
-    // 发送给超级面板窗口
-    superPanelManager.updateWindowMaterial(material)
-
-    // 通知插件主题信息变更
-    this.notifyThemeInfoChanged()
-  }
-
-  /**
    * 广播主题色到所有渲染进程
    */
   public broadcastPrimaryColor(primaryColor: string, customColor?: string): void {
@@ -1597,67 +1572,11 @@ class WindowManager {
   }
 
   /**
-   * 应用窗口材质
+   * 获取宿主窗口在构造时使用的 Windows 背景材质。
+   * @returns 为当前操作系统选定的亚克力或无材质。
    */
-  private applyMaterial(material: WindowMaterial): void {
-    if (!this.mainWindow) return
-    applyWindowMaterial(this.mainWindow, material)
-  }
-
-  /**
-   * 从设置中应用窗口材质（启动时调用）
-   */
-  private applyWindowMaterialFromSettings(): void {
-    try {
-      const settings = databaseAPI.dbGet('settings-general')
-      const savedMaterial = settings?.windowMaterial as WindowMaterial | undefined
-      const material = savedMaterial || getDefaultWindowMaterial()
-
-      console.log('[Window] 从配置读取窗口材质:', material)
-
-      // 如果数据库中没有保存材质配置，保存默认值
-      if (!savedMaterial) {
-        console.log('[Window] 数据库中没有窗口材质配置，保存默认值:', material)
-        const updatedSettings = {
-          ...(settings || {}),
-          windowMaterial: material
-        }
-        databaseAPI.dbPut('settings-general', updatedSettings)
-      }
-
-      this.applyMaterial(material)
-    } catch (error) {
-      console.error('[Window] 读取窗口材质配置失败，使用默认值:', error)
-      const defaultMaterial = getDefaultWindowMaterial()
-      this.applyMaterial(defaultMaterial)
-    }
-  }
-
-  /**
-   * 设置窗口材质（用户在设置中更改时调用）
-   */
-  public setWindowMaterial(material: WindowMaterial): { success: boolean } {
-    if (!this.mainWindow || !platform.isWindows) {
-      return { success: false }
-    }
-
-    this.applyMaterial(material)
-    this.broadcastWindowMaterial(material)
-
-    return { success: true }
-  }
-
-  /**
-   * 获取当前窗口材质
-   */
-  public getWindowMaterial(): WindowMaterial {
-    try {
-      const settings = databaseAPI.dbGet('settings-general')
-      return (settings?.windowMaterial as WindowMaterial) || getDefaultWindowMaterial()
-    } catch (error) {
-      console.error('[Window] 获取窗口材质失败:', error)
-      return getDefaultWindowMaterial()
-    }
+  public getWindowMaterial(): 'acrylic' | 'none' {
+    return getSystemWindowMaterial()
   }
 
   /**

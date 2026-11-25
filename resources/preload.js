@@ -103,7 +103,6 @@ let pluginOutCallback = null
 let pluginDetachCallback = null
 let mainPushCallback = null // { callback, selectCallback }
 let hotkeyRecordedCallback = null
-let windowMaterialChangeCallback = null
 let themeChangeCallback = null
 let logEntriesCallback = null
 let foundInPageCallback = null
@@ -248,11 +247,6 @@ const lazyMainPushSelect = lazyListen('main-push-select', (event, { selectData, 
 const lazyHotkeyRecorded = lazyListen('hotkey-recorded', (_e, shortcut) => {
   console.log('收到快捷键录制事件:', shortcut)
   if (hotkeyRecordedCallback) hotkeyRecordedCallback(shortcut)
-})
-
-// 窗口材质更新事件（由 internal.onUpdateWindowMaterial 触发注册）
-const lazyWindowMaterial = lazyListen('update-window-material', (_e, material) => {
-  if (windowMaterialChangeCallback) windowMaterialChangeCallback(material)
 })
 
 // 主题信息更新事件（由 onThemeChange 触发注册）
@@ -1275,8 +1269,6 @@ window.ztools = {
      */
     setCompactMainWindowHeader: async (enabled) =>
       await electron.ipcRenderer.invoke('internal:set-compact-main-window-header', enabled),
-    setWindowMaterial: async (material) =>
-      await electron.ipcRenderer.invoke('internal:set-window-material', material),
     getWindowMaterial: async () =>
       await electron.ipcRenderer.invoke('internal:get-window-material'),
     selectAvatar: async () => await electron.ipcRenderer.invoke('internal:select-avatar'),
@@ -1379,14 +1371,6 @@ window.ztools = {
      */
     updateSearchWallpaper: async (wallpaper) =>
       await electron.ipcRenderer.invoke('internal:update-search-wallpaper', wallpaper),
-
-    // 监听窗口材质更新
-    onUpdateWindowMaterial: (callback) => {
-      windowMaterialChangeCallback = callback
-      if (callback) {
-        lazyWindowMaterial.attach()
-      }
-    },
 
     // ==================== 应用更新 API ====================
     updaterCheckUpdate: async () =>

@@ -434,9 +434,6 @@ const api = {
   ) => {
     ipcRenderer.on('update-primary-color', (_event, data) => callback(data))
   },
-  onUpdateWindowMaterial: (callback: (material: 'mica' | 'none') => void) => {
-    ipcRenderer.on('update-window-material', (_event, material) => callback(material))
-  },
   onUpdateAcrylicOpacity: (
     callback: (data: { lightOpacity: number; darkOpacity: number }) => void
   ) => {
@@ -737,7 +734,7 @@ declare global {
         pastedFiles: Array<{ path: string; name: string; isDirectory: boolean }> | null
         pastedText: string | null
       }) => void
-      getWindowMaterial: () => Promise<'mica' | 'acrylic' | 'none'>
+      getWindowMaterial: () => Promise<'acrylic' | 'none'>
       openExternal: (url: string) => Promise<void>
       copyToClipboard: (text: string) => Promise<void>
       openTerminal: (path: string) => Promise<void>

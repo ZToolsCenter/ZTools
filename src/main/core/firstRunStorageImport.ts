@@ -1,7 +1,7 @@
 import { is } from '@electron-toolkit/utils'
 import { BrowserWindow, dialog, ipcMain, screen } from 'electron'
 import { getPreloadPath, getRendererPath } from '../utils/appBundlePath'
-import { applyWindowMaterial, getDefaultWindowMaterial } from '../utils/windowUtils'
+import { getWindowsWindowOptions } from '../utils/windowUtils'
 import { legacyImportService, type LegacyImportMode } from './storage/legacyImportService'
 import { storageManager } from './storage/storageManager'
 
@@ -50,6 +50,11 @@ type LegacyImportWindowResult =
   | { action: 'import'; imported: ReturnType<typeof legacyImportService.importSelected> }
   | { action: 'error'; error: string }
 
+/**
+ * 创建旧数据导入窗口并等待用户完成选择。
+ * @returns 包含用户选择或导入结果的 Promise。
+ * @throws 创建 Electron 窗口失败时抛出原始错误。
+ */
 function showLegacyImportWindow(): Promise<LegacyImportWindowResult> {
   legacyImportWindowActive = true
 
@@ -84,7 +89,8 @@ function showLegacyImportWindow(): Promise<LegacyImportWindowResult> {
     windowConfig.transparent = true
     windowConfig.vibrancy = 'fullscreen-ui'
   } else if (process.platform === 'win32') {
-    windowConfig.backgroundColor = '#00000000'
+    // 首次启动时同样通过构造参数设置 Windows 材质。
+    Object.assign(windowConfig, getWindowsWindowOptions())
   }
 
   const importWindow = new BrowserWindow(windowConfig)
@@ -93,10 +99,6 @@ function showLegacyImportWindow(): Promise<LegacyImportWindowResult> {
     importWindow.loadURL(`${process.env['ELECTRON_RENDERER_URL']}/legacy-import.html`)
   } else {
     importWindow.loadFile(getRendererPath('legacy-import.html'))
-  }
-
-  if (process.platform === 'win32') {
-    applyWindowMaterial(importWindow, getDefaultWindowMaterial())
   }
 
   importWindow.once('ready-to-show', () => {

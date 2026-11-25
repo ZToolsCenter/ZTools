@@ -6,11 +6,11 @@ import { applyInitialAppearance } from './applyInitialAppearance'
 
 onMounted(() => {
   startNotificationPolling()
-  // 页面挂载后立即应用已持久化的外观配置。
+  // 页面挂载后应用已保存的主题和当前宿主材质。
   void applyInitialAppearance({
     dbGet: (key) => window.ztools.internal.dbGet(key),
     setTheme: (theme) => window.ztools.internal.setTheme(theme),
-    setWindowMaterial: (material) => window.ztools.internal.setWindowMaterial(material),
+    getWindowMaterial: () => window.ztools.internal.getWindowMaterial(),
     isWindows: window.ztools.isWindows()
   }).catch((error) => {
     console.error('初始化设置页外观失败:', error)

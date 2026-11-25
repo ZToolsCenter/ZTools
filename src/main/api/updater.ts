@@ -6,7 +6,7 @@ import createPlatformUpdater from '@platform-updater'
 import type { PlatformUpdateInfo, PlatformUpdaterService } from './platformUpdater/types'
 import databaseAPI from './shared/database.js'
 import windowManager from '../managers/windowManager'
-import { applyWindowMaterial, getDefaultWindowMaterial } from '../utils/windowUtils.js'
+import { getWindowsWindowOptions } from '../utils/windowUtils.js'
 import { isInAppUpdateSource } from '../../shared/updateSource'
 import { fetchLatestServerUpdate, resolvePlatformUpdateInfo } from './serverUpdateCatalog'
 
@@ -345,16 +345,6 @@ export class UpdaterAPI extends MainWindowClient {
     return { success: true }
   }
 
-  private applyMaterialToUpdateWindow(win: BrowserWindow): void {
-    try {
-      const settings = databaseAPI.dbGet('settings-general')
-      const material = settings?.windowMaterial || getDefaultWindowMaterial()
-      applyWindowMaterial(win, material)
-    } catch (error) {
-      console.error('[Updater] 应用窗口材质失败:', error)
-    }
-  }
-
   /**
    * 使用系统默认浏览器打开更新日志中的 HTTP(S) 链接。
    * @param url 更新日志请求打开的链接。
@@ -431,7 +421,8 @@ export class UpdaterAPI extends MainWindowClient {
       windowConfig.transparent = true
       windowConfig.vibrancy = 'fullscreen-ui'
     } else if (process.platform === 'win32') {
-      windowConfig.backgroundColor = '#00000000'
+      // 与主窗口一样，在创建原生窗口时初始化材质。
+      Object.assign(windowConfig, getWindowsWindowOptions())
     }
 
     this.updateWindow = new BrowserWindow(windowConfig)
@@ -442,7 +433,6 @@ export class UpdaterAPI extends MainWindowClient {
       void this.updateWindow.loadFile(getRendererPath('updater.html'))
     }
 
-    if (process.platform === 'win32') this.applyMaterialToUpdateWindow(this.updateWindow)
     this.updateWindow.once('ready-to-show', () => this.updateWindow?.show())
     this.updateWindow.on('closed', () => {
       this.updateWindow = null

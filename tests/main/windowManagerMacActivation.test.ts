@@ -198,8 +198,8 @@ vi.mock('../../src/main/core/superPanelManager', () => ({
 }))
 
 vi.mock('../../src/main/utils/windowUtils', () => ({
-  applyWindowMaterial: vi.fn(),
-  getDefaultWindowMaterial: vi.fn(() => 'none')
+  getSystemWindowMaterial: vi.fn(() => 'none'),
+  getWindowsWindowOptions: vi.fn(() => ({}))
 }))
 
 vi.mock('../../src/main/managers/pluginManager', () => ({

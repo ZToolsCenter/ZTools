@@ -1,27 +1,26 @@
-import {
-  applyPrimaryColor,
-  normalizePrimaryColor,
-  normalizeTheme,
-  normalizeWindowMaterial
-} from '@/utils'
+import { applyPrimaryColor, normalizePrimaryColor, normalizeTheme } from '@/utils'
 
 type AppearanceSettings = {
   theme?: unknown
   primaryColor?: unknown
   customColor?: unknown
-  windowMaterial?: unknown
 }
 
 type ThemeValue = 'system' | 'light' | 'dark'
-type WindowMaterialValue = 'mica' | 'acrylic' | 'none'
+type WindowMaterialValue = 'acrylic' | 'none'
 
 export type ApplyInitialAppearanceDeps = {
   dbGet: (key: string) => Promise<AppearanceSettings | undefined>
   setTheme: (theme: ThemeValue) => Promise<void>
-  setWindowMaterial: (material: WindowMaterialValue) => Promise<{ success: boolean }>
+  getWindowMaterial: () => Promise<WindowMaterialValue>
   isWindows: boolean
 }
 
+/**
+ * 初始化设置页主题，并让 Windows 页面样式跟随宿主窗口材质。
+ * @param deps 读取外观、应用主题和查询宿主材质的接口。
+ * @returns 页面外观应用完成后结束的 Promise。
+ */
 export async function applyInitialAppearance(deps: ApplyInitialAppearanceDeps): Promise<void> {
   // 启动时从通用设置读取外观，保持与设置页持久化字段一致。
   const data = await deps.dbGet('settings-general')
@@ -36,8 +35,7 @@ export async function applyInitialAppearance(deps: ApplyInitialAppearanceDeps): 
     return
   }
 
-  // 窗口材质仅在 Windows 生效，且需兼容旧版本或异常持久化值。
-  const material = normalizeWindowMaterial(data?.windowMaterial)
-  await deps.setWindowMaterial(material)
+  // 使用宿主构造窗口时采用的材质更新页面样式。
+  const material = await deps.getWindowMaterial()
   document.documentElement.setAttribute('data-material', material)
 }

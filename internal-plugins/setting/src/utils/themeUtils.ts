@@ -22,11 +22,6 @@ export function normalizePrimaryColor(color: unknown): PrimaryColor {
     : 'green'
 }
 
-export function normalizeWindowMaterial(material: unknown): 'mica' | 'acrylic' | 'none' {
-  // 对旧版本或非法持久化值做兜底，避免初始化阶段直接使用异常值。
-  return material === 'mica' || material === 'acrylic' || material === 'none' ? material : 'none'
-}
-
 /**
  * 按当前明暗环境对颜色进行轻度矫正，避免极亮/极暗自定义色不可读。
  */

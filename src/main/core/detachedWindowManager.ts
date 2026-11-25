@@ -2,9 +2,8 @@ import { app, BrowserWindow, ipcMain, Menu, WebContentsView } from 'electron'
 import { fileURLToPath, pathToFileURL } from 'url'
 import { v4 as uuidv4 } from 'uuid'
 import databaseAPI from '../api/shared/database'
-import { applyWindowMaterial } from '../utils/windowUtils'
+import { getWindowsWindowOptions } from '../utils/windowUtils'
 import { GLOBAL_SCROLLBAR_CSS } from './globalStyles.js'
-import lmdbInstance from './lmdb/lmdbInstance'
 import devToolsShortcut, { getDevToolsMode } from '../utils/devToolsShortcut'
 import { WINDOW_WIDTH } from '../common/constants'
 import { registerExternalLinkInterceptor } from '../managers/pluginManager'
@@ -111,22 +110,6 @@ class DetachedWindowManager {
         width: windowBounds.width,
         height: viewBounds.height
       })
-    }
-  }
-
-  /**
-   * 应用窗口材质（Windows 11）
-   */
-  private async applyWindowMaterial(win: BrowserWindow): Promise<void> {
-    try {
-      const settings = await lmdbInstance.promises.get('ZTOOLS/settings-general')
-      const material = (settings?.data?.windowMaterial as 'mica' | 'acrylic' | 'none') || 'none'
-
-      console.log('[DetachedWindow] 分离窗口应用材质:', material)
-      applyWindowMaterial(win, material)
-    } catch (error) {
-      console.error('[DetachedWindow] 读取窗口材质配置失败，使用默认值 (mica):', error)
-      applyWindowMaterial(win, 'none')
     }
   }
 
@@ -257,9 +240,9 @@ class DetachedWindowManager {
         windowConfig.transparent = true
         windowConfig.vibrancy = 'fullscreen-ui'
       }
-      // Windows 系统配置（与主窗口保持一致）
+      // 在分离窗口构造时使用与主窗口一致的 Windows 材质。
       else if (isWindows) {
-        windowConfig.backgroundColor = '#00000000' // 完全透明，让 Mica 材质显示
+        Object.assign(windowConfig, getWindowsWindowOptions())
         // 设置插件窗口独立图标
         if (options.logo) {
           try {
@@ -274,9 +257,7 @@ class DetachedWindowManager {
 
       const win = new BrowserWindow(windowConfig)
 
-      // Windows 11 应用窗口材质（与主窗口保持一致）
       if (isWindows) {
-        this.applyWindowMaterial(win)
         // 设置插件窗口ID，避免任务栏窗口合并
         win.setAppDetails({
           appId: 'ZTools.' + pluginName
@@ -780,24 +761,6 @@ class DetachedWindowManager {
         app.dock?.show()
       } else {
         app.dock?.hide()
-      }
-    }
-  }
-
-  /**
-   * 更新所有分离窗口的材质
-   */
-  public updateAllWindowsMaterial(material: 'mica' | 'acrylic' | 'none'): void {
-    for (const [windowId, info] of this.detachedWindowMap.entries()) {
-      try {
-        // 更新主进程窗口材质
-        applyWindowMaterial(info.window, material)
-        console.log(`[DetachedWindow] 分离窗口 ${windowId} 材质已更新为 ${material}`)
-
-        // 通知渲染进程更新样式
-        info.window.webContents.send('update-window-material', material)
-      } catch (error) {
-        console.error(`[DetachedWindow] 更新分离窗口 ${windowId} 材质失败:`, error)
       }
     }
   }

@@ -15,7 +15,7 @@ import dndManager from './dndManager.js'
 import pluginsAPI from '../api/renderer/plugins.js'
 import windowManager from '../managers/windowManager.js'
 import clipboardManager, { type LastCopiedContent } from '../managers/clipboardManager.js'
-import { applyWindowMaterial, getDefaultWindowMaterial } from '../utils/windowUtils.js'
+import { getWindowsWindowOptions } from '../utils/windowUtils.js'
 import providerManager from './provider/providerManager.js'
 import { filterSuperPanelPinnedCommands } from './superPanelPinnedCommands.js'
 import { decodeFileUrlToPath } from '../utils/common'
@@ -426,9 +426,9 @@ class SuperPanelManager extends MainWindowClient {
       windowConfig.transparent = true
       windowConfig.vibrancy = 'fullscreen-ui'
     }
-    // Windows 系统配置（不设置 transparent，让 setBackgroundMaterial 生效）
+    // 面板与主窗口使用相同的 Windows 背景构造参数。
     else if (process.platform === 'win32') {
-      windowConfig.backgroundColor = '#00000000'
+      Object.assign(windowConfig, getWindowsWindowOptions())
     }
 
     const win = new BrowserWindow(windowConfig)
@@ -445,11 +445,6 @@ class SuperPanelManager extends MainWindowClient {
         visibleOnFullScreen: true,
         skipTransformProcessType: true
       })
-    }
-
-    // 同步窗口材质（Windows）
-    if (process.platform === 'win32') {
-      this.applyMaterialToWindow(win)
     }
 
     // 加载超级面板页面（使用独立的 HTML 入口）
@@ -568,30 +563,6 @@ class SuperPanelManager extends MainWindowClient {
     if (win.isDestroyed()) return
     win.show()
     win.focus()
-  }
-
-  /**
-   * 从数据库读取材质设置并应用到指定窗口
-   */
-  private applyMaterialToWindow(win: BrowserWindow): void {
-    try {
-      const settings = databaseAPI.dbGet('settings-general')
-      const material = settings?.windowMaterial || getDefaultWindowMaterial()
-      applyWindowMaterial(win, material)
-      // 通知超级面板渲染进程更新样式
-      win.webContents.send('update-window-material', material)
-    } catch (error) {
-      console.error('[SuperPanel] 应用窗口材质失败:', error)
-    }
-  }
-
-  /**
-   * 更新超级面板窗口材质（由 windowManager 广播时调用）
-   */
-  updateWindowMaterial(material: 'mica' | 'acrylic' | 'none'): void {
-    if (!this.superPanelWindow || this.superPanelWindow.isDestroyed()) return
-    applyWindowMaterial(this.superPanelWindow, material)
-    this.superPanelWindow.webContents.send('update-window-material', material)
   }
 
   /**

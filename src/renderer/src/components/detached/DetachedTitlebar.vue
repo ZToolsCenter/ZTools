@@ -482,16 +482,6 @@ onMounted(async () => {
       })
   }
 
-  // 监听窗口材质更新
-  if (window.ztools?.onUpdateWindowMaterial) {
-    window.ztools.onUpdateWindowMaterial((material: 'mica' | 'acrylic' | 'none') => {
-      console.log('标题栏收到材质更新:', material)
-      document.documentElement.setAttribute('data-material', material)
-      // 应用亚克力背景色叠加效果
-      applyAcrylicOverlay()
-    })
-  }
-
   // 监听亚克力透明度更新事件
   if (window.ztools?.onUpdateAcrylicOpacity) {
     window.ztools.onUpdateAcrylicOpacity((data: { lightOpacity: number; darkOpacity: number }) => {

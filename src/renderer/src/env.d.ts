@@ -117,8 +117,7 @@ declare global {
       getWindowPosition: () => Promise<{ x: number; y: number }>
       setWindowPosition: (x: number, y: number) => void
       setWindowSizeLock: (lock: boolean) => void
-      getWindowMaterial: () => Promise<'mica' | 'acrylic' | 'none'>
-      setWindowMaterial: (material: 'mica' | 'acrylic' | 'none') => Promise<{ success: boolean }>
+      getWindowMaterial: () => Promise<'acrylic' | 'none'>
       openExternal: (url: string) => Promise<void>
       copyToClipboard: (text: string) => Promise<void>
       openTerminal: (path: string) => Promise<void>
@@ -321,7 +320,6 @@ declare global {
       onUpdatePrimaryColor: (
         callback: (data: { primaryColor: string; customColor?: string }) => void
       ) => void
-      onUpdateWindowMaterial?: (callback: (material: 'mica' | 'acrylic' | 'none') => void) => void
       onUpdateAcrylicOpacity?: (
         callback: (data: { lightOpacity: number; darkOpacity: number }) => void
       ) => void

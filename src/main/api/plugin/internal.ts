@@ -889,14 +889,6 @@ export class InternalPluginAPI extends MainWindowClient {
       return await windowAPI.setTrayIconVisible(visible)
     })
 
-    this.handleInternal(
-      'internal:set-window-material',
-      async (event, material: 'mica' | 'acrylic' | 'none') => {
-        this.requireApi(event, 'internal:set-window-material')
-        return await windowAPI.setWindowMaterial(material)
-      }
-    )
-
     this.handleInternal('internal:get-window-material', async (event) => {
       this.requireApi(event, 'internal:get-window-material')
       return await windowAPI.getWindowMaterial()

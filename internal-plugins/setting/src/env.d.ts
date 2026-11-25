@@ -384,9 +384,7 @@ declare global {
         setCompactMainWindowHeader: (
           enabled: boolean
         ) => Promise<{ success: boolean; error?: string }>
-        setWindowMaterial: (material: 'mica' | 'acrylic' | 'none') => Promise<{ success: boolean }>
-        getWindowMaterial: () => Promise<'mica' | 'acrylic' | 'none'>
-        onUpdateWindowMaterial: (callback: (material: 'mica' | 'acrylic' | 'none') => void) => void
+        getWindowMaterial: () => Promise<'acrylic' | 'none'>
         updateAcrylicOpacity: (lightOpacity: number, darkOpacity: number) => Promise<void>
         updateSearchWallpaper: (
           wallpaper: SearchWallpaperConfig | null

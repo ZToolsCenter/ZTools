@@ -407,14 +407,6 @@ onMounted(() => {
       })
   }
 
-  // 监听窗口材质更新
-  if (window.ztools?.onUpdateWindowMaterial) {
-    window.ztools.onUpdateWindowMaterial((material) => {
-      document.documentElement.setAttribute('data-material', material)
-      applyAcrylicOverlay()
-    })
-  }
-
   // 监听亚克力透明度更新
   if (window.ztools?.onUpdateAcrylicOpacity) {
     window.ztools.onUpdateAcrylicOpacity((data) => {
