@@ -100,7 +100,9 @@ async function createReadinessHost(): Promise<ReadinessHost> {
     const page = await app.firstWindow()
     await expect(page.locator('.search-input')).toBeVisible()
     // 记录外链而不真的打开系统浏览器。
-    await app.evaluate(({ shell }) => {
+    await app.evaluate(async ({ shell }) => {
+      // 为 Electron 34 的 Node inspector 保留待完成的求值，直到主进程进入下一轮事件循环。
+      await new Promise<void>((resolve) => setImmediate(resolve))
       const opened: string[] = []
       ;(globalThis as { __openedExternal?: string[] }).__openedExternal = opened
       shell.openExternal = async (url: string) => {

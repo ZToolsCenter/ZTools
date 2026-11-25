@@ -37,9 +37,11 @@ test('可以启动主窗口、打开内置设置插件并截图', async ({}, tes
 
     // 等待 Vue 完成挂载，并确认测试模式确实展示了主窗口。
     await expect(searchInput).toBeVisible()
-    const isVisible = await electronApp.evaluate(({ BrowserWindow }) =>
-      BrowserWindow.getAllWindows().some((window) => window.isVisible())
-    )
+    const isVisible = await electronApp.evaluate(async ({ BrowserWindow }) => {
+      // 为 Electron 34 的 Node inspector 保留待完成的求值，直到主进程进入下一轮事件循环。
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      return BrowserWindow.getAllWindows().some((window) => window.isVisible())
+    })
     expect(isVisible).toBe(true)
 
     // 通过 Playwright Locator 驱动真实输入事件并校验渲染状态。

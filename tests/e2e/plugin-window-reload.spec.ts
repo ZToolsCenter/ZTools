@@ -185,7 +185,7 @@ test('插件自建窗口可在创建回调中重载且共享会话不重复注�
         const result = {
           visible: child.isVisible(),
           crashed: child.webContents.isCrashed(),
-          preloads: session.fromPartition('persist:e2e-child-reload').getPreloadScripts().length
+          preloads: session.fromPartition('persist:e2e-child-reload').getPreloads().length
         }
         child.destroy()
         return result

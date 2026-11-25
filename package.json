@@ -50,7 +50,7 @@
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/utils": "^4.0.0",
-    "@electron/asar": "^4.1.0",
+    "@electron/asar": "^3.4.1",
     "adm-zip": "^0.5.16",
     "builder-util-runtime": "9.7.0",
     "chokidar": "^4.0.3",
@@ -88,7 +88,7 @@
     "@vitejs/plugin-vue": "^6.0.1",
     "concurrently": "^9.1.2",
     "cross-env": "^10.1.0",
-    "electron": "41.4.0",
+    "electron": "34.5.8",
     "electron-builder": "26.0.12",
     "electron-vite": "^4.0.1",
     "eslint": "^9.36.0",
