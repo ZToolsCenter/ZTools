@@ -58,8 +58,8 @@ export class AppsAPI extends MainWindowClient {
     this.catalogProvider = provider
     this.catalogInvalidator = invalidate
   }
-  // v5: Windows Start Menu 整体递归、桌面仅扫描顶层，并废弃可能仅含 UWP 的旧缓存。
-  private static readonly APP_CACHE_VERSION = 5
+  // v6: 应用缓存收录 macOS WrappedBundle 的名称。
+  private static readonly APP_CACHE_VERSION = 6
   private static readonly APP_CACHE_VERSION_KEY = 'cached-commands-version'
   private static readonly UWP_PACKAGE_SNAPSHOT_KEY = 'cached-uwp-package-snapshot'
   private pluginManager: PluginManager | null = null
