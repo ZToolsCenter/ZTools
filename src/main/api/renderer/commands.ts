@@ -58,8 +58,14 @@ export class AppsAPI extends MainWindowClient {
     this.catalogProvider = provider
     this.catalogInvalidator = invalidate
   }
-  // v5: Windows Start Menu 整体递归、桌面仅扫描顶层，并废弃可能仅含 UWP 的旧缓存。
-  private static readonly APP_CACHE_VERSION = 5
+  /**
+   * 获取当前平台的本地应用缓存版本。
+   * @returns macOS 使用 v6，其他平台沿用 v5。
+   */
+  private static get appCacheVersion(): number {
+    // macOS v6 收集 WrappedBundle 名称。v5 包含 Windows 开始菜单和桌面的扫描规则变更。
+    return process.platform === 'darwin' ? 6 : 5
+  }
   private static readonly APP_CACHE_VERSION_KEY = 'cached-commands-version'
   private static readonly UWP_PACKAGE_SNAPSHOT_KEY = 'cached-uwp-package-snapshot'
   private pluginManager: PluginManager | null = null
@@ -290,7 +296,7 @@ export class AppsAPI extends MainWindowClient {
           }
         }
 
-        if (cacheVersion !== AppsAPI.APP_CACHE_VERSION) {
+        if (cacheVersion !== AppsAPI.appCacheVersion) {
           console.log('[Commands] 检测到旧版应用缓存，将重新扫描以刷新本地化名称索引...')
         } else if (hasOldFormat) {
           console.log('[Commands] 检测到旧格式图标缓存，将重新扫描并更新为 ztools-icon 协议...')
@@ -459,7 +465,7 @@ export class AppsAPI extends MainWindowClient {
     // 保存到数据库缓存
     try {
       databaseAPI.dbPut('cached-commands', apps)
-      databaseAPI.dbPut(AppsAPI.APP_CACHE_VERSION_KEY, AppsAPI.APP_CACHE_VERSION)
+      databaseAPI.dbPut(AppsAPI.APP_CACHE_VERSION_KEY, AppsAPI.appCacheVersion)
       if (process.platform === 'win32' && uwpScanSucceeded && uwpPackageSnapshot) {
         databaseAPI.dbPut(AppsAPI.UWP_PACKAGE_SNAPSHOT_KEY, uwpPackageSnapshot)
       }
@@ -509,7 +515,7 @@ export class AppsAPI extends MainWindowClient {
         console.log('[Commands] 尚无完整应用缓存，跳过独立 UWP 刷新并等待首次扫描')
         return
       }
-      if (cacheVersion !== AppsAPI.APP_CACHE_VERSION) {
+      if (cacheVersion !== AppsAPI.appCacheVersion) {
         console.log('[Commands] 应用缓存版本过旧，跳过独立 UWP 刷新并等待修复性扫描')
         return
       }

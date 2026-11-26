@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => {
   const store = new Map<string, unknown>()
@@ -39,11 +39,38 @@ vi.mock('../../src/main/api/renderer/systemSettings', () => ({ systemSettingsAPI
 import { AppsAPI } from '../../src/main/api/renderer/commands'
 
 describe('AppsAPI 应用缓存刷新', () => {
+  const originalPlatform = process.platform
+
   beforeEach(() => {
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
     mocks.store.clear()
     vi.clearAllMocks()
     mocks.getUwpApps.mockReturnValue([])
     mocks.getPackageSnapshot.mockReturnValue([])
+  })
+
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
+  })
+
+  it('macOS 重建 v5 缓存并复用已收录 iOS 应用别名的 v6 缓存', async () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
+    const app = {
+      name: 'rednote',
+      path: '/Applications/rednote.app',
+      icon: 'ztools-icon://%2FApplications%2Frednote.app'
+    }
+    const updatedApps = [{ ...app, aliases: ['小红书'] }]
+    mocks.store.set('cached-commands', [app])
+    mocks.store.set('cached-commands-version', 5)
+    mocks.scanApplications.mockResolvedValue({ apps: updatedApps, complete: true, errors: [] })
+    const api = new AppsAPI()
+
+    expect(await api.getApps()).toEqual(updatedApps)
+    expect(mocks.store.get('cached-commands-version')).toBe(6)
+    expect(mocks.store.get('cached-commands')).toEqual(updatedApps)
+    expect(await api.getApps()).toEqual(updatedApps)
+    expect(mocks.scanApplications).toHaveBeenCalledTimes(1)
   })
 
   it('Windows 来源扫描不完整时保留旧缓存且不写数据库', async () => {

@@ -13,8 +13,17 @@ interface LocalizedAppMetadata {
   aliases?: string[]
 }
 
-function uniqueNonEmpty(values: Array<string | undefined | null>): string[] {
-  return [...new Set(values.map((value) => value?.trim()).filter(Boolean) as string[])]
+/**
+ * 清理从应用元数据读取的名称。
+ * @param values 尚未校验的名称和别名。
+ * @returns 按原始顺序去重后的非空名称。
+ */
+function uniqueNonEmpty(values: unknown[]): string[] {
+  const names = values
+    .filter((value): value is string => typeof value === 'string')
+    .map((value) => value.trim())
+    .filter(Boolean)
+  return [...new Set(names)]
 }
 
 // 缓存系统语言对应的 lproj 目录名列表
@@ -216,20 +225,19 @@ async function readStringsFile(filePath: string): Promise<Record<string, string>
   }
 }
 
-// 从 .lproj 目录读取本地化应用名称
+/**
+ * 从 .lproj 目录读取首选语言的应用名称。
+ * @param resourcesPath 包含本地化资源的目录。
+ * @returns 本地化名称及其别名，找不到时返回 null。
+ */
 async function getLocalizedMetadataFromLproj(
-  appPath: string
+  resourcesPath: string
 ): Promise<LocalizedAppMetadata | null> {
   const lprojNames = getLocaleLprojNames()
 
+  // 当前语言没有可用名称时继续尝试其余系统首选语言。
   for (const lprojName of lprojNames) {
-    const stringsPath = path.join(
-      appPath,
-      'Contents',
-      'Resources',
-      `${lprojName}.lproj`,
-      'InfoPlist.strings'
-    )
+    const stringsPath = path.join(resourcesPath, `${lprojName}.lproj`, 'InfoPlist.strings')
     try {
       if (!fsSync.existsSync(stringsPath)) continue
 
@@ -249,11 +257,16 @@ async function getLocalizedMetadataFromLproj(
   return null
 }
 
-// 从 InfoPlist.loctable 读取本地化应用名称（新版 macOS 系统应用使用此格式）
+/**
+ * 从 macOS 应用的 InfoPlist.loctable 读取首选语言的名称。
+ * @param resourcesPath 包含本地化资源的目录。
+ * @returns 本地化名称及其别名，找不到时返回 null。
+ */
 async function getLocalizedMetadataFromLoctable(
-  appPath: string
+  resourcesPath: string
 ): Promise<LocalizedAppMetadata | null> {
-  const loctablePath = path.join(appPath, 'Contents', 'Resources', 'InfoPlist.loctable')
+  // 大多数第三方应用没有 loctable，先检查资源是否存在。
+  const loctablePath = path.join(resourcesPath, 'InfoPlist.loctable')
   if (!fsSync.existsSync(loctablePath)) return null
 
   try {
@@ -282,50 +295,69 @@ async function getLocalizedMetadataFromLoctable(
   return null
 }
 
-// 获取本地化应用名称（先尝试 lproj，再尝试 loctable）
-async function getLocalizedMetadata(appPath: string): Promise<LocalizedAppMetadata | null> {
+/**
+ * 依次从 .lproj 和 loctable 读取应用的本地化名称。
+ * @param resourcesPath 包含本地化资源的目录。
+ * @returns 本地化名称及其别名，找不到时返回 null。
+ */
+async function getLocalizedMetadata(resourcesPath: string): Promise<LocalizedAppMetadata | null> {
   return (
-    (await getLocalizedMetadataFromLproj(appPath)) ??
-    (await getLocalizedMetadataFromLoctable(appPath))
+    (await getLocalizedMetadataFromLproj(resourcesPath)) ??
+    (await getLocalizedMetadataFromLoctable(resourcesPath))
   )
 }
 
-async function getBundleNames(appPath: string): Promise<string[]> {
-  const fileName = path.basename(appPath, '.app')
-
+/**
+ * 读取 Info.plist 中的默认显示名和内部名称。
+ * @param plistPath 应用包的 Info.plist 路径。
+ * @returns 可用的包名称，读取失败时返回空数组。
+ */
+async function getBundleNames(plistPath: string): Promise<string[]> {
   try {
-    const data: any = await new Promise((resolve, reject) => {
-      const plistPath = path.join(appPath, 'Contents', 'Info.plist')
-      plist.readFile(plistPath, (err: any, result: any) => {
+    const data = await new Promise<Record<string, unknown> | undefined>((resolve, reject) => {
+      plist.readFile<Record<string, unknown>>(plistPath, (err, result) => {
         if (err) reject(err)
         else resolve(result)
       })
     })
 
-    return uniqueNonEmpty([data?.CFBundleDisplayName, data?.CFBundleName, fileName])
+    return uniqueNonEmpty([data?.CFBundleDisplayName, data?.CFBundleName])
   } catch {
-    return uniqueNonEmpty([fileName])
+    // 外层应用缺少包名称时，调用方会使用文件名。
+    return []
   }
 }
 
-// 获取应用显示名称（优先本地化名称，无需子进程）
+/**
+ * 读取外层应用显示名，并收集用于搜索的包名称。
+ * @param appPath 用于启动的外层 .app 路径。
+ * @returns 显示名称和可搜索别名。
+ */
 async function getAppDisplayInfo(appPath: string): Promise<LocalizedAppMetadata> {
-  const bundleNames = await getBundleNames(appPath)
+  const contentsPath = path.join(appPath, 'Contents')
+  const fileName = path.basename(appPath, '.app').trim()
+  const bundleNames = await getBundleNames(path.join(contentsPath, 'Info.plist'))
+  const localizedMetadata = await getLocalizedMetadata(path.join(contentsPath, 'Resources'))
+  const name = localizedMetadata?.name || bundleNames[0] || fileName
+  const aliases: Array<string | undefined> = [
+    ...bundleNames,
+    fileName,
+    ...(localizedMetadata?.aliases ?? [])
+  ]
 
-  // 1. 尝试从 .lproj 获取本地化名称（如 "时钟"、"访达"）
-  const localizedMetadata = await getLocalizedMetadata(appPath)
-  if (localizedMetadata?.name) {
-    return {
-      name: localizedMetadata.name,
-      aliases: uniqueNonEmpty([...bundleNames, ...(localizedMetadata.aliases || [])]).filter(
-        (alias) => alias !== localizedMetadata.name
-      )
-    }
+  // 将 iOS 应用的内层名称用于搜索，保持外层应用名称与历史记录兼容。
+  const wrappedBundlePath = path.join(appPath, 'WrappedBundle')
+  const wrappedPlistPath = path.join(wrappedBundlePath, 'Info.plist')
+  if (fsSync.existsSync(wrappedPlistPath)) {
+    const wrappedMetadata = await getLocalizedMetadata(wrappedBundlePath)
+    aliases.push(
+      wrappedMetadata?.name,
+      ...(wrappedMetadata?.aliases ?? []),
+      ...(await getBundleNames(wrappedPlistPath))
+    )
   }
 
-  // 2. 兜底：使用 bundle 原名 / 文件名
-  const [name, ...aliases] = bundleNames
-  return { name, aliases }
+  return { name, aliases: uniqueNonEmpty(aliases).filter((alias) => alias !== name) }
 }
 
 // 递归收集目录下的 .app bundle
