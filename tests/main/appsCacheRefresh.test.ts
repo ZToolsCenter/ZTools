@@ -53,12 +53,16 @@ describe('AppsAPI 应用缓存刷新', () => {
     Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
   })
 
-  it('macOS 重建 v5 缓存并复用已收录 iOS 应用别名的 v6 缓存', async () => {
-    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
+  it.each([
+    ['darwin', '/Applications/rednote.app'],
+    ['win32', 'C:\\Apps\\Rednote.lnk'],
+    ['linux', '/usr/share/applications/rednote.desktop']
+  ] as const)('%s 重建 v5 应用缓存并复用 v6 缓存', async (platform, appPath) => {
+    Object.defineProperty(process, 'platform', { value: platform, configurable: true })
     const app = {
       name: 'rednote',
-      path: '/Applications/rednote.app',
-      icon: 'ztools-icon://%2FApplications%2Frednote.app'
+      path: appPath,
+      icon: `ztools-icon://${encodeURIComponent(appPath)}`
     }
     const updatedApps = [{ ...app, aliases: ['小红书'] }]
     mocks.store.set('cached-commands', [app])
@@ -73,7 +77,7 @@ describe('AppsAPI 应用缓存刷新', () => {
     expect(mocks.scanApplications).toHaveBeenCalledTimes(1)
   })
 
-  it('Windows 来源扫描不完整时保留旧缓存且不写数据库', async () => {
+  it('Windows 升级扫描不完整时保留 v5 缓存且不写数据库', async () => {
     const oldApps = [{ name: 'Old App', path: 'C:\\OldApp.lnk' }]
     mocks.store.set('cached-commands', oldApps)
     mocks.store.set('cached-commands-version', 5)
@@ -82,13 +86,10 @@ describe('AppsAPI 应用缓存刷新', () => {
       complete: false,
       errors: ['flat:C:\\Desktop: scan timed out']
     })
-    const api = new AppsAPI() as unknown as {
-      scanAndCacheApps: () => Promise<{ apps: unknown[]; cacheUpdated: boolean }>
-    }
+    const api = new AppsAPI()
 
-    const result = await api.scanAndCacheApps()
-
-    expect(result).toEqual({ apps: oldApps, cacheUpdated: false })
+    expect(await api.getApps()).toEqual(oldApps)
+    expect(mocks.store.get('cached-commands-version')).toBe(5)
     expect(mocks.dbPut).not.toHaveBeenCalled()
     expect(mocks.getUwpApps).not.toHaveBeenCalled()
   })
@@ -117,7 +118,7 @@ describe('AppsAPI 应用缓存刷新', () => {
   })
 
   it('独立 UWP 刷新保留 Win32 条目且不调用快捷方式扫描器', async () => {
-    mocks.store.set('cached-commands-version', 5)
+    mocks.store.set('cached-commands-version', 6)
     mocks.store.set('cached-commands', [
       { name: 'Win32 App', path: 'C:\\Win32App.lnk' },
       { name: 'Old Store App', path: 'uwp:Publisher.OldStoreApp' }
