@@ -122,6 +122,7 @@ interface NativeAddon {
   stopWindowMonitor: () => void
   getActiveWindow: () => ActiveWindowResult | null
   activateWindow: (identifier: string | number) => boolean
+  useAppKitWindowCornerMask?: () => boolean
   simulatePaste: () => boolean
   simulateKeyboardTap: (key: string, ...modifiers: string[]) => boolean
   ensureOptimizedShortcutListener: (
@@ -209,6 +210,16 @@ interface NativeAddon {
   setLogLevel?: (level: string) => void
   /** 原生日志：查询当前输出等级 */
   getLogLevel?: () => string
+}
+
+/**
+ * 为受影响的 macOS Electron 运行时启用 AppKit 原生窗口圆角。
+ * @returns AppKit 遮罩已在当前进程启用时返回 true。
+ */
+export function useAppKitWindowCornerMask(): boolean {
+  // 私有方法仅在验证过的版本上启用，较旧的原生模块也可以正常启动。
+  if (platform !== 'darwin' || process.versions.electron !== '34.5.8') return false
+  return (addon as NativeAddon | null)?.useAppKitWindowCornerMask?.() ?? false
 }
 
 interface WindowInfo {
