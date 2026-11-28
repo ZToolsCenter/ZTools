@@ -67,9 +67,18 @@ class InternalApiRequestDialogManager {
    * @returns 无返回值
    */
   public enqueue(pluginName: string, entry: InternalApiRequestDialogEntry): void {
-    // 正在展示同一插件的弹窗时不再重复入队（服务端已合并申请内容）。
-    if (this.currentPluginName === pluginName) return
-    if (this.queue.some((item) => item.pluginName === pluginName)) return
+    // 同一插件的弹窗正在展示时不重复入队；申请已在存储里合并，弹窗内容要刷新成合并后的版本，
+    // 否则用户批准的是旧内容，而批准会清空整条申请，追加的通道会被静默丢弃。
+    if (this.currentPluginName === pluginName) {
+      this.refreshCurrentDialog({ pluginName, entry })
+      return
+    }
+    // 排队中的申请同样以最新合并结果为准。
+    const queued = this.queue.find((item) => item.pluginName === pluginName)
+    if (queued) {
+      queued.entry = entry
+      return
+    }
 
     this.queue.push({ pluginName, entry })
     // 无弹窗在展示时立即弹出，否则等待当前弹窗处理完毕后依次展示。
@@ -216,6 +225,25 @@ class InternalApiRequestDialogManager {
     window.once('ready-to-show', () => {
       if (!window.isDestroyed()) window.show()
     })
+  }
+
+  /**
+   * 用最新的申请内容重新渲染当前正在展示的弹窗。
+   * @param item 合并后的申请条目
+   * @returns 无返回值
+   */
+  private refreshCurrentDialog(item: DialogQueueItem): void {
+    const window = this.dialogWindow
+    if (!window || window.isDestroyed()) return
+
+    // 页面重新加载会重置勾选状态；内容已变化，用户需要重新确认全部通道。
+    const html = this.generateDialogHTML(item, nativeTheme.shouldUseDarkColors)
+    window
+      .loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
+      .catch((error: unknown) => {
+        // 连续追加申请会让前一次加载被中止，属于预期情况，只记录不抛出。
+        console.warn('[InternalApiRequestDialog] 刷新弹窗内容失败:', error)
+      })
   }
 
   /**
