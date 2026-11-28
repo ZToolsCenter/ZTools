@@ -2258,6 +2258,34 @@ export class PluginManager extends MainWindowClient {
   }
 
   /**
+   * 获取调用方所属插件的高级 API 授权信息，覆盖插件主视图、分离窗口和插件创建的子窗口。
+   * 子窗口与创建它的插件共享授权，不能因为不是插件主视图就被当作宿主页面放行。
+   * @param webContents 发起调用的 WebContents 实例
+   * @returns 所属插件的授权信息；不属于任何插件（如宿主主渲染进程）时返回 null
+   */
+  public getInternalApiCallerInfo(
+    webContents: WebContents
+  ): ReturnType<PluginManager['getPluginInfoByWebContents']> {
+    const pluginInfo = this.getPluginInfoByWebContents(webContents)
+    if (pluginInfo) return pluginInfo
+
+    // 子窗口由 pluginWindowManager 登记，按创建它的插件名称实时解析授权。
+    const pluginName = pluginWindowManager.getPluginNameByWebContentsId(webContents.id)
+    const pluginPath = pluginWindowManager.getPluginPathByWebContentsId(webContents.id)
+    if (!pluginName || !pluginPath) return null
+
+    const settings = databaseAPI.dbGet('settings-general') || {}
+    const auth = this.resolveInternalApiAuth(pluginName, settings)
+    return {
+      name: pluginName,
+      path: pluginPath,
+      canUseInternalApi: auth.canUseInternalApi,
+      internalApiPermissions: auth.internalApiPermissions,
+      isBundledInternal: isBundledInternalPlugin(pluginName)
+    }
+  }
+
+  /**
    * 获取调用 WebContents 对应清单中的规范插件名称。
    * @param webContents 插件页面的 WebContents 实例。
    * @returns 清单名称与运行时插件匹配时返回规范名称，否则返回 null。
