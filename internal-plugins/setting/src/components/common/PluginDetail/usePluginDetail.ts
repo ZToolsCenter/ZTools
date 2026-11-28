@@ -196,6 +196,7 @@ export function usePluginDetail(options: UsePluginDetailOptions) {
   const readmeContent = ref<string>('')
   const readmeLoading = ref(false)
   const readmeError = ref<string>('')
+  let readmeRequestId = 0
 
   // 插件数据状态
   const docKeys = ref<DocItem[]>([])
@@ -251,15 +252,21 @@ export function usePluginDetail(options: UsePluginDetailOptions) {
     }
   }
 
-  // 加载 README
+  /**
+   * 加载当前插件的 README，并丢弃切换插件后才返回的旧响应。
+   * @returns 请求完成后结束的 Promise
+   */
   async function loadReadme(): Promise<void> {
     if (!showDetail) return
+    // 同一组件内切换插件时旧请求仍会返回，用序号保证只有最新一次请求可以写入状态。
+    const requestId = ++readmeRequestId
     readmeLoading.value = true
     readmeError.value = ''
 
     try {
       if (plugin.value.name) {
         const result = await window.ztools.internal.getPluginReadme(plugin.value.name)
+        if (requestId !== readmeRequestId) return
         if (result.success && result.content) {
           readmeContent.value = result.content
         } else {
@@ -269,10 +276,12 @@ export function usePluginDetail(options: UsePluginDetailOptions) {
         readmeError.value = '插件信息不完整'
       }
     } catch (err) {
+      if (requestId !== readmeRequestId) return
       console.error('加载 README 失败:', err)
       readmeError.value = '读取失败'
     } finally {
-      readmeLoading.value = false
+      // 过期请求不得提前结束新请求的加载态。
+      if (requestId === readmeRequestId) readmeLoading.value = false
     }
   }
 
