@@ -1,0 +1,18 @@
+# 仓库内文本文件统一使用 LF，与 .editorconfig、Prettier 的 endOfLine 保持一致，
+# 不再依赖各开发者本机的 core.autocrlf 设置。
+* text=auto eol=lf
+
+# 二进制文件不做换行符转换。
+*.png binary
+*.gif binary
+*.ico binary
+*.icns binary
+*.node binary
+*.dylib binary
+*.dll binary
+*.exe binary
+*.zip binary
+*.zpx binary
+*.asar binary
+*.woff binary
+*.woff2 binary
