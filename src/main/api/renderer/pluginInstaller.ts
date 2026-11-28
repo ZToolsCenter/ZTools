@@ -547,6 +547,14 @@ export class PluginInstallerAPI {
         return { success: false, error: 'plugin.json 缺少 name 字段' }
       }
 
+      // 名称会直接拼成插件目录路径，必须在删除或移动任何目录之前确认它不会越出插件根目录。
+      try {
+        assertSafePluginArtifactPart(pluginConfig.name, '插件名称')
+      } catch (error) {
+        await fs.rm(tempDir, { recursive: true, force: true })
+        return { success: false, error: error instanceof Error ? error.message : '插件名称无效' }
+      }
+
       const pluginName = pluginConfig.name
       const targetPath = path.join(PLUGIN_DIR, pluginName)
 
