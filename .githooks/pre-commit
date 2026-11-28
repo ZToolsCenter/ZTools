@@ -2,14 +2,31 @@
 
 set -e
 
-STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACMR)
+# 只格式化本次提交涉及的文件；对全仓库执行 prettier 会改写大量无关文件。
+STAGED_FILES=$(git -c core.quotepath=false diff --cached --name-only --diff-filter=ACMR)
+[ -z "$STAGED_FILES" ] && exit 0
 
-pnpm run format
+# 同时含有未暂存改动的文件（例如 git add -p 的部分暂存）不能自动格式化，
+# 否则格式化后重新 git add 会把未暂存的部分一并提交。
+PARTIALLY_STAGED=$(git -c core.quotepath=false diff --name-only)
 
-if [ -n "$STAGED_FILES" ]; then
-  echo "$STAGED_FILES" | while IFS= read -r file; do
-    [ -f "$file" ] && git add -- "$file"
-  done
-fi
+FORMAT_LIST=$(mktemp)
+trap 'rm -f "$FORMAT_LIST"' EXIT
+
+echo "$STAGED_FILES" | while IFS= read -r file; do
+  [ -f "$file" ] || continue
+  if printf '%s\n' "$PARTIALLY_STAGED" | grep -qxF -- "$file"; then
+    echo "pre-commit: 跳过格式化（存在未暂存改动）: $file"
+    continue
+  fi
+  printf '%s\0' "$file" >>"$FORMAT_LIST"
+done
+
+# 空列表时不调用 prettier，避免它在无文件参数时处理整个目录。
+[ -s "$FORMAT_LIST" ] || exit 0
+
+# 不支持的文件类型和 .prettierignore 中的文件由 prettier 自行跳过。
+xargs -0 pnpm exec prettier --write --ignore-unknown -- <"$FORMAT_LIST"
+xargs -0 git add -- <"$FORMAT_LIST"
 
 #pnpm run lint
