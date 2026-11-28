@@ -24,6 +24,7 @@ import mcpServer from './core/mcpServer'
 import { registerIconProtocolForSession, registerIconScheme } from './core/iconProtocol'
 import { getLogsPath } from './core/appData/appDataPaths'
 import { loadInternalPlugins } from './core/internalPluginLoader'
+import { useAppKitWindowCornerMask } from './core/native'
 import pluginManager from './managers/pluginManager'
 import windowManager from './managers/windowManager'
 import superPanelManager from './core/superPanelManager'
@@ -189,7 +190,14 @@ export function getCurrentShortcut(): string {
   return windowManager.getCurrentShortcut()
 }
 
+/**
+ * 在 Electron 就绪后初始化原生窗口、插件和应用服务。
+ * @returns 应用初始化完成后结束的 Promise。
+ */
 app.whenReady().then(async () => {
+  // 在权限提示和首次运行引导创建窗口前切换原生圆角实现。
+  useAppKitWindowCornerMask()
+
   // macOS 辅助功能权限检查和请求（如果未授权则弹窗提示）
   await ensureMacAccessibilityPermission()
 
