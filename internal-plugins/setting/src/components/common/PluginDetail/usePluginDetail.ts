@@ -1,4 +1,5 @@
 import { marked } from 'marked'
+import DOMPurify from 'dompurify'
 import { computed, onMounted, onUnmounted, ref, watch, type Ref } from 'vue'
 import { useToast } from '@/components'
 import type { DocItem, PluginItem, PluginUninstallOptions, TabId, TabItem } from './types'
@@ -211,10 +212,14 @@ export function usePluginDetail(options: UsePluginDetailOptions) {
   const memoryLoading = ref(false)
   let memoryUpdateTimer: ReturnType<typeof setTimeout> | null = null
 
-  // 渲染 Markdown
+  // 渲染 Markdown：README 来自插件作者，必须消毒后才能交给 v-html，
+  // 设置插件拥有特权 API，未消毒的脚本会直接越权；规则与更新日志保持一致。
   const renderedMarkdown = computed(() => {
     if (!readmeContent.value) return ''
-    return marked(readmeContent.value)
+    return DOMPurify.sanitize(marked.parse(readmeContent.value, { async: false }), {
+      USE_PROFILES: { html: true },
+      FORBID_TAGS: ['style', 'form', 'input', 'button']
+    })
   })
 
   // 可用的 Tab
