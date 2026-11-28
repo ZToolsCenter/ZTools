@@ -90,6 +90,7 @@
 </template>
 
 <script setup lang="ts">
+import DOMPurify from 'dompurify'
 import { marked } from 'marked'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import logo from '../../assets/logo.png'
@@ -133,9 +134,12 @@ const acrylicLightOpacity = ref(78)
 const acrylicDarkOpacity = ref(50)
 const stopUpdateListeners: Array<() => void> = []
 
-// 解析 Markdown
+// 更新日志来自远端更新源，渲染前必须消毒，避免其中的脚本或事件属性在带 preload 的更新窗口执行
 const parsedChangelog = computed(() => {
-  return marked.parse(changelog.value)
+  return DOMPurify.sanitize(marked.parse(changelog.value, { async: false }), {
+    USE_PROFILES: { html: true },
+    FORBID_TAGS: ['style', 'form', 'input', 'button']
+  })
 })
 
 const isBusy = computed(() => status.value === 'downloading' || status.value === 'installing')
