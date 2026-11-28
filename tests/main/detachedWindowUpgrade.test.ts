@@ -12,8 +12,10 @@ vi.mock('../../src/main/api/shared/database', () => ({
   default: { dbGet: vi.fn(() => ({})), dbPut: vi.fn() }
 }))
 
-vi.mock('../../src/main/utils/windowUtils', () => ({
-  getWindowsWindowOptions: vi.fn(() => ({}))
+vi.mock('../../src/main/utils/windowMaterial', () => ({
+  getHostWindowMaterial: vi.fn(() => 'none'),
+  getWindowsHostWindowOptions: vi.fn(() => ({})),
+  initializeWindowsHostWindowMaterial: vi.fn()
 }))
 
 vi.mock('../../src/main/core/globalStyles.js', () => ({

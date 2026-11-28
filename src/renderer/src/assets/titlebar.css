@@ -26,8 +26,9 @@
   --win-button-hover: rgba(0, 0, 0, 0.05);
 }
 
+/* 分离宿主使用与主搜索窗口一致的叠色，让标题栏及透明插件正文透出材质。 */
 .os-windows[data-material='acrylic'] {
-  --titlebar-bg: transparent;
+  --titlebar-bg: rgba(245, 245, 247, 0.72);
   --input-bg: rgba(255, 255, 255, 0.5);
   --input-focus-bg: rgba(255, 255, 255, 0.9);
   --hover-bg: rgba(0, 0, 0, 0.04);
@@ -64,7 +65,7 @@
   }
 
   .os-windows[data-material='acrylic'] {
-    --titlebar-bg: transparent;
+    --titlebar-bg: rgba(22, 22, 22, 0.72);
     --input-bg: rgba(255, 255, 255, 0.04);
     --input-focus-bg: rgba(255, 255, 255, 0.1);
     --hover-bg: rgba(255, 255, 255, 0.05);

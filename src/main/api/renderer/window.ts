@@ -1,7 +1,8 @@
 import { MainWindowClient, type MainWindowSource } from '../../common/mainWindowClient'
-import { ipcMain, screen } from 'electron'
+import { BrowserWindow, ipcMain, screen } from 'electron'
 import { WINDOW_WIDTH } from '../../common/constants.js'
 import windowManager from '../../managers/windowManager.js'
+import { applyHostWindowOpacity, getHostWindowMaterial } from '../../utils/windowMaterial'
 
 /**
  * 窗口管理API - 主程序专用
@@ -33,13 +34,17 @@ export class WindowAPI extends MainWindowClient {
     ipcMain.on('resize-window', (_event, height: number) => this.resizeWindow(height))
     ipcMain.on('update-launch-context', (_event, context: any) => this.updateLaunchContext(context))
     ipcMain.handle('get-window-position', () => this.getWindowPosition())
-    ipcMain.handle('get-window-material', () => this.getWindowMaterial())
+    // 页面的查询只读取其自身窗口，不受主窗口休眠或销毁影响。
+    ipcMain.handle('get-window-material', (event) =>
+      getHostWindowMaterial(BrowserWindow.fromWebContents(event.sender))
+    )
     ipcMain.on('set-window-position', (_event, x: number, y: number) =>
       this.setWindowPosition(x, y)
     )
     // 拖动控制：锁定/解锁窗口尺寸
     ipcMain.on('set-window-size-lock', (_event, lock: boolean) => {
-      if (!this.mainWindow) return
+      // DWM 的移动路径始终使用应用记录的尺寸，不依赖原生边界快照。
+      if (!this.mainWindow || windowManager.usesDwmMainWindow()) return
 
       if (lock) {
         // 锁定：记录当前尺寸（宽度使用固定常量，避免多显示器 DPI 缩放导致尺寸漂移）
@@ -105,22 +110,17 @@ export class WindowAPI extends MainWindowClient {
    */
   public resizeWindow(height: number): void {
     if (this.mainWindow) {
-      // 使用固定宽度常量，避免多显示器 DPI 缩放导致 getSize() 返回被缩放的值
-      const width = WINDOW_WIDTH
       // 限制高度范围：最小为当前顶部栏高度，最大不超过当前屏幕可用高度。
       const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
       const maxHeight = display.workAreaSize.height
       const minHeight = windowManager.getMainWindowHeaderHeight()
       const newHeight = Math.max(minHeight, Math.min(height, maxHeight))
 
-      this.mainWindow.setBounds({
-        width,
-        height: newHeight
-      })
+      windowManager.resizeMainWindow(newHeight)
 
       // 如果当前处于锁定状态，更新锁定的尺寸
       if (this.lockedSize) {
-        this.lockedSize = { width, height: newHeight }
+        this.lockedSize = { width: WINDOW_WIDTH, height: newHeight }
         console.log('[WindowAPI] 更新锁定尺寸:', this.lockedSize)
       }
     }
@@ -134,39 +134,35 @@ export class WindowAPI extends MainWindowClient {
     return { x: 0, y: 0 }
   }
 
+  /**
+   * 在保持搜索布局尺寸的前提下移动主窗口。
+   * @param x 目标位置横坐标。
+   * @param y 目标位置纵坐标。
+   * @returns 无返回值。
+   */
   public setWindowPosition(x: number, y: number): void {
-    if (this.mainWindow && this.lockedSize) {
-      // 拖动时强制保持锁定的尺寸
-      this.mainWindow.setBounds({
-        x: Math.round(x),
-        y: Math.round(y),
-        width: this.lockedSize.width,
-        height: this.lockedSize.height
-      })
-    } else if (this.mainWindow) {
-      this.mainWindow.setPosition(x, y)
-    }
+    windowManager.applyMainWindowPosition(
+      Math.round(x),
+      Math.round(y),
+      this.lockedSize ?? undefined
+    )
   }
 
+  /**
+   * 将不透明度应用到支持整窗 alpha 的当前主窗口。
+   * @param opacity 用户选择的整窗不透明度。
+   * @returns 无返回值。
+   */
   public setWindowOpacity(opacity: number): void {
-    if (this.mainWindow) {
-      const clampedOpacity = Math.max(0.3, Math.min(1, opacity))
-      this.mainWindow.setOpacity(clampedOpacity)
-      console.log('[WindowAPI] 设置窗口不透明度:', clampedOpacity)
+    // 设置 IPC 与启动、唤醒共用同一个原生材质保护。
+    if (applyHostWindowOpacity(this.mainWindow, opacity)) {
+      console.log('[WindowAPI] 设置窗口不透明度:', opacity)
     }
   }
 
   public setTrayIconVisible(visible: boolean): void {
     windowManager.setTrayIconVisible(visible)
     console.log('[WindowAPI] 设置托盘图标可见性:', visible)
-  }
-
-  /**
-   * 向渲染进程提供宿主窗口在构造时使用的材质。
-   * @returns 为当前操作系统选定的背景材质。
-   */
-  public getWindowMaterial(): 'acrylic' | 'none' {
-    return windowManager.getWindowMaterial()
   }
 
   private openSettings(): void {

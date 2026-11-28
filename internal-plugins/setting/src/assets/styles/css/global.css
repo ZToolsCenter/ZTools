@@ -74,18 +74,13 @@ body::-webkit-scrollbar {
   --highlight-color: rgba(234, 88, 12, 0.9);
 }
 
-.os-windows[data-material='acrylic'] {
+/* 正文复用宿主的亚克力和叠色，不再绘制第二层背景。 */
+.os-windows[data-material='acrylic']:root {
   --bg-color: transparent;
-  --card-bg: rgba(255, 255, 255, 0.3);
-  --control-bg: rgba(255, 255, 255, 0.25);
-  --hover-bg: rgba(0, 0, 0, 0.05);
-  --active-bg: rgba(0, 0, 0, 0.08);
-  --divider-color: rgba(0, 0, 0, 0.06);
-  --control-border: rgba(0, 0, 0, 0.15);
-  --highlight-color: rgba(234, 88, 12, 0.9);
 }
 
-.os-windows[data-material='none'] {
+/* 宿主无窗口材质时才为设置页和控件使用实色底。 */
+.os-windows:not([data-material='mica'], [data-material='acrylic']):root {
   --bg-color: #f4f4f4;
   --card-bg: white;
   --control-bg: white;
@@ -173,18 +168,7 @@ body::-webkit-scrollbar {
     --highlight-color: rgba(251, 146, 60, 0.85);
   }
 
-  .os-windows[data-material='acrylic'] {
-    --bg-color: transparent;
-    --card-bg: rgba(255, 255, 255, 0.02);
-    --control-bg: rgba(255, 255, 255, 0.04);
-    --hover-bg: rgba(255, 255, 255, 0.05);
-    --active-bg: rgba(255, 255, 255, 0.08);
-    --divider-color: rgba(255, 255, 255, 0.06);
-    --control-border: rgba(255, 255, 255, 0.15);
-    --highlight-color: rgba(251, 146, 60, 0.85);
-  }
-
-  .os-windows[data-material='none'] {
+  .os-windows:not([data-material='mica'], [data-material='acrylic']):root {
     --bg-color: #303133;
     --card-bg: #3a3a3c;
     --control-bg: #48484a;
@@ -238,8 +222,12 @@ body {
   --primary-light-bg: color-mix(in srgb, var(--primary-color), white 80%);
 }
 
-/* 默认的 active-bg 和 hover-bg（非 Windows 材质模式） */
-html:not(.os-windows[data-material='mica']):not(.os-windows[data-material='acrylic']) body {
+.os-windows:not([data-material='mica']) body {
+  background-color: var(--bg-color);
+}
+
+/* 除 Mica 外使用与主题色匹配的交互背景。 */
+html:not(.os-windows[data-material='mica']) body {
   --active-bg: color-mix(in srgb, var(--primary-color) 20%, white);
   --hover-bg: color-mix(in srgb, var(--primary-color) 12%, white);
 }
@@ -268,8 +256,8 @@ html:not(.os-windows[data-material='mica']):not(.os-windows[data-material='acryl
     --primary-light-bg: color-mix(in srgb, var(--primary-color), transparent 92%);
   }
 
-  /* 暗色模式下默认的 active-bg 和 hover-bg（非 Windows 材质模式） */
-  html:not(.os-windows[data-material='mica']):not(.os-windows[data-material='acrylic']) body {
+  /* 除 Mica 外使用暗色主题的交互背景。 */
+  html:not(.os-windows[data-material='mica']) body {
     --active-bg: color-mix(in srgb, var(--primary-color) 12%, #303133);
     --hover-bg: color-mix(in srgb, var(--primary-color) 5%, #303133);
   }
@@ -426,24 +414,6 @@ html:not(.os-windows[data-material='mica']):not(.os-windows[data-material='acryl
   border-color: color-mix(in srgb, var(--primary-color), black 20%);
 }
 
-/* Acrylic 材质模式下使用透明风格 */
-.os-windows[data-material='acrylic'] .btn-solid {
-  background: var(--control-bg);
-  border-color: var(--primary-color);
-  color: var(--primary-color);
-  font-weight: 600;
-}
-
-.os-windows[data-material='acrylic'] .btn-solid:hover:not(:disabled) {
-  background: var(--hover-bg);
-  border-color: color-mix(in srgb, var(--primary-color), black 15%);
-  color: var(--primary-color);
-}
-
-.os-windows[data-material='acrylic'] .btn-solid:active:not(:disabled) {
-  background: var(--active-bg);
-}
-
 /* 输入框基础类 */
 .input {
   width: 100%;
@@ -594,15 +564,6 @@ html:not(.os-windows[data-material='mica']):not(.os-windows[data-material='acryl
 
 .card.clickable {
   cursor: pointer;
-}
-
-/* macOS 风格毛玻璃效果 - 仅 Acrylic 模式 */
-.os-windows[data-material='acrylic'] .card,
-.os-windows[data-material='acrylic'] .btn,
-.os-windows[data-material='acrylic'] .input,
-.os-windows[data-material='acrylic'] .select {
-  backdrop-filter: blur(40px) saturate(180%);
-  -webkit-backdrop-filter: blur(40px) saturate(180%);
 }
 
 /* 全局自适应图标样式 - 主题色渐变 */

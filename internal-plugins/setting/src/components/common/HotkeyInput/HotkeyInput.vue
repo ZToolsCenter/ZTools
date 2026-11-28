@@ -8,6 +8,7 @@
 import { computed, onUnmounted, ref } from 'vue'
 import { useToast } from '@/components/common/Toast'
 import { useEscapeHandler } from '@/composables'
+import { formatShortcutForDisplay } from '@shared/shortcut'
 
 interface Props {
   modelValue: string
@@ -128,14 +129,14 @@ function getModifierName(code: string): string {
 const displayHotkey = computed(() => {
   if (isRecording.value) {
     if (recordedKeys.value.length > 0) {
-      return recordedKeys.value.join('+')
+      return formatShortcutForDisplay(recordedKeys.value.join('+'), props.platform)
     }
     return '请按下快捷键...'
   }
   if (isDoubleTapFormat(props.modelValue)) {
-    return props.modelValue
+    return formatShortcutForDisplay(props.modelValue, props.platform)
   }
-  return props.modelValue || props.placeholder
+  return formatShortcutForDisplay(props.modelValue, props.platform) || props.placeholder
 })
 
 async function startRecording(): Promise<void> {

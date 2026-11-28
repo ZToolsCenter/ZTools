@@ -22,6 +22,8 @@ import { promises as fs } from 'fs'
 import settingsAPI from '../renderer/settings.js'
 import systemAPI from '../renderer/system.js'
 import windowAPI from '../renderer/window.js'
+import { getPluginHostWindow } from './pluginHostWindow'
+import { getHostWindowMaterial } from '../../utils/windowMaterial'
 import pluginToolsAPI from './tools'
 import databaseAPI from '../shared/database'
 import { analyzeImage } from '../shared/imageAnalysis'
@@ -889,9 +891,9 @@ export class InternalPluginAPI extends MainWindowClient {
       return await windowAPI.setTrayIconVisible(visible)
     })
 
-    this.handleInternal('internal:get-window-material', async (event) => {
+    this.handleInternal('internal:get-window-material', (event) => {
       this.requireApi(event, 'internal:get-window-material')
-      return await windowAPI.getWindowMaterial()
+      return getHostWindowMaterial(getPluginHostWindow(event.sender, this.mainWindow))
     })
 
     this.handleInternal('internal:set-launch-at-login', async (event, enabled: boolean) => {

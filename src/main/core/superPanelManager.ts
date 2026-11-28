@@ -16,6 +16,7 @@ import pluginsAPI from '../api/renderer/plugins.js'
 import windowManager from '../managers/windowManager.js'
 import clipboardManager, { type LastCopiedContent } from '../managers/clipboardManager.js'
 import { getWindowsWindowOptions } from '../utils/windowUtils.js'
+import { recordElectronWindowMaterial } from '../utils/windowMaterial'
 import providerManager from './provider/providerManager.js'
 import { filterSuperPanelPinnedCommands } from './superPanelPinnedCommands.js'
 import { decodeFileUrlToPath } from '../utils/common'
@@ -426,12 +427,13 @@ class SuperPanelManager extends MainWindowClient {
       windowConfig.transparent = true
       windowConfig.vibrancy = 'fullscreen-ui'
     }
-    // 面板与主窗口使用相同的 Windows 背景构造参数。
+    // 超级面板继续使用 Electron 的 Windows 背景材质。
     else if (process.platform === 'win32') {
       Object.assign(windowConfig, getWindowsWindowOptions())
     }
 
     const win = new BrowserWindow(windowConfig)
+    recordElectronWindowMaterial(win, windowConfig.backgroundMaterial)
     registerCommandHost(win.webContents)
     win.webContents.on('did-start-loading', () => {
       // 重载页面丢失展示身份时，同步回收面板独立所有者下的快照。

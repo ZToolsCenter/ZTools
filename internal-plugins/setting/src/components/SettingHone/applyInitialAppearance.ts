@@ -35,7 +35,7 @@ export async function applyInitialAppearance(deps: ApplyInitialAppearanceDeps): 
     return
   }
 
-  // 使用宿主构造窗口时采用的材质更新页面样式。
+  // 以当前宿主的实际材质初始化页面样式。
   const material = await deps.getWindowMaterial()
   document.documentElement.setAttribute('data-material', material)
 }

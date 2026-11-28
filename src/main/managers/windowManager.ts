@@ -24,13 +24,18 @@ import clipboardManager from './clipboardManager'
 
 import { WINDOW_DEFAULT_HEIGHT, WINDOW_WIDTH } from '../common/constants'
 import detachedWindowManager from '../core/detachedWindowManager'
-import { getSystemWindowMaterial, getWindowsWindowOptions } from '../utils/windowUtils'
+import {
+  applyHostWindowOpacity,
+  getWindowsHostWindowOptions,
+  initializeWindowsHostWindowMaterial
+} from '../utils/windowMaterial'
 import pluginManager from './pluginManager'
 import { prepareMacPanelForShow } from '../utils/macPanelSpace'
 import {
   normalizeCompactMainWindowHeader,
   resolveMainWindowHeaderHeight
 } from '../../shared/mainWindowLayout'
+import { toElectronAccelerator } from '../../shared/shortcut'
 
 import type { SleepingSearch } from '../../shared/mainWindowSleep'
 import { HiddenWindowSleep } from '../common/hiddenWindowSleep'
@@ -64,6 +69,7 @@ interface AppShortcutLaunchContext {
  */
 class WindowManager {
   private mainWindow: BrowserWindow | null = null
+  private dwmMainWindowHeight: number | undefined
   private readonly sleep = new HiddenWindowSleep(() => this.destroyHiddenMainWindow())
   /**
    * 子窗口关闭后的下一轮事件循环中再检查父子关系。
@@ -517,9 +523,11 @@ class WindowManager {
       windowConfig.transparent = true
       windowConfig.vibrancy = 'fullscreen-ui'
     }
-    // Windows 材质在原生窗口创建时初始化。
+    // 在创建 HWND 前选择与系统合成方式匹配的材质参数。
     else if (platform.isWindows) {
-      Object.assign(windowConfig, getWindowsWindowOptions())
+      Object.assign(windowConfig, getWindowsHostWindowOptions())
+      // Electron 34 的无边框 DWM 窗口需要保留可缩放边框，否则移动时会反复扣减内容高度。
+      if (windowConfig.backgroundMaterial === 'acrylic') windowConfig.resizable = true
     }
     // Linux 系统配置
     else if (platform.isLinux) {
@@ -530,6 +538,15 @@ class WindowManager {
     }
 
     this.mainWindow = new BrowserWindow(windowConfig)
+    this.dwmMainWindowHeight =
+      windowConfig.backgroundMaterial === 'acrylic' ? initialHeight : undefined
+    if (platform.isWindows) {
+      if (windowConfig.backgroundMaterial === 'acrylic') {
+        // 保留 DWM 所需的可缩放边框，只拦截用户拉伸，不影响搜索结果自动调整高度。
+        this.mainWindow.on('will-resize', (event) => event.preventDefault())
+      }
+      initializeWindowsHostWindowMaterial(this.mainWindow, windowConfig)
+    }
 
     // 强化置顶层级并允许在所有桌面和全屏应用上显示。
     // 跳过进程类型变换（skipTransformProcessType）：本应用以 LSUIElement + app.dock.hide()
@@ -560,9 +577,10 @@ class WindowManager {
       if (host.isDestroyed() || host.isVisible() || this.restoring) return
       this.sleep.hide()
     })
-    // 每次重建都重新应用原窗口的透明度。
-    if (this.sleeping && settings?.opacity !== undefined)
-      host.setOpacity(Math.min(1, Math.max(0.3, settings.opacity)))
+    // 重建时恢复适用的不透明度，不把亚克力窗口切成分层窗口。
+    if (this.sleeping && settings?.opacity !== undefined) {
+      applyHostWindowOpacity(host, settings.opacity)
+    }
 
     // 禁用缩放功能
     this.mainWindow.webContents.setZoomFactor(1.0) // 重置缩放为 100%
@@ -881,6 +899,8 @@ class WindowManager {
 
   /**
    * 注册全局快捷键（支持双击修饰键）
+   * @param shortcut 要注册的快捷键字符串；省略时沿用当前快捷键。
+   * @returns 是否注册成功。
    */
   public registerShortcut(shortcut?: string): boolean {
     const keyToRegister = shortcut || this.currentShortcut
@@ -894,7 +914,7 @@ class WindowManager {
       const oldModifier = this.currentShortcut.split('+')[0]
       doubleTapManager.unregister(oldModifier)
     } else {
-      globalShortcut.unregister(this.currentShortcut)
+      globalShortcut.unregister(toElectronAccelerator(this.currentShortcut, process.platform))
     }
 
     // 双击修饰键模式：通过 doubleTapManager 注册
@@ -910,7 +930,9 @@ class WindowManager {
     }
 
     // 普通快捷键模式：通过 globalShortcut 注册
-    const ret = globalShortcut.register(keyToRegister, () => {
+    // Electron 在 Windows 上要求使用 Super 表示 Windows 键。
+    const accelerator = toElectronAccelerator(keyToRegister, process.platform)
+    const ret = globalShortcut.register(accelerator, () => {
       if (!dndManager.shouldIgnoreHotkeys()) this.toggleWindow()
     })
 
@@ -923,7 +945,7 @@ class WindowManager {
           if (!dndManager.shouldIgnoreHotkeys()) this.toggleWindowFromDoubleTap()
         })
       } else {
-        globalShortcut.register(oldShortcut, () => {
+        globalShortcut.register(toElectronAccelerator(oldShortcut, process.platform), () => {
           if (!dndManager.shouldIgnoreHotkeys()) this.toggleWindow()
         })
       }
@@ -1205,16 +1227,47 @@ class WindowManager {
   }
 
   /**
+   * 判断当前主窗口是否通过记录的布局尺寸来避免 DWM 边界舍入累积。
+   * @returns 主窗口使用 Electron 内置 DWM 亚克力时返回 true。
+   */
+  public usesDwmMainWindow(): boolean {
+    return this.dwmMainWindowHeight !== undefined
+  }
+
+  /**
+   * 按应用布局调整主窗口，并保留 DWM 后续移动所用的逻辑高度。
+   * @param height 已按工作区约束的主窗口高度。
+   * @returns 无返回值。
+   */
+  public resizeMainWindow(height: number): void {
+    if (!this.mainWindow) return
+
+    if (this.dwmMainWindowHeight !== undefined) this.dwmMainWindowHeight = height
+    this.mainWindow.setBounds({ width: WINDOW_WIDTH, height })
+  }
+
+  /**
    * 将独立主窗口定位到目标显示器，Space 迁移锚点随后按此位置创建。
    * @param x 目标位置横坐标。
    * @param y 目标位置纵坐标。
+   * @param lockedSize 拖动期间固定的窗口尺寸。
    * @returns 无返回值。
    */
-  private applyMainWindowPosition(x: number, y: number): void {
+  public applyMainWindowPosition(
+    x: number,
+    y: number,
+    lockedSize?: { width: number; height: number }
+  ): void {
     if (!this.mainWindow) return
 
-    // 先确定目标显示器，避免迁移时被父窗口拉回其它屏幕。
-    this.mainWindow.setPosition(x, y, false)
+    // DWM 在非整数 DPI 下报告的边界可能有舍入偏差，不能把读回的尺寸反复写回。
+    if (this.dwmMainWindowHeight !== undefined) {
+      this.mainWindow.setBounds({ x, y, width: WINDOW_WIDTH, height: this.dwmMainWindowHeight })
+    } else if (lockedSize) {
+      this.mainWindow.setBounds({ x, y, ...lockedSize })
+    } else {
+      this.mainWindow.setPosition(x, y, false)
+    }
   }
 
   /**
@@ -1572,14 +1625,6 @@ class WindowManager {
   }
 
   /**
-   * 获取宿主窗口在构造时使用的 Windows 背景材质。
-   * @returns 为当前操作系统选定的亚克力或无材质。
-   */
-  public getWindowMaterial(): 'acrylic' | 'none' {
-    return getSystemWindowMaterial()
-  }
-
-  /**
    * 设置主题信息变更回调钩子
    */
   public setOnThemeInfoChanged(callback: (() => void) | null): void {
@@ -1804,13 +1849,16 @@ class WindowManager {
 
   /**
    * 从 input 事件构建快捷键字符串
+   * @param input Electron before-input-event 提供的按键输入信息。
+   * @returns 与应用快捷键配置匹配的内部快捷键字符串。
    */
   private buildShortcutString(input: Electron.Input): string {
     const keys: string[] = []
 
     // 修饰键（按标准顺序）
     if (input.meta) {
-      keys.push(platform.isMacOS ? 'Command' : 'Meta')
+      // Windows 的 Meta 对应 Windows 键，沿用内部 Command 名称以匹配录制结果和存量配置。
+      keys.push(platform.isMacOS || platform.isWindows ? 'Command' : 'Meta')
     }
     if (input.control) {
       keys.push(platform.isMacOS ? 'Ctrl' : 'Ctrl')

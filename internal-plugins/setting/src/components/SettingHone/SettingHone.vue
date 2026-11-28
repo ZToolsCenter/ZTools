@@ -6,6 +6,12 @@ import { applyInitialAppearance } from './applyInitialAppearance'
 
 onMounted(() => {
   startNotificationPolling()
+  // 分离会复用现有页面，根据新宿主发布的材质更新样式，无需重新加载。
+  if (window.ztools.isWindows()) {
+    window.ztools.onThemeChange(({ windowMaterial }) => {
+      document.documentElement.setAttribute('data-material', windowMaterial)
+    })
+  }
   // 页面挂载后应用已保存的主题和当前宿主材质。
   void applyInitialAppearance({
     dbGet: (key) => window.ztools.internal.dbGet(key),

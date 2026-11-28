@@ -122,6 +122,8 @@ interface NativeAddon {
   stopWindowMonitor: () => void
   getActiveWindow: () => ActiveWindowResult | null
   activateWindow: (identifier: string | number) => boolean
+  setNativeWindowAcrylic?: (hwnd: Buffer, dark: boolean) => boolean
+  setNativeWindowFrameChanged?: (hwnd: Buffer) => boolean
   simulatePaste: () => boolean
   simulateKeyboardTap: (key: string, ...modifiers: string[]) => boolean
   ensureOptimizedShortcutListener: (
@@ -457,6 +459,39 @@ export class WindowMonitor {
  * 窗口管理类
  */
 export class WindowManager {
+  /**
+   * 为 Electron 窗口应用 Windows 原生亚克力。
+   * @param hwnd Electron 返回的原生窗口句柄。
+   * @param dark 是否使用暗色主题。
+   * @returns 原生调用成功时返回 true；旧版模块或失败时返回 false。
+   */
+  static setNativeWindowAcrylic(hwnd: Buffer, dark: boolean): boolean {
+    // 兼容未包含新入口的旧二进制，由窗口层决定如何回退。
+    if (platform !== 'win32' || typeof addon?.setNativeWindowAcrylic !== 'function') return false
+    try {
+      return (addon as NativeAddon).setNativeWindowAcrylic?.(hwnd, dark) === true
+    } catch (error) {
+      console.warn('[NativeWindowManager] 应用 Windows 原生亚克力失败:', error)
+      return false
+    }
+  }
+
+  /**
+   * 请求 Windows 刷新窗口边框和客户区，不调整窗口位置或焦点。
+   * @param hwnd Electron 返回的原生窗口句柄。
+   * @returns 原生调用成功时返回 true；旧版模块或失败时返回 false。
+   */
+  static setNativeWindowFrameChanged(hwnd: Buffer): boolean {
+    // 旧版二进制不提供刷新入口，仍可保留已启用的 Accent。
+    if (platform !== 'win32') return false
+    try {
+      return (addon as NativeAddon | null)?.setNativeWindowFrameChanged?.(hwnd) === true
+    } catch (error) {
+      console.warn('[NativeWindowManager] 刷新 Windows 原生窗口边框失败:', error)
+      return false
+    }
+  }
+
   /**
    * 获取当前激活的窗口信息
    * @returns 窗口信息对象

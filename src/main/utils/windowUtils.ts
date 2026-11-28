@@ -2,23 +2,25 @@ import { OpenDialogOptions, OpenDialogReturnValue, BrowserWindow, dialog } from 
 import os from 'os'
 
 /**
- * 检测是否为 Windows 11
- * Windows 11 的版本号为 10.0.22000 或更高
+ * 判断当前系统是否达到 Windows 11 的最低版本。
+ * @returns Windows 11 Build 22000 或更高版本时返回 true。
  */
 export function isWindows11(): boolean {
-  if (process.platform !== 'win32') {
-    return false
-  }
+  return hasWindowsBuild(22000)
+}
+
+/**
+ * 比较当前 Windows 版本与指定的最低 Build。
+ * @param minimumBuild 功能所需的最低 Build。
+ * @returns 当前为受支持的 Windows 版本时返回 true。
+ */
+function hasWindowsBuild(minimumBuild: number): boolean {
+  if (process.platform !== 'win32') return false
 
   try {
-    const release = os.release()
-    const parts = release.split('.')
-    const major = parseInt(parts[0], 10)
-    const minor = parseInt(parts[1], 10)
-    const build = parseInt(parts[2], 10)
-
-    // Windows 11 的版本号是 10.0.22000 或更高
-    return major === 10 && minor === 0 && build >= 22000
+    // Windows 11 仍报告主版本 10，使用第三段 Build 区分功能门槛。
+    const [major, , build] = os.release().split('.').map(Number)
+    return major >= 10 && build >= minimumBuild
   } catch (error) {
     console.error('[WindowUtils] 检测 Windows 版本失败:', error)
     return false
@@ -26,26 +28,16 @@ export function isWindows11(): boolean {
 }
 
 /**
- * 获取宿主窗口按操作系统使用的 Windows 背景材质。
- * @returns Windows 11 使用亚克力，其余系统使用无材质。
- */
-export function getSystemWindowMaterial(): 'acrylic' | 'none' {
-  return isWindows11() ? 'acrylic' : 'none'
-}
-
-/**
- * 生成 Windows 宿主窗口使用的背景构造参数。
+ * 生成继续使用 Electron 内置材质的 Windows 窗口背景参数。
  * @returns 要传入 BrowserWindow 的背景颜色和可选材质。
  */
 export function getWindowsWindowOptions(): Pick<
   Electron.BrowserWindowConstructorOptions,
   'backgroundColor' | 'backgroundMaterial'
 > {
-  const material = getSystemWindowMaterial()
-
-  // 创建原生窗口时由 Electron 初始化半透明状态，透明底色让系统材质可见。
-  return material === 'acrylic'
-    ? { backgroundColor: '#00000000', backgroundMaterial: material }
+  // Electron 内置背景材质从 22621 开始生效，与原生 Accent 的门槛不同。
+  return hasWindowsBuild(22621)
+    ? { backgroundColor: '#00000000', backgroundMaterial: 'acrylic' }
     : { backgroundColor: '#f4f4f4' }
 }
 

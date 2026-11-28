@@ -306,11 +306,6 @@ const macWindowBackgroundOptions = [
 ] as const
 let previewedMacWindowBackgroundMode: keyof MacWindowBackground | null = null
 
-// 亚克力材质背景色透明度
-const hasAcrylicWindowMaterial = ref(false)
-const acrylicLightOpacity = ref(78) // 明亮模式默认 78%
-const acrylicDarkOpacity = ref(50) // 暗黑模式默认 50%
-
 // 主搜索窗口壁纸保存宿主管理的本地副本，用户原始文件保持不变
 const searchWallpaper = ref<SearchWallpaperConfig | null>(null)
 const searchWallpaperPreviewFailed = ref(false)
@@ -1157,34 +1152,6 @@ async function handleFloatingBallLetterChange(): Promise<void> {
   }
 }
 
-// 处理亚克力明亮模式透明度变化
-async function handleAcrylicLightOpacityChange(): Promise<void> {
-  try {
-    await saveSettings()
-    // 通知主渲染进程更新（主渲染进程会应用 CSS 叠加效果）
-    await window.ztools.internal.updateAcrylicOpacity(
-      acrylicLightOpacity.value,
-      acrylicDarkOpacity.value
-    )
-  } catch (error) {
-    console.error('更新亚克力明亮模式透明度失败:', error)
-  }
-}
-
-// 处理亚克力暗黑模式透明度变化
-async function handleAcrylicDarkOpacityChange(): Promise<void> {
-  try {
-    await saveSettings()
-    // 通知主渲染进程更新（主渲染进程会应用 CSS 叠加效果）
-    await window.ztools.internal.updateAcrylicOpacity(
-      acrylicLightOpacity.value,
-      acrylicDarkOpacity.value
-    )
-  } catch (error) {
-    console.error('更新亚克力暗黑模式透明度失败:', error)
-  }
-}
-
 /**
  * 保存壁纸配置并通知主搜索窗口立即更新。
  * @returns 保存和通知完成后结束的 Promise
@@ -1344,7 +1311,7 @@ function isValidProxyUrl(url: string): boolean {
 // ==================== 自定义颜色相关辅助函数 ====================
 
 /**
- * 加载平台信息和宿主材质，用于显示平台专属设置。
+ * 加载当前操作系统，用于显示平台专属设置。
  * @returns 平台信息加载完成后结束的 Promise。
  */
 async function getPlatformInfo(): Promise<void> {
@@ -1352,12 +1319,6 @@ async function getPlatformInfo(): Promise<void> {
     const pf = await window.ztools.internal.getPlatform()
     if (pf === 'darwin' || pf === 'win32' || pf === 'linux') {
       platform.value = pf
-    }
-
-    // 仅在宿主使用亚克力时显示明暗背景透明度。
-    if (pf === 'win32') {
-      hasAcrylicWindowMaterial.value =
-        (await window.ztools.internal.getWindowMaterial()) === 'acrylic'
     }
   } catch (error) {
     console.error('获取平台信息失败:', error)
@@ -1420,8 +1381,6 @@ async function loadSettings(): Promise<void> {
       ignoreHotkeysOnFullscreen.value = data.ignoreHotkeysOnFullscreen ?? false
       superPanelTranslateEnabled.value = data.superPanelTranslateEnabled ?? false
       macWindowBackground.value = normalizeMacWindowBackground(data.macWindowBackground)
-      acrylicLightOpacity.value = data.acrylicLightOpacity ?? 78
-      acrylicDarkOpacity.value = data.acrylicDarkOpacity ?? 50
       searchWallpaper.value = normalizeSearchWallpaperConfig(data.searchWallpaper)
       // 开发者工具位置
       devToolsMode.value = data.devToolsMode ?? 'detach'
@@ -1451,9 +1410,6 @@ async function loadSettings(): Promise<void> {
     // 获取当前实际注册的快捷键
     const currentShortcut = await window.ztools.internal.getCurrentShortcut()
     hotkey.value = currentShortcut || defaultHotkey.value
-
-    // 应用透明度设置
-    await window.ztools.internal.setWindowOpacity(opacity.value)
 
     // 获取开机启动状态
     launchAtLogin.value = await window.ztools.internal.getLaunchAtLogin()
@@ -1512,8 +1468,6 @@ async function saveSettings(): Promise<void> {
       primaryColor: primaryColor.value,
       customColor: customColor.value,
       showTrayIcon: showTrayIcon.value,
-      acrylicLightOpacity: acrylicLightOpacity.value,
-      acrylicDarkOpacity: acrylicDarkOpacity.value,
       // 数据库 IPC 同样只接收可结构化克隆的普通壁纸对象。
       searchWallpaper: normalizeSearchWallpaperConfig(searchWallpaper.value),
       devToolsMode: devToolsMode.value,
@@ -1748,7 +1702,7 @@ onUnmounted(() => {
         </div>
       </div>
 
-      <div class="setting-item">
+      <div class="setting-item window-opacity-setting">
         <div class="setting-label">
           <span>窗口不透明度</span>
           <span class="setting-desc">调整窗口的透明度</span>
@@ -1808,40 +1762,6 @@ onUnmounted(() => {
           </div>
         </div>
       </template>
-
-      <div v-if="hasAcrylicWindowMaterial" class="setting-item">
-        <div class="setting-label">
-          <span>明亮模式背景色透明度</span>
-          <span class="setting-desc">调整亚克力材质在明亮模式下的白色背景叠加透明度</span>
-        </div>
-        <div class="setting-control opacity-control">
-          <Slider
-            v-model="acrylicLightOpacity"
-            :min="0"
-            :max="100"
-            :step="1"
-            :formatter="(value) => `${value}%`"
-            @change="handleAcrylicLightOpacityChange"
-          />
-        </div>
-      </div>
-
-      <div v-if="hasAcrylicWindowMaterial" class="setting-item">
-        <div class="setting-label">
-          <span>暗黑模式背景色透明度</span>
-          <span class="setting-desc">调整亚克力材质在暗黑模式下的黑色背景叠加透明度</span>
-        </div>
-        <div class="setting-control opacity-control">
-          <Slider
-            v-model="acrylicDarkOpacity"
-            :min="0"
-            :max="100"
-            :step="1"
-            :formatter="(value) => `${value}%`"
-            @change="handleAcrylicDarkOpacityChange"
-          />
-        </div>
-      </div>
 
       <div class="setting-item wallpaper-setting-item">
         <div class="setting-label">
@@ -2576,6 +2496,10 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+/* 原生亚克力不与整窗透明度混用；分离时按当前宿主的材质更新。 */
+:global(html[data-material='acrylic'] .window-opacity-setting) {
+  display: none;
+}
 .content-panel {
   height: 100%;
   overflow-y: auto;

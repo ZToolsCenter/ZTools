@@ -187,8 +187,6 @@ const searchQuery = ref('')
 const subInputVisible = ref(true) // 子输入框是否可见
 const isPinned = ref(false)
 const searchInputRef = ref<HTMLInputElement | null>(null)
-const acrylicLightOpacity = ref(78) // 亚克力明亮模式透明度（默认 78%）
-const acrylicDarkOpacity = ref(50) // 亚克力暗黑模式透明度（默认 50%）
 const aiRequestStatus = ref<AiRequestStatus>('idle') // AI 请求状态
 const primaryColor = ref('green')
 const customColor = ref('#db2777')
@@ -382,48 +380,6 @@ function applyPrimaryColor(): void {
   document.documentElement.style.setProperty('--primary-color', colorValue)
 }
 
-// 应用亚克力背景色叠加效果
-function applyAcrylicOverlay(): void {
-  // 移除旧的样式
-  const existingStyle = document.getElementById('acrylic-overlay-style')
-  if (existingStyle) {
-    existingStyle.remove()
-  }
-
-  // 获取当前窗口材质
-  const material = document.documentElement.getAttribute('data-material')
-
-  // 只在亚克力材质时添加样式
-  if (material === 'acrylic') {
-    const style = document.createElement('style')
-    style.id = 'acrylic-overlay-style'
-    style.textContent = `
-      body::after {
-        content: "";
-        position: fixed;
-        inset: 0;
-        pointer-events: none;
-        z-index: -1;
-      }
-
-      /* 明亮模式 */
-      @media (prefers-color-scheme: light) {
-        body::after {
-          background: rgb(255 255 255 / ${acrylicLightOpacity.value}%);
-        }
-      }
-
-      /* 暗黑模式 */
-      @media (prefers-color-scheme: dark) {
-        body::after {
-          background: rgb(0 0 0 / ${acrylicDarkOpacity.value}%);
-        }
-      }
-    `
-    document.head.appendChild(style)
-  }
-}
-
 // 初始化
 onMounted(async () => {
   // 仅监听当前独立标题栏发起的市场升级进度。
@@ -444,17 +400,11 @@ onMounted(async () => {
     document.documentElement.classList.add('os-mac')
   }
 
-  // 从数据库加载亚克力透明度设置
+  // 从数据库恢复标题栏布局和主题色。
   try {
     const settings = await window.ztools.dbGet('settings-general')
     if (settings) {
-      acrylicLightOpacity.value = settings.acrylicLightOpacity ?? 78
-      acrylicDarkOpacity.value = settings.acrylicDarkOpacity ?? 50
       compactWindowHeader.value = settings.compactMainWindowHeader === true
-      console.log('标题栏加载亚克力透明度:', {
-        light: acrylicLightOpacity.value,
-        dark: acrylicDarkOpacity.value
-      })
       if (settings.primaryColor) {
         primaryColor.value = settings.primaryColor
       }
@@ -464,7 +414,7 @@ onMounted(async () => {
       applyPrimaryColor()
     }
   } catch (error) {
-    console.error('加载亚克力透明度设置失败:', error)
+    console.error('加载标题栏配置失败:', error)
   }
 
   // 初始化时获取当前窗口材质
@@ -474,23 +424,10 @@ onMounted(async () => {
       .then((material: string) => {
         console.log('标题栏初始化材质:', material)
         document.documentElement.setAttribute('data-material', material)
-        // 应用亚克力背景色叠加效果
-        applyAcrylicOverlay()
       })
       .catch((err: Error) => {
         console.error('获取窗口材质失败:', err)
       })
-  }
-
-  // 监听亚克力透明度更新事件
-  if (window.ztools?.onUpdateAcrylicOpacity) {
-    window.ztools.onUpdateAcrylicOpacity((data: { lightOpacity: number; darkOpacity: number }) => {
-      console.log('标题栏更新亚克力透明度:', data)
-      acrylicLightOpacity.value = data.lightOpacity
-      acrylicDarkOpacity.value = data.darkOpacity
-      // 应用亚克力背景色叠加效果
-      applyAcrylicOverlay()
-    })
   }
 
   // 监听主题色更新
@@ -508,8 +445,6 @@ onMounted(async () => {
   // 监听系统主题变化
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
     applyPrimaryColor()
-    // 重新应用亚克力效果（因为也依赖暗色模式）
-    applyAcrylicOverlay()
   })
 
   // 监听初始化事件（注意：preload 已经过滤掉了 event，第一个参数直接就是 data）

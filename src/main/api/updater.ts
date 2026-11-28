@@ -7,6 +7,7 @@ import type { PlatformUpdateInfo, PlatformUpdaterService } from './platformUpdat
 import databaseAPI from './shared/database.js'
 import windowManager from '../managers/windowManager'
 import { getWindowsWindowOptions } from '../utils/windowUtils.js'
+import { recordElectronWindowMaterial } from '../utils/windowMaterial'
 import { isInAppUpdateSource } from '../../shared/updateSource'
 import { fetchLatestServerUpdate, resolvePlatformUpdateInfo } from './serverUpdateCatalog'
 
@@ -421,11 +422,12 @@ export class UpdaterAPI extends MainWindowClient {
       windowConfig.transparent = true
       windowConfig.vibrancy = 'fullscreen-ui'
     } else if (process.platform === 'win32') {
-      // 与主窗口一样，在创建原生窗口时初始化材质。
+      // 更新窗口继续使用 Electron 的 Windows 背景材质。
       Object.assign(windowConfig, getWindowsWindowOptions())
     }
 
     this.updateWindow = new BrowserWindow(windowConfig)
+    recordElectronWindowMaterial(this.updateWindow, windowConfig.backgroundMaterial)
     this.registerExternalLinkInterceptor(this.updateWindow.webContents)
     if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
       void this.updateWindow.loadURL(`${process.env['ELECTRON_RENDERER_URL']}/updater.html`)

@@ -330,48 +330,6 @@ async function detachCurrentPlugin(): Promise<void> {
   }
 }
 
-// 应用亚克力背景色叠加效果
-function applyAcrylicOverlay(): void {
-  // 移除旧的样式
-  const existingStyle = document.getElementById('acrylic-overlay-style')
-  if (existingStyle) {
-    existingStyle.remove()
-  }
-
-  // 获取当前窗口材质
-  const material = document.documentElement.getAttribute('data-material')
-
-  // 只在亚克力材质时添加样式
-  if (material === 'acrylic') {
-    const style = document.createElement('style')
-    style.id = 'acrylic-overlay-style'
-    style.textContent = `
-      body::after {
-        content: "";
-        position: fixed;
-        inset: 0;
-        pointer-events: none;
-        z-index: -1;
-      }
-
-      /* 明亮模式 */
-      @media (prefers-color-scheme: light) {
-        body::after {
-          background: rgb(255 255 255 / ${windowStore.acrylicLightOpacity}%);
-        }
-      }
-
-      /* 暗黑模式 */
-      @media (prefers-color-scheme: dark) {
-        body::after {
-          background: rgb(0 0 0 / ${windowStore.acrylicDarkOpacity}%);
-        }
-      }
-    `
-    document.head.appendChild(style)
-  }
-}
-
 // 监听视图变化，调整窗口高度
 watch(currentView, (newView) => {
   if (newView === ViewMode.Plugin) {
@@ -840,19 +798,8 @@ onMounted(async () => {
     window.ztools.getWindowMaterial().then((material) => {
       console.log('主渲染进程初始化材质:', material)
       document.documentElement.setAttribute('data-material', material)
-      // 应用亚克力背景色叠加效果
-      applyAcrylicOverlay()
     })
   }
-
-  // 监听亚克力透明度更新事件
-  window.ztools.onUpdateAcrylicOpacity?.((data: { lightOpacity: number; darkOpacity: number }) => {
-    console.log('更新亚克力透明度:', data)
-    windowStore.updateAcrylicLightOpacity(data.lightOpacity)
-    windowStore.updateAcrylicDarkOpacity(data.darkOpacity)
-    // 应用亚克力背景色叠加效果
-    applyAcrylicOverlay()
-  })
 
   // 监听应用启动事件（应用启动后）
   window.ztools.onAppLaunched(() => {

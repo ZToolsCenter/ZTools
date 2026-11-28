@@ -114,10 +114,6 @@ export const useWindowStore = defineStore('window', () => {
   const customColor = ref('#db2777') // 自定义颜色
   const compactMainWindowHeader = ref(false) // 主窗口是否使用紧凑顶部栏
 
-  // 亚克力材质背景色透明度（0-100）
-  const acrylicLightOpacity = ref(78) // 明亮模式默认 78%
-  const acrylicDarkOpacity = ref(50) // 暗黑模式默认 50%
-
   // 主搜索窗口壁纸只在本地图片仍可访问时进入运行时状态
   const searchWallpaper = ref<SearchWallpaperConfig | null>(null)
   let searchWallpaperValidationId = 0
@@ -308,14 +304,6 @@ export const useWindowStore = defineStore('window', () => {
     if (primaryColor.value === 'custom') {
       applyCustomColor(color)
     }
-  }
-
-  function updateAcrylicLightOpacity(value: number): void {
-    acrylicLightOpacity.value = value
-  }
-
-  function updateAcrylicDarkOpacity(value: number): void {
-    acrylicDarkOpacity.value = value
   }
 
   /**
@@ -673,12 +661,6 @@ export const useWindowStore = defineStore('window', () => {
           // 旧配置缺少主题色时使用当前产品默认的绿色。
           updatePrimaryColor('green')
         }
-        if (data.acrylicLightOpacity !== undefined) {
-          acrylicLightOpacity.value = data.acrylicLightOpacity
-        }
-        if (data.acrylicDarkOpacity !== undefined) {
-          acrylicDarkOpacity.value = data.acrylicDarkOpacity
-        }
         await updateSearchWallpaper(data.searchWallpaper)
         if (data.showRecentInSearch !== undefined) {
           showRecentInSearch.value = data.showRecentInSearch
@@ -750,8 +732,6 @@ export const useWindowStore = defineStore('window', () => {
     primaryColor,
     customColor,
     compactMainWindowHeader,
-    acrylicLightOpacity,
-    acrylicDarkOpacity,
     searchWallpaper,
     availableUpdateInfo,
     autoCheckUpdateEnabled,
@@ -793,8 +773,6 @@ export const useWindowStore = defineStore('window', () => {
     updateTheme,
     updatePrimaryColor,
     updateCustomColor,
-    updateAcrylicLightOpacity,
-    updateAcrylicDarkOpacity,
     updateSearchWallpaper,
     getAutoPasteTimeLimit,
     lastShowTime,

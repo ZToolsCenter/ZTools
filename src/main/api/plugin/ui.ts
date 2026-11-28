@@ -4,9 +4,14 @@ import type { PluginManager } from '../../managers/pluginManager'
 import { fileURLToPath } from 'url'
 import detachedWindowManager from '../../core/detachedWindowManager'
 import databaseAPI from '../shared/database'
-import windowManager from '../../managers/windowManager'
 import pluginWindowManager from '../../core/pluginWindowManager'
-import { buildPluginThemeScript, type PluginThemeState } from '../../core/pluginTheme'
+import {
+  buildPluginThemeScript,
+  getCurrentPluginThemeState,
+  type PluginThemeState
+} from '../../core/pluginTheme'
+import { getHostWindowMaterial } from '../../utils/windowMaterial'
+import { getPluginHostWindow } from './pluginHostWindow'
 import { registerPluginApiServices } from './pluginApiDispatcher'
 
 /**
@@ -28,11 +33,19 @@ export class PluginUIAPI extends MainWindowClient {
     this.setupThemeChangeListeners()
   }
 
+  /**
+   * 注册插件界面与主题查询接口。
+   * @returns 无返回值。
+   */
   private setupIPC(): void {
     // 注册 getThemeInfo 到统一分发器（同步 API）
     registerPluginApiServices({
       getThemeInfo: (event: Electron.IpcMainEvent) => {
-        event.returnValue = this.buildThemeInfo()
+        // 同一个插件可以同时在分离窗口和主窗口中运行，不能共用材质状态。
+        event.returnValue = {
+          ...getCurrentPluginThemeState(),
+          windowMaterial: getHostWindowMaterial(getPluginHostWindow(event.sender, this.mainWindow))
+        }
       }
     })
 
@@ -343,50 +356,51 @@ export class PluginUIAPI extends MainWindowClient {
   }
 
   /**
-   * 构建当前主题信息
+   * 按各宿主窗口实际使用的材质广播主题信息。
+   * @param themeInfo 所有插件共用的主题颜色状态。
+   * @returns 无返回值。
    */
-  private buildThemeInfo(): {
-    isDark: boolean
-    primaryColor: string
-    customColor?: string
-    windowMaterial: string
-  } {
-    const settings = databaseAPI.dbGet('settings-general')
-    return {
-      isDark: nativeTheme.shouldUseDarkColors,
-      primaryColor: settings?.primaryColor || 'green',
-      customColor: settings?.customColor,
-      windowMaterial: windowManager.getWindowMaterial()
-    }
-  }
-
-  /**
-   * 向所有插件视图广播消息
-   */
-  private broadcastToAllPluginViews(channel: string, data: any): void {
-    // 主窗口中的插件视图
+  private broadcastThemeInfo(themeInfo: PluginThemeState): void {
+    // 缓存视图可能已移出窗口，但下一次显示时仍会使用主窗口材质。
     const views = this.pluginManager?.getAllPluginViews() || []
     for (const { view } of views) {
       try {
         if (!view.webContents.isDestroyed()) {
-          view.webContents.send(channel, data)
+          view.webContents.send('update-theme-info', {
+            ...themeInfo,
+            windowMaterial: getHostWindowMaterial(
+              getPluginHostWindow(view.webContents, this.mainWindow)
+            )
+          })
         }
       } catch {
         // webContents 可能在遍历期间被销毁
       }
     }
-    // 分离窗口中的插件
-    detachedWindowManager.broadcastToAllWindows(channel, data)
-    // 插件创建的独立窗口
-    pluginWindowManager.broadcastToAll(channel, data)
+    // 每个分离窗口独立降级，插件自建窗口则不由宿主添加材质。
+    for (const { window, view } of detachedWindowManager.getAllWindows()) {
+      try {
+        if (window.isDestroyed()) continue
+        const data = { ...themeInfo, windowMaterial: getHostWindowMaterial(window) }
+        window.webContents.send('update-theme-info', data)
+        if (!view.webContents.isDestroyed()) view.webContents.send('update-theme-info', data)
+      } catch {
+        // 单个窗口关闭时，不中断其他插件的主题更新。
+      }
+    }
+    pluginWindowManager.broadcastToAll('update-theme-info', {
+      ...themeInfo,
+      windowMaterial: 'none'
+    })
   }
 
   /**
-   * 广播主题信息到所有插件视图
+   * 广播主题信息到所有插件视图并更新页面主题色。
+   * @returns 无返回值。
    */
   public broadcastThemeInfoToAllPlugins(): void {
-    const themeInfo = this.buildThemeInfo()
-    this.broadcastToAllPluginViews('update-theme-info', themeInfo)
+    const themeInfo = getCurrentPluginThemeState()
+    this.broadcastThemeInfo(themeInfo)
     // 主题广播同时直接更新页面变量，确保未订阅 onThemeChange 的插件也能适配主题色。
     void this.applyThemeToAllPluginViews(themeInfo)
   }

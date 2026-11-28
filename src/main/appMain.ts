@@ -27,6 +27,7 @@ import { loadInternalPlugins } from './core/internalPluginLoader'
 import pluginManager from './managers/pluginManager'
 import windowManager from './managers/windowManager'
 import superPanelManager from './core/superPanelManager'
+import { disableWindowHardwareAcceleration } from './utils/windowMaterial'
 import { normalizeMacWindowBackground, type MacWindowBackground } from '@shared/macWindowBackground'
 
 const isE2ETest = process.env.ZTOOLS_E2E === '1'
@@ -135,11 +136,11 @@ app.on('open-file', (event, filePath) => {
 registerIconScheme()
 
 // ========== GPU 加速控制（必须在 app.ready 之前）==========
-// app.disableHardwareAcceleration() 只能在 app ready 之前生效，所以需要提前直接读数据库
+// 硬件加速开关只能在 app ready 之前应用，所以需要提前直接读数据库。
 try {
   const settingsDoc = lmdbInstance.get('ZTOOLS/settings-general')
   if (settingsDoc?.data?.disableGpuAcceleration === true) {
-    app.disableHardwareAcceleration()
+    disableWindowHardwareAcceleration()
     console.log('[Main] 已禁用 GPU 硬件加速（用户设置）')
   }
 } catch {

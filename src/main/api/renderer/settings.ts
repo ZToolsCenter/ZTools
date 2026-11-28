@@ -19,7 +19,9 @@ import type { GlobalShortcutPreparation } from '../index'
 import api from '../index'
 import databaseAPI from '../shared/database'
 import { normalizeCompactMainWindowHeader } from '../../../shared/mainWindowLayout'
+import { toElectronAccelerator } from '../../../shared/shortcut'
 import detachedWindowManager from '../../core/detachedWindowManager'
+import { applyHostWindowOpacity } from '../../utils/windowMaterial'
 
 /**
  * 快捷键触发时携带的文件输入
@@ -145,14 +147,22 @@ export class SettingsAPI extends MainWindowClient {
     }
   }
 
-  // 使用 Electron 标准后端注册快捷键。
+  /**
+   * 使用 Electron 标准后端注册快捷键。
+   * @param shortcut ZTools 内部格式的快捷键字符串。
+   * @param target 快捷键对应的目标指令。
+   * @param preparation 注册时生成的目标预处理信息。
+   * @returns 是否注册成功。
+   */
   private registerElectronGlobalShortcut(
     shortcut: string,
     target: string,
     preparation: GlobalShortcutPreparation
   ): boolean {
-    globalShortcut.unregister(shortcut)
-    return globalShortcut.register(shortcut, () => {
+    // Electron 在 Windows 上将 Windows 键命名为 Super，内部配置仍保留 Command 兼容性。
+    const accelerator = toElectronAccelerator(shortcut, process.platform)
+    globalShortcut.unregister(accelerator)
+    return globalShortcut.register(accelerator, () => {
       console.log(`全局快捷键触发: ${shortcut} -> ${target}`)
       void this.triggerGlobalShortcut(shortcut, preparation)
     })
@@ -170,7 +180,11 @@ export class SettingsAPI extends MainWindowClient {
     }
   }
 
-  // 统一清理一个全局快捷键的运行时注册状态。
+  /**
+   * 统一清理一个全局快捷键的运行时注册状态。
+   * @param shortcut ZTools 内部格式的快捷键字符串。
+   * @returns 无返回值。
+   */
   private unregisterGlobalShortcutBackend(shortcut: string): void {
     if (this.isDoubleTapShortcut(shortcut)) {
       const modifier = this.getDoubleTapModifier(shortcut)
@@ -183,7 +197,7 @@ export class SettingsAPI extends MainWindowClient {
       return
     }
 
-    globalShortcut.unregister(shortcut)
+    globalShortcut.unregister(toElectronAccelerator(shortcut, process.platform))
   }
 
   // 重新应用某个快捷键配置，必要时切换 Electron/native 后端。
@@ -286,10 +300,8 @@ export class SettingsAPI extends MainWindowClient {
       this.setCompactMainWindowHeader(data?.compactMainWindowHeader === true)
 
       if (data) {
-        // 应用透明度设置
-        if (data.opacity !== undefined && this.mainWindow) {
-          const clampedOpacity = Math.max(0.3, Math.min(1, data.opacity))
-          this.mainWindow.setOpacity(clampedOpacity)
+        // 保留已保存的不透明度，但不改变亚克力窗口的合成样式。
+        if (data.opacity !== undefined && applyHostWindowOpacity(this.mainWindow, data.opacity)) {
           console.log('[Settings] 启动时应用透明度设置:', data.opacity)
         }
         // 应用快捷键设置
@@ -494,7 +506,7 @@ export class SettingsAPI extends MainWindowClient {
       }
 
       if (this.shouldUseNativeOptimizedShortcut(shortcut, preScreenshotOptimization)) {
-        globalShortcut.unregister(shortcut)
+        globalShortcut.unregister(toElectronAccelerator(shortcut, process.platform))
         try {
           this.registerNativeOptimizedShortcut(shortcut)
           console.log(`成功注册 native 优化快捷键: ${shortcut} -> ${target}`)

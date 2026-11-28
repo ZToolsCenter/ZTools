@@ -2,7 +2,12 @@ import { app, BrowserWindow, ipcMain, Menu, WebContentsView } from 'electron'
 import { fileURLToPath, pathToFileURL } from 'url'
 import { v4 as uuidv4 } from 'uuid'
 import databaseAPI from '../api/shared/database'
-import { getWindowsWindowOptions } from '../utils/windowUtils'
+import {
+  getHostWindowMaterial,
+  getWindowsHostWindowOptions,
+  initializeWindowsHostWindowMaterial
+} from '../utils/windowMaterial'
+import { getCurrentPluginThemeState } from './pluginTheme'
 import { GLOBAL_SCROLLBAR_CSS } from './globalStyles.js'
 import devToolsShortcut, { getDevToolsMode } from '../utils/devToolsShortcut'
 import { WINDOW_WIDTH } from '../common/constants'
@@ -240,9 +245,9 @@ class DetachedWindowManager {
         windowConfig.transparent = true
         windowConfig.vibrancy = 'fullscreen-ui'
       }
-      // 在分离窗口构造时使用与主窗口一致的 Windows 材质。
+      // 与主搜索窗口使用相同的合成路径，不让插件内容覆盖宿主材质。
       else if (isWindows) {
-        Object.assign(windowConfig, getWindowsWindowOptions())
+        Object.assign(windowConfig, getWindowsHostWindowOptions())
         // 设置插件窗口独立图标
         if (options.logo) {
           try {
@@ -258,6 +263,8 @@ class DetachedWindowManager {
       const win = new BrowserWindow(windowConfig)
 
       if (isWindows) {
+        initializeWindowsHostWindowMaterial(win, windowConfig)
+
         // 设置插件窗口ID，避免任务栏窗口合并
         win.setAppDetails({
           appId: 'ZTools.' + pluginName
@@ -304,6 +311,14 @@ class DetachedWindowManager {
           height: bounds.height - currentTitlebarHeight
         })
         win.contentView.addChildView(pluginView)
+
+        // 页面随视图迁移，不会重新加载；通知它切换到分离宿主的实际材质。
+        if (isWindows && !pluginView.webContents.isDestroyed()) {
+          pluginView.webContents.send('update-theme-info', {
+            ...getCurrentPluginThemeState(),
+            windowMaterial: getHostWindowMaterial(win)
+          })
+        }
 
         // 如果需要自动聚焦子输入框，延迟聚焦搜索框（等待 DOM 渲染完成）
         if (options.autoFocusSubInput === true) {

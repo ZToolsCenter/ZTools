@@ -17,6 +17,7 @@ import {
 } from '@/views/ShortcutsSetting/ShortcutsSetting'
 import { COMMAND_ALIASES_KEY, normalizeCommandAliases } from '@shared/commandShared'
 import type { CommandAliasEntry, CommandAliasStore } from '@shared/commandShared'
+import { formatShortcutForDisplay } from '@shared/shortcut'
 import AliasMappingDialog from './components/AliasMappingDialog.vue'
 
 const { success, error, warning, confirm } = useToast()
@@ -172,6 +173,18 @@ const filteredShortcuts = computed(() =>
     { value: (s) => s.target || '', weight: 5 }
   ])
 )
+
+/**
+ * 将快捷键转换为当前平台的用户可读文本。
+ * @param shortcut 内部存储格式的快捷键字符串。
+ * @returns 当前平台对应的显示文本。
+ */
+function displayShortcut(shortcut: string): string {
+  return formatShortcutForDisplay(
+    shortcut,
+    isWindows.value ? 'win32' : isMac.value ? 'darwin' : 'linux'
+  )
+}
 
 const aliasTargetMap = computed(
   () => new Map(aliasTargetOptions.value.map((target) => [target.commandId, target]))
@@ -1032,7 +1045,7 @@ useJumpFunction<ShortcutsSettingJumpFunction>(async (state) => {
                   class="card shortcut-item"
                 >
                   <div class="shortcut-info">
-                    <div class="shortcut-key-display">{{ shortcut.shortcut }}</div>
+                    <div class="shortcut-key-display">{{ displayShortcut(shortcut.shortcut) }}</div>
                     <div class="shortcut-desc">{{ shortcut.target }}</div>
                   </div>
 
@@ -1071,7 +1084,7 @@ useJumpFunction<ShortcutsSettingJumpFunction>(async (state) => {
                 class="card shortcut-item built-in"
               >
                 <div class="shortcut-info">
-                  <div class="shortcut-key-display">{{ shortcut.shortcut }}</div>
+                  <div class="shortcut-key-display">{{ displayShortcut(shortcut.shortcut) }}</div>
                   <div class="shortcut-desc">{{ shortcut.target }}</div>
                 </div>
                 <div class="shortcut-meta">
@@ -1103,7 +1116,7 @@ useJumpFunction<ShortcutsSettingJumpFunction>(async (state) => {
               class="card shortcut-item"
             >
               <div class="shortcut-info">
-                <div class="shortcut-key-display">{{ shortcut.shortcut }}</div>
+                <div class="shortcut-key-display">{{ displayShortcut(shortcut.shortcut) }}</div>
                 <div class="shortcut-desc">{{ shortcut.target }}</div>
               </div>
 

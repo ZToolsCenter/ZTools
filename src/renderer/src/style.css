@@ -71,6 +71,11 @@ body::-webkit-scrollbar {
   --control-bg: white;
 }
 
+/* 搜索页参照 uTools 8.0.2 直接在 body 上叠色，不另外创建伪元素图层。 */
+.os-windows[data-material='acrylic'] body {
+  background-color: rgba(245, 245, 247, 0.72);
+}
+
 /* 主题色定义 - 亮色模式 */
 .theme-blue {
   --primary-color: #0284c7;
@@ -147,6 +152,10 @@ body::-webkit-scrollbar {
     --bg-color: #303133;
     --card-bg: #3a3a3c;
     --control-bg: #48484a;
+  }
+
+  .os-windows[data-material='acrylic'] body {
+    background-color: rgba(22, 22, 22, 0.72);
   }
 
   /* 主题色定义 - 暗色模式 */

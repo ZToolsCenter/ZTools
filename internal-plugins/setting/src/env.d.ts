@@ -35,6 +35,7 @@ declare global {
     ztools: {
       // 获取拖放文件的路径（Electron webUtils）
       getPathForFile: (file: File) => string
+      onThemeChange: (callback: (theme: { windowMaterial: 'acrylic' | 'none' }) => void) => void
       hideMainWindow: (isRestorePreWindow?: boolean) => boolean | Promise<boolean>
 
       internal: {

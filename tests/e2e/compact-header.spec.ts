@@ -211,15 +211,23 @@ test('紧凑顶部栏同时作用于搜索页和插件页并可持久化', async
       body: pluginHeaderScreenshot,
       contentType: 'image/png'
     })
+    // 插件正文尺寸应精确不变；Windows 分数 DPI 下宿主内容高度允许像素换算误差。
+    const windowHeightRounding =
+      process.platform === 'win32' &&
+      (await page.evaluate(() => !Number.isInteger(devicePixelRatio)))
+        ? 2
+        : 0
     await expect
       .poll(() => readMainWindowLayout(electronApp!))
-      .toEqual({
-        windowHeight: standardLayout.windowHeight - 14,
-        pluginBounds: {
-          ...standardLayout.pluginBounds!,
-          y: 44
-        }
+      .toMatchObject({
+        pluginBounds: { ...standardLayout.pluginBounds!, y: 44 }
       })
+    await expect
+      .poll(async () => {
+        const compactLayout = await readMainWindowLayout(electronApp!)
+        return Math.abs(compactLayout.windowHeight - (standardLayout.windowHeight - 14))
+      })
+      .toBeLessThanOrEqual(windowHeightRounding)
     await expect
       .poll(() =>
         executeInSettings(
@@ -328,14 +336,16 @@ test('紧凑顶部栏同时作用于搜索页和插件页并可持久化', async
     await expect(detachedTitlebar).toHaveCSS('height', '52px')
     await expect
       .poll(() => readDetachedWindowLayout(electronApp!))
-      .toEqual({
-        windowHeight: compactDetachedLayout!.windowHeight + 12,
+      .toMatchObject({
         minimumHeight: 52,
-        pluginBounds: {
-          ...compactDetachedLayout!.pluginBounds!,
-          y: 52
-        }
+        pluginBounds: { ...compactDetachedLayout!.pluginBounds!, y: 52 }
       })
+    await expect
+      .poll(async () => {
+        const layout = await readDetachedWindowLayout(electronApp!)
+        return Math.abs(layout!.windowHeight - (compactDetachedLayout!.windowHeight + 12))
+      })
+      .toBeLessThanOrEqual(windowHeightRounding)
     expect(
       await executeInSettings(
         electronApp,
@@ -343,7 +353,18 @@ test('紧凑顶部栏同时作用于搜索页和插件页并可持久化', async
       )
     ).toMatchObject({ success: true })
     await expect(detachedTitlebar).toHaveCSS('height', '40px')
-    await expect.poll(() => readDetachedWindowLayout(electronApp!)).toEqual(compactDetachedLayout)
+    await expect
+      .poll(() => readDetachedWindowLayout(electronApp!))
+      .toMatchObject({
+        minimumHeight: 40,
+        pluginBounds: compactDetachedLayout!.pluginBounds
+      })
+    await expect
+      .poll(async () => {
+        const layout = await readDetachedWindowLayout(electronApp!)
+        return Math.abs(layout!.windowHeight - compactDetachedLayout!.windowHeight)
+      })
+      .toBeLessThanOrEqual(windowHeightRounding)
 
     // 使用同一隔离数据目录重启，验证创建窗口时直接恢复紧凑高度。
     await electronApp.close()

@@ -1,5 +1,6 @@
 import { app, dialog, shell } from 'electron'
 import './core/appData/configureAppDataRoot'
+import { isWindows11 } from './utils/windowUtils'
 import {
   checkRuntimeCompatibility,
   EXPECTED_ELECTRON_VERSION,
@@ -8,9 +9,10 @@ import {
 
 if (process.platform === 'win32') {
   app.setAppUserModelId('top.z-tools')
+}
 
-  // 在 app ready 前禁用透明 HWND 扩展，避免原生窗口与网页渲染区高度不一致造成底部灰条和搜索框裁切。
-  // 合并已有禁用项，保留外部传入的 Chromium 特性配置。
+if (process.platform === 'win32' && !isWindows11()) {
+  // 保留旧系统的窗口高度修正；Win11 亚克力使用 Chromium 默认窗口行为。
   const disabledFeatures = app.commandLine.getSwitchValue('disable-features')
   app.commandLine.appendSwitch(
     'disable-features',

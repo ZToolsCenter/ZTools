@@ -103,6 +103,10 @@ vi.mock('../../src/main/utils/windowUtils.js', () => ({
   getWindowsWindowOptions: vi.fn(() => ({}))
 }))
 
+vi.mock('../../src/main/utils/windowMaterial', () => ({
+  recordElectronWindowMaterial: vi.fn()
+}))
+
 vi.mock('../../src/main/api/serverUpdateCatalog', () => ({
   fetchLatestServerUpdate: vi.fn(() =>
     Promise.resolve({ available: true, latestVersion: '3.2.0' })
