@@ -26,7 +26,7 @@ English | [简体中文](./README_CN.md)
 - 🌍 **Cross-Platform** - Native support for macOS and Windows with unified experience
 - 🔒 **Data Isolation** - Independent plugin data storage, secure and reliable
 - 🛠️ **Developer Friendly** - Complete TypeScript type support, hot reload development
-- ⚙️ **Tech Stack** - Electron 34.5.8 + Node 20.19 + Chromium 132
+- ⚙️ **Tech Stack** - Electron 35.0.0-alpha.2 + Node 22.9 + Chromium 133
 
 ## 📸 Preview
 
@@ -115,7 +115,7 @@ ZTools is a powerful and extensible plugin platform that enhances your productiv
 
 ## 🛠️ Tech Stack
 
-- **Framework**: Electron 34.5.8 + Vue 3 + TypeScript
+- **Framework**: Electron 35.0.0-alpha.2 + Vue 3 + TypeScript
 - **Build**: Vite + electron-vite
 - **Database**: LMDB (high-performance key-value storage)
 - **State Management**: Pinia

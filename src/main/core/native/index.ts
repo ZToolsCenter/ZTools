@@ -220,7 +220,7 @@ interface NativeAddon {
  */
 export function useAppKitWindowCornerMask(): boolean {
   // 私有方法仅在验证过的版本上启用，较旧的原生模块也可以正常启动。
-  if (platform !== 'darwin' || process.versions.electron !== '34.5.8') return false
+  if (platform !== 'darwin' || process.versions.electron !== '35.0.0-alpha.2') return false
   return (addon as NativeAddon | null)?.useAppKitWindowCornerMask?.() ?? false
 }
 

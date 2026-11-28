@@ -34,7 +34,8 @@ export default defineConfig({
         '@platform-updater': getPlatformUpdaterEntry()
       }
     },
-    plugins: [externalizeDepsPlugin()],
+    // Bundle ESM-only uuid for the CommonJS main process on Electron's Node 22.9.
+    plugins: [externalizeDepsPlugin({ exclude: ['uuid'] })],
     build: {
       rollupOptions: {
         input: {

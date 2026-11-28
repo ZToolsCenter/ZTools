@@ -11,7 +11,7 @@ export function ensurePluginSessionPreload(
   session: Pick<Session, 'getPreloads' | 'setPreloads'>,
   filePath: string
 ): void {
-  // Electron 34 的 setPreloads 会替换整份列表，追加宿主脚本时须保留已注册的脚本。
+  // setPreloads 会替换整份列表，追加宿主脚本时须保留已注册的脚本。
   const existingPreloads = session.getPreloads()
   if (!existingPreloads.includes(filePath)) {
     session.setPreloads([...existingPreloads, filePath])
