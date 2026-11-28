@@ -1,4 +1,4 @@
-# 3.3.0-beta.4
+# 3.3.0-beta.5
 
 ## 新功能 (Feat)
 
@@ -19,6 +19,7 @@
 
 ## 修复 (Fix)
 
+- windows窗口移位，内容坍塌，窗口材质问题
 - 修复 macOS 全屏或多显示器环境下唤出面板偶发闪烁、无法显示或切换 Space 的问题（PR [#694](../../pull/694)，感谢 [@Ethan0x0000](https://github.com/Ethan0x0000) 的贡献 🎉）
 - 修复 macOS 退出全屏后再次唤出面板时缺少显示动画的问题
 - 修复 macOS 切换桌面或全屏空间（Space）后，主窗口和超级面板仍停留在原空间、无法在当前空间唤出的问题（基于 PR [#712](../../pull/712)，感谢 [@shijieqin](https://github.com/shijieqin) 的贡献 🎉）
