@@ -55,21 +55,21 @@ export class PermissionDeniedError extends Error {
  * @param event IPC 事件对象
  * @param apiName 可选的通道名；提供时按通道粒度判定（完全授权或该通道被单独授权均放行），
  *                缺省时退化为仅完全授权（内置名单 / 手动名单）可调用
- * @returns 是否允许调用（授权插件或主渲染进程）
+ * @returns 是否允许调用；仅已识别且获得授权的插件可调用，无法确认身份的调用方一律拒绝
  */
 export function requireInternalPlugin(
   pluginManager: PluginManager | null,
   event: IpcMainInvokeEvent,
   apiName?: string
 ): boolean {
-  if (!pluginManager) return true // 没有 pluginManager，允许通过
+  // 没有 pluginManager 就无法确认调用方身份，按拒绝处理。
+  if (!pluginManager) return false
   // 插件创建的子窗口也按所属插件鉴权，避免被误判成宿主页面而绕过授权。
   const pluginInfo = pluginManager.getInternalApiCallerInfo(event.sender)
 
-  if (!pluginInfo) {
-    // 不是插件调用（可能是主渲染进程），允许通过
-    return true
-  }
+  // 宿主页面不会调用 internal 通道；无法识别为插件的页面（例如共享插件会话的 webview）
+  // 同样会加载宿主 preload，不能因为"不是插件"就默认放行。
+  if (!pluginInfo) return false
 
   // 完全授权（内置插件或手动录入名单）放行所有通道
   if (pluginInfo.canUseInternalApi) return true

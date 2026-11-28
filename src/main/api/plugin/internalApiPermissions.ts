@@ -144,10 +144,11 @@ class PluginInternalApiPermissionsAPI extends MainWindowClient {
     // ==================== 插件侧：查询自身授权状态 ====================
     ipcMain.handle('plugin:get-internal-api-permissions', async (event) => {
       try {
-        // 主渲染进程不是插件，视为完全可信；插件子窗口沿用所属插件的授权状态。
+        // 插件子窗口沿用所属插件的授权状态；无法识别为插件的调用方没有任何授权，
+        // 与 requireInternalPlugin 对这类调用方的拒绝保持一致。
         const pluginInfo = this.pluginManager?.getInternalApiCallerInfo(event.sender)
         if (!pluginInfo) {
-          return { fullAccess: true, granted: [], pending: [] }
+          return { fullAccess: false, granted: [], pending: [] }
         }
         return {
           fullAccess: pluginInfo.canUseInternalApi,
