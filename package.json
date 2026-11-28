@@ -54,6 +54,7 @@
     "adm-zip": "^0.5.16",
     "builder-util-runtime": "9.7.0",
     "chokidar": "^4.0.3",
+    "dompurify": "^3.5.0",
     "electron-log": "^5.4.3",
     "electron-updater": "6.8.9",
     "lmdb": "^3.4.4",
