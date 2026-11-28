@@ -100,7 +100,6 @@
         {
           "type": "files",
           "label": "添加到本地启动",
-          "fileType": "all",
           "maxLength": 99
         }
       ]
@@ -113,7 +112,6 @@
         {
           "type": "files",
           "label": "固定到搜索框",
-          "fileType": "all",
           "maxLength": 99
         }
       ]
