@@ -63,7 +63,8 @@ export function requireInternalPlugin(
   apiName?: string
 ): boolean {
   if (!pluginManager) return true // 没有 pluginManager，允许通过
-  const pluginInfo = pluginManager.getPluginInfoByWebContents(event.sender)
+  // 插件创建的子窗口也按所属插件鉴权，避免被误判成宿主页面而绕过授权。
+  const pluginInfo = pluginManager.getInternalApiCallerInfo(event.sender)
 
   if (!pluginInfo) {
     // 不是插件调用（可能是主渲染进程），允许通过
